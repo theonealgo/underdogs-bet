@@ -579,3 +579,7 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error cleaning up old data: {str(e)}")
             return False
+    
+    def _get_connection(self):
+        """Get database connection"""
+        return sqlite3.connect(self.db_path)
