@@ -9,22 +9,59 @@ import numpy as np
 
 class DatabaseManager:
     """
-    Manages SQLite database for MLB prediction system
+    Manages SQLite database for multi-sport prediction system
     """
     
-    def __init__(self, db_path: str = "mlb_predictions.db"):
+    def __init__(self, db_path: str = "sports_predictions.db"):
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
         self._initialize_database()
     
     def _initialize_database(self):
-        """Initialize database tables"""
+        """Initialize multi-sport database tables"""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                # Create statcast data table
+                # Create normalized teams table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        league TEXT NOT NULL,
+                        team_id TEXT NOT NULL,
+                        team_name TEXT NOT NULL,
+                        abbreviation TEXT,
+                        season_active INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, league, team_id, season_active)
+                    )
+                """)
+                
+                # Create normalized games table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS games (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        league TEXT NOT NULL,
+                        game_id TEXT NOT NULL,
+                        season INTEGER NOT NULL,
+                        game_date DATE NOT NULL,
+                        home_team_id TEXT NOT NULL,
+                        away_team_id TEXT NOT NULL,
+                        status TEXT DEFAULT 'scheduled',
+                        home_score INTEGER,
+                        away_score INTEGER,
+                        source_keys TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, league, game_id)
+                    )
+                """)
+                
+                # Create statcast data table (baseball-specific with sport column)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS statcast_data (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT DEFAULT 'MLB',
                         game_pk TEXT,
                         game_date DATE,
                         home_team TEXT,
@@ -47,34 +84,19 @@ class DatabaseManager:
                     )
                 """)
                 
-                # Create odds data table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS odds_data (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        game_date DATE,
-                        away_team TEXT,
-                        home_team TEXT,
-                        away_moneyline TEXT,
-                        home_moneyline TEXT,
-                        spread REAL,
-                        total REAL,
-                        source_url TEXT,
-                        trend_text TEXT,
-                        bet_type TEXT,
-                        record TEXT,
-                        extracted_at TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+                # Note: odds_data table removed - no longer using OddsShark
                 
-                # Create predictions table
+                # Create sport-aware predictions table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS predictions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        game_date DATE,
-                        away_team TEXT,
-                        home_team TEXT,
-                        predicted_winner TEXT,
+                        sport TEXT NOT NULL,
+                        league TEXT NOT NULL,
+                        game_id TEXT NOT NULL,
+                        game_date DATE NOT NULL,
+                        home_team_id TEXT NOT NULL,
+                        away_team_id TEXT NOT NULL,
+                        predicted_winner INTEGER,
                         win_probability REAL,
                         predicted_total REAL,
                         total_confidence REAL,
@@ -84,43 +106,49 @@ class DatabaseManager:
                     )
                 """)
                 
-                # Create team stats table
+                # Create sport-aware team stats table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS team_stats (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        team TEXT,
-                        year INTEGER,
+                        sport TEXT NOT NULL,
+                        league TEXT NOT NULL,
+                        team_id TEXT NOT NULL,
+                        season INTEGER NOT NULL,
+                        date DATE,
                         games_played INTEGER,
                         wins INTEGER,
                         losses INTEGER,
-                        batting_avg REAL,
-                        era REAL,
-                        home_runs INTEGER,
-                        runs_scored INTEGER,
-                        runs_allowed INTEGER,
-                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        metrics TEXT,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, league, team_id, season, date)
                     )
                 """)
                 
-                # Create model metrics table
+                # Create sport-aware model metrics table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS model_metrics (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        model_type TEXT,
-                        metric_name TEXT,
-                        metric_value REAL,
+                        sport TEXT NOT NULL,
+                        model_type TEXT NOT NULL,
+                        model_version TEXT,
+                        metric_name TEXT NOT NULL,
+                        metric_value REAL NOT NULL,
                         date_recorded TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
                 
                 # Create indexes for better performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_teams_sport_league ON teams(sport, league)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_games_sport_date ON games(sport, game_date)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_games_teams ON games(home_team_id, away_team_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_statcast_game_date ON statcast_data(game_date)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_statcast_game_pk ON statcast_data(game_pk)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_odds_game_date ON odds_data(game_date)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_game_date ON predictions(game_date)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_sport_date ON predictions(sport, game_date)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_team_stats_sport_team ON team_stats(sport, team_id, season)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_model_metrics_sport ON model_metrics(sport, model_type)")
                 
                 conn.commit()
-                self.logger.info("Database initialized successfully")
+                self.logger.info("Multi-sport database initialized successfully")
                 
         except Exception as e:
             self.logger.error(f"Error initializing database: {str(e)}")
@@ -171,6 +199,9 @@ class DatabaseManager:
                 else:
                     insert_data[db_col] = None
             
+            # Add sport column (defaults to MLB for baseball data)
+            insert_data['sport'] = 'MLB'
+            
             # Convert data types
             if 'game_date' in insert_data.columns:
                 insert_data['game_date'] = pd.to_datetime(insert_data['game_date']).dt.date
@@ -191,71 +222,215 @@ class DatabaseManager:
             self.logger.error(f"Error storing Statcast data: {str(e)}")
             return False
     
-    def store_odds_data(self, data: List[Dict]) -> bool:
+    def store_teams(self, teams_df: pd.DataFrame) -> bool:
         """
-        Store odds data in database
+        Store team information in database
         
         Args:
-            data: List of odds dictionaries
+            teams_df: DataFrame with team information (sport, league, team_id, team_name, etc.)
             
         Returns:
             True if successful
         """
         try:
-            if not data:
-                self.logger.warning("No odds data to store")
+            if teams_df.empty:
+                self.logger.warning("No team data to store")
                 return False
             
-            # Convert to DataFrame for easier handling
-            odds_df = pd.DataFrame(data)
-            
             # Ensure required columns exist
-            required_columns = [
-                'away_team', 'home_team', 'away_moneyline', 'home_moneyline',
-                'spread', 'total', 'source_url', 'trend_text', 'bet_type', 'record'
-            ]
+            required_cols = ['sport', 'league', 'team_id', 'team_name']
+            missing_cols = [col for col in required_cols if col not in teams_df.columns]
+            if missing_cols:
+                self.logger.error(f"Missing required columns: {missing_cols}")
+                return False
             
-            for col in required_columns:
-                if col not in odds_df.columns:
-                    odds_df[col] = None
+            # Add current season if not present
+            if 'season_active' not in teams_df.columns:
+                teams_df['season_active'] = datetime.now().year
             
-            # Add game_date if not present
-            if 'game_date' not in odds_df.columns:
-                odds_df['game_date'] = datetime.now().date()
-            
-            # Handle extracted_at timestamp
-            if 'extracted_at' in odds_df.columns:
-                odds_df['extracted_at'] = pd.to_datetime(odds_df['extracted_at'])
-            else:
-                odds_df['extracted_at'] = datetime.now()
-            
-            # Clean and convert data types
-            if 'spread' in odds_df.columns:
-                odds_df['spread'] = pd.to_numeric(odds_df['spread'], errors='coerce')
-            if 'total' in odds_df.columns:
-                odds_df['total'] = pd.to_numeric(odds_df['total'], errors='coerce')
-            
-            # Replace NaN with None for SQLite
-            odds_df = odds_df.replace({np.nan: None})
+            # Handle NaN values
+            teams_df = teams_df.replace({np.nan: None})
             
             with sqlite3.connect(self.db_path) as conn:
-                odds_df.to_sql('odds_data', conn, if_exists='append', index=False)
+                # Use ON CONFLICT DO UPDATE to preserve created_at and update changed fields
+                cursor = conn.cursor()
                 
-                rows_inserted = len(odds_df)
-                self.logger.info(f"Stored {rows_inserted} odds records")
+                for _, row in teams_df.iterrows():
+                    cursor.execute("""
+                        INSERT INTO teams 
+                        (sport, league, team_id, team_name, abbreviation, season_active)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(sport, league, team_id, season_active) DO UPDATE SET
+                            team_name = excluded.team_name,
+                            abbreviation = excluded.abbreviation
+                    """, (
+                        row.get('sport'),
+                        row.get('league'), 
+                        row.get('team_id'),
+                        row.get('team_name'),
+                        row.get('abbreviation'),
+                        row.get('season_active')
+                    ))
+                
+                conn.commit()
+                rows_inserted = len(teams_df)
+                self.logger.info(f"Processed {rows_inserted} team records")
                 
             return True
             
         except Exception as e:
-            self.logger.error(f"Error storing odds data: {str(e)}")
+            self.logger.error(f"Error storing team data: {str(e)}")
+            return False
+    
+    def store_games(self, games_df: pd.DataFrame) -> bool:
+        """
+        Store game information in database
+        
+        Args:
+            games_df: DataFrame with game information
+            
+        Returns:
+            True if successful
+        """
+        try:
+            if games_df.empty:
+                self.logger.warning("No game data to store")
+                return False
+            
+            # Ensure required columns exist
+            required_cols = ['sport', 'league', 'game_id', 'game_date', 'home_team_id', 'away_team_id']
+            missing_cols = [col for col in required_cols if col not in games_df.columns]
+            if missing_cols:
+                self.logger.error(f"Missing required columns: {missing_cols}")
+                return False
+            
+            # Add current season if not present
+            if 'season' not in games_df.columns:
+                games_df['season'] = datetime.now().year
+            
+            # Convert source_keys to JSON string if it's a dict
+            if 'source_keys' in games_df.columns:
+                games_df['source_keys'] = games_df['source_keys'].apply(
+                    lambda x: json.dumps(x) if isinstance(x, dict) else x
+                )
+            
+            # Handle NaN values
+            games_df = games_df.replace({np.nan: None})
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Use ON CONFLICT DO UPDATE to preserve created_at and update changed fields
+                cursor = conn.cursor()
+                
+                for _, row in games_df.iterrows():
+                    cursor.execute("""
+                        INSERT INTO games 
+                        (sport, league, game_id, season, game_date, home_team_id, away_team_id, 
+                         status, home_score, away_score, source_keys)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(sport, league, game_id) DO UPDATE SET
+                            status = excluded.status,
+                            home_score = excluded.home_score,
+                            away_score = excluded.away_score,
+                            source_keys = excluded.source_keys,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (
+                        row.get('sport'),
+                        row.get('league'),
+                        row.get('game_id'),
+                        row.get('season'),
+                        row.get('game_date'),
+                        row.get('home_team_id'),
+                        row.get('away_team_id'),
+                        row.get('status', 'scheduled'),
+                        row.get('home_score'),
+                        row.get('away_score'),
+                        row.get('source_keys')
+                    ))
+                
+                conn.commit()
+                rows_inserted = len(games_df)
+                self.logger.info(f"Processed {rows_inserted} game records")
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error storing game data: {str(e)}")
+            return False
+    
+    def store_team_stats(self, team_stats_df: pd.DataFrame) -> bool:
+        """
+        Store team statistics in database
+        
+        Args:
+            team_stats_df: DataFrame with team statistics
+            
+        Returns:
+            True if successful
+        """
+        try:
+            if team_stats_df.empty:
+                self.logger.warning("No team stats data to store")
+                return False
+            
+            # Ensure required columns exist
+            required_cols = ['sport', 'league', 'team_id', 'season']
+            missing_cols = [col for col in required_cols if col not in team_stats_df.columns]
+            if missing_cols:
+                self.logger.error(f"Missing required columns: {missing_cols}")
+                return False
+            
+            # Convert metrics dict to JSON string
+            if 'metrics' in team_stats_df.columns:
+                team_stats_df['metrics'] = team_stats_df['metrics'].apply(
+                    lambda x: json.dumps(x) if isinstance(x, dict) else x
+                )
+            
+            # Handle NaN values
+            team_stats_df = team_stats_df.replace({np.nan: None})
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Use ON CONFLICT DO UPDATE to preserve creation time and update relevant fields
+                cursor = conn.cursor()
+                
+                for _, row in team_stats_df.iterrows():
+                    cursor.execute("""
+                        INSERT INTO team_stats 
+                        (sport, league, team_id, season, date, games_played, wins, losses, metrics)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(sport, league, team_id, season, date) DO UPDATE SET
+                            games_played = excluded.games_played,
+                            wins = excluded.wins,
+                            losses = excluded.losses,
+                            metrics = excluded.metrics,
+                            last_updated = CURRENT_TIMESTAMP
+                    """, (
+                        row.get('sport'),
+                        row.get('league'),
+                        row.get('team_id'),
+                        row.get('season'),
+                        row.get('date'),
+                        row.get('games_played'),
+                        row.get('wins'),
+                        row.get('losses'),
+                        row.get('metrics')
+                    ))
+                
+                conn.commit()
+                rows_inserted = len(team_stats_df)
+                self.logger.info(f"Processed {rows_inserted} team stats records")
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error storing team stats data: {str(e)}")
             return False
     
     def store_predictions(self, predictions: List[Dict]) -> bool:
         """
-        Store model predictions in database
+        Store model predictions in database (sport-aware)
         
         Args:
-            predictions: List of prediction dictionaries
+            predictions: List of prediction dictionaries with sport-aware schema
             
         Returns:
             True if successful
@@ -266,20 +441,22 @@ class DatabaseManager:
             
             predictions_df = pd.DataFrame(predictions)
             
-            # Ensure required columns
+            # Ensure required columns for new sport-aware schema
+            # predicted_total and total_confidence are optional for winner-only models
             required_columns = [
-                'game_date', 'away_team', 'home_team', 'predicted_winner',
-                'win_probability', 'predicted_total', 'total_confidence', 'model_version'
+                'sport', 'league', 'game_id', 'game_date', 'home_team_id', 'away_team_id',
+                'predicted_winner', 'win_probability'
             ]
             
-            for col in required_columns:
-                if col not in predictions_df.columns:
-                    predictions_df[col] = None
+            missing_cols = [col for col in required_columns if col not in predictions_df.columns]
+            if missing_cols:
+                self.logger.error(f"Missing required columns: {missing_cols}")
+                return False
             
-            # Convert key_factors to JSON string if it's a list
+            # Convert key_factors to JSON string if it's a dict/list
             if 'key_factors' in predictions_df.columns:
                 predictions_df['key_factors'] = predictions_df['key_factors'].apply(
-                    lambda x: json.dumps(x) if isinstance(x, list) else x
+                    lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
                 )
             
             # Handle date conversion
@@ -289,8 +466,32 @@ class DatabaseManager:
             predictions_df = predictions_df.replace({np.nan: None})
             
             with sqlite3.connect(self.db_path) as conn:
-                predictions_df.to_sql('predictions', conn, if_exists='append', index=False)
+                # Use INSERT OR REPLACE for predictions (no explicit UNIQUE constraint but good practice)
+                cursor = conn.cursor()
                 
+                for _, row in predictions_df.iterrows():
+                    cursor.execute("""
+                        INSERT INTO predictions 
+                        (sport, league, game_id, game_date, home_team_id, away_team_id,
+                         predicted_winner, win_probability, predicted_total, total_confidence,
+                         model_version, key_factors)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        row.get('sport'),
+                        row.get('league'),
+                        row.get('game_id'),
+                        row.get('game_date'),
+                        row.get('home_team_id'),
+                        row.get('away_team_id'),
+                        row.get('predicted_winner'),
+                        row.get('win_probability'),
+                        row.get('predicted_total'),
+                        row.get('total_confidence'),
+                        row.get('model_version'),
+                        row.get('key_factors')
+                    ))
+                
+                conn.commit()
                 self.logger.info(f"Stored {len(predictions_df)} predictions")
                 
             return True
@@ -299,39 +500,62 @@ class DatabaseManager:
             self.logger.error(f"Error storing predictions: {str(e)}")
             return False
     
-    def get_historical_games(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    def get_historical_games(self, start_date: datetime, end_date: datetime, 
+                           sport: str = None, league: str = None) -> pd.DataFrame:
         """
-        Get historical game data for analysis
+        Get historical game data for analysis (sport-aware)
         
         Args:
             start_date: Start date for data
             end_date: End date for data
+            sport: Optional sport filter (e.g., 'MLB', 'NBA')
+            league: Optional league filter (e.g., 'MLB', 'NBA', 'NCAA')
             
         Returns:
             DataFrame with historical game data
         """
         try:
-            query = """
-                SELECT DISTINCT
-                    game_pk,
-                    game_date,
-                    home_team,
-                    away_team,
-                    home_score,
-                    away_score,
-                    total_runs,
-                    home_win
-                FROM statcast_data
-                WHERE game_date BETWEEN ? AND ?
-                    AND game_pk IS NOT NULL
-                    AND total_runs IS NOT NULL
-                ORDER BY game_date DESC
+            # Build query with optional sport/league filters
+            where_conditions = ["g.game_date BETWEEN ? AND ?"]
+            params = [start_date.date(), end_date.date()]
+            
+            if sport:
+                where_conditions.append("g.sport = ?")
+                params.append(sport)
+            
+            if league:
+                where_conditions.append("g.league = ?") 
+                params.append(league)
+            
+            query = f"""
+                SELECT 
+                    g.sport,
+                    g.league,
+                    g.game_id,
+                    g.game_date,
+                    g.season,
+                    ht.team_name as home_team,
+                    at.team_name as away_team,
+                    g.home_team_id,
+                    g.away_team_id,
+                    g.home_score,
+                    g.away_score,
+                    g.status,
+                    g.source_keys
+                FROM games g
+                LEFT JOIN teams ht ON g.home_team_id = ht.team_id AND g.sport = ht.sport AND g.league = ht.league AND g.season = ht.season_active
+                LEFT JOIN teams at ON g.away_team_id = at.team_id AND g.sport = at.sport AND g.league = at.league AND g.season = at.season_active
+                WHERE {' AND '.join(where_conditions)}
+                    AND g.status = 'final'
+                    AND g.home_score IS NOT NULL
+                    AND g.away_score IS NOT NULL
+                ORDER BY g.game_date DESC
             """
             
             with sqlite3.connect(self.db_path) as conn:
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=params)
                 
-            self.logger.info(f"Retrieved {len(df)} historical games")
+            self.logger.info(f"Retrieved {len(df)} historical games for {sport or 'all sports'}")
             return df
             
         except Exception as e:
@@ -403,8 +627,7 @@ class DatabaseManager:
         """
         try:
             table_mapping = {
-                'statcast': 'statcast_data',
-                'odds': 'odds_data'
+                'statcast': 'statcast_data'
             }
             
             actual_table = table_mapping.get(table, table)
@@ -433,7 +656,7 @@ class DatabaseManager:
             
             with sqlite3.connect(self.db_path) as conn:
                 # Count records in each table
-                tables = ['statcast_data', 'odds_data', 'predictions', 'team_stats']
+                tables = ['statcast_data', 'predictions', 'team_stats', 'teams', 'games', 'model_metrics']
                 
                 for table in tables:
                     try:
@@ -511,12 +734,13 @@ class DatabaseManager:
             self.logger.error(f"Error getting team performance for {team}: {str(e)}")
             return pd.DataFrame()
     
-    def store_model_metrics(self, metrics: Dict) -> bool:
+    def store_model_metrics(self, metrics: Dict, sport: str = 'MLB') -> bool:
         """
         Store model performance metrics
         
         Args:
             metrics: Dictionary with model metrics
+            sport: Sport name (required by schema)
             
         Returns:
             True if successful
@@ -529,18 +753,31 @@ class DatabaseManager:
                     for metric_name, metric_value in model_metrics.items():
                         if isinstance(metric_value, (int, float)):
                             records.append({
+                                'sport': sport,
                                 'model_type': model_type,
                                 'metric_name': metric_name,
                                 'metric_value': float(metric_value)
                             })
             
             if records:
-                metrics_df = pd.DataFrame(records)
-                
                 with sqlite3.connect(self.db_path) as conn:
-                    metrics_df.to_sql('model_metrics', conn, if_exists='append', index=False)
+                    cursor = conn.cursor()
+                    
+                    for record in records:
+                        cursor.execute("""
+                            INSERT INTO model_metrics 
+                            (sport, model_type, metric_name, metric_value)
+                            VALUES (?, ?, ?, ?)
+                        """, (
+                            record['sport'],
+                            record['model_type'],
+                            record['metric_name'],
+                            record['metric_value']
+                        ))
+                    
+                    conn.commit()
                 
-                self.logger.info(f"Stored {len(records)} model metrics")
+                self.logger.info(f"Stored {len(records)} model metrics for {sport}")
                 
             return True
             
@@ -565,8 +802,8 @@ class DatabaseManager:
                 # Delete old statcast data
                 conn.execute("DELETE FROM statcast_data WHERE game_date < ?", [cutoff_date.date()])
                 
-                # Delete old odds data
-                conn.execute("DELETE FROM odds_data WHERE game_date < ?", [cutoff_date.date()])
+                # Delete old model metrics
+                conn.execute("DELETE FROM model_metrics WHERE date_recorded < ?", [cutoff_date])
                 
                 # Delete old predictions
                 conn.execute("DELETE FROM predictions WHERE game_date < ?", [cutoff_date.date()])
