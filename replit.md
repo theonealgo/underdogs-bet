@@ -35,7 +35,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Data Collection Strategy
 - **Baseball Savant Integration**: Uses pybaseball library for Statcast data, team statistics, and schedules
-- **Web Scraping**: Custom scraper for OddsShark betting trends and market data
+- **Multi-Sport Data Collection**: Modular system designed for reliable sports data APIs (replacing web scraping)
 - **Rate Limiting**: Built-in delays and retry logic to respect API limits
 - **Error Handling**: Graceful degradation when data sources are unavailable
 
@@ -69,7 +69,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Data Sources
 - **Baseball Savant/Statcast**: Primary source for MLB game data, player statistics, and advanced metrics
-- **OddsShark**: Betting trends, market data, and odds information
+- **Reliable Sports APIs**: System designed to accommodate SportsData.io, Sportradar, or other reliable sports data APIs
 - **Alternative APIs**: System designed to accommodate SportsData.io, Sportradar, or The Odds API as future integrations
 
 The system is designed with modularity in mind, allowing for easy integration of additional sports leagues (NBA, NFL, NHL) and data sources while maintaining the same architectural patterns.

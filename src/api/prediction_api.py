@@ -8,7 +8,7 @@ import json
 from data_storage.database import DatabaseManager
 from models.prediction_models import MLBPredictor
 from data_collectors.baseball_savant_scraper import BaseballSavantScraper
-from data_collectors.oddshark_scraper import OddsSharkScraper
+# Note: OddsShark dependency removed
 
 class PredictionAPI:
     """
@@ -20,7 +20,7 @@ class PredictionAPI:
         self.db_manager = db_manager
         self.predictor = predictor
         self.baseball_scraper = BaseballSavantScraper()
-        self.odds_scraper = OddsSharkScraper()
+        # Note: OddsShark dependency removed
     
     def get_todays_predictions(self, date: datetime = None) -> List[Dict]:
         """
@@ -406,13 +406,7 @@ class PredictionAPI:
             # Add weather info (placeholder - would come from weather API)
             enhanced['weather'] = self._get_weather_info(game_date)
             
-            # Add betting odds context (from odds data)
-            odds_context = self._get_odds_context(
-                prediction.get('home_team'), 
-                prediction.get('away_team'), 
-                game_date
-            )
-            enhanced.update(odds_context)
+            # Note: Betting odds context removed - no longer using OddsShark
             
             # Add model confidence score
             enhanced['model_score'] = self._calculate_model_score(prediction)
@@ -450,40 +444,7 @@ class PredictionAPI:
             'wind_direction': 'SSW'
         }
     
-    def _get_odds_context(self, home_team: str, away_team: str, game_date: datetime) -> Dict:
-        """Get betting odds context from database"""
-        try:
-            # Query recent odds data for these teams
-            query = """
-                SELECT *
-                FROM odds_data
-                WHERE (home_team = ? AND away_team = ?)
-                   OR (home_team LIKE ? OR away_team LIKE ?)
-                ORDER BY created_at DESC
-                LIMIT 5
-            """
-            
-            with self.db_manager._get_connection() as conn:
-                df = pd.read_sql_query(
-                    query, 
-                    conn, 
-                    params=[home_team, away_team, f"%{home_team}%", f"%{away_team}%"]
-                )
-            
-            if not df.empty:
-                latest_odds = df.iloc[0]
-                return {
-                    'market_home_moneyline': latest_odds.get('home_moneyline'),
-                    'market_away_moneyline': latest_odds.get('away_moneyline'),
-                    'market_spread': latest_odds.get('spread'),
-                    'market_total': latest_odds.get('total')
-                }
-            
-            return {}
-            
-        except Exception as e:
-            self.logger.error(f"Error getting odds context: {str(e)}")
-            return {}
+    # Note: _get_odds_context method removed - no longer using OddsShark odds data
     
     def _calculate_model_score(self, prediction: Dict) -> float:
         """Calculate overall model confidence score"""

@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from data_storage.database import DatabaseManager
 from models.prediction_models import MLBPredictor
 from data_collectors.baseball_savant_scraper import BaseballSavantScraper
-from data_collectors.oddshark_scraper import OddsSharkScraper
 from utils.scheduler import DataScheduler
 from api.prediction_api import PredictionAPI
 from backtesting.backtester import Backtester
@@ -74,12 +73,7 @@ def show_predictions_page(api, db_manager):
                         db_manager.store_statcast_data(savant_data)
                         st.success("Baseball Savant data updated!")
                     
-                    # Update OddsShark data
-                    odds_scraper = OddsSharkScraper()
-                    odds_data = odds_scraper.get_mlb_trends()
-                    if odds_data:
-                        db_manager.store_odds_data(odds_data)
-                        st.success("OddsShark data updated!")
+                    # Note: OddsShark dependency removed - no longer using odds data
                         
                 except Exception as e:
                     st.error(f"Error updating data: {str(e)}")

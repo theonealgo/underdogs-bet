@@ -11,7 +11,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_collectors.baseball_savant_scraper import BaseballSavantScraper
-from data_collectors.oddshark_scraper import OddsSharkScraper
+# Note: OddsShark dependency removed
 from data_storage.database import DatabaseManager
 from models.prediction_models import MLBPredictor
 
@@ -24,7 +24,7 @@ class DataScheduler:
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
         self.baseball_scraper = BaseballSavantScraper()
-        self.odds_scraper = OddsSharkScraper()
+        # Note: OddsShark dependency removed
         self.predictor = MLBPredictor()
         self.is_running = False
         self.scheduler_thread = None
@@ -113,13 +113,7 @@ class DataScheduler:
                 results['errors'].append(f"Baseball Savant: {savant_result['error']}")
                 results['success'] = False
             
-            # Update OddsShark data
-            odds_result = self._update_odds_data()
-            if odds_result['success']:
-                results['messages'].append(f"OddsShark: {odds_result['message']}")
-            else:
-                results['errors'].append(f"OddsShark: {odds_result['error']}")
-                results['success'] = False
+            # Note: OddsShark data update removed - no longer using odds data
             
             # Update team statistics
             team_stats_result = self._update_team_stats()
@@ -168,41 +162,7 @@ class DataScheduler:
                 'error': f"Baseball Savant update error: {str(e)}"
             }
     
-    def _update_odds_data(self) -> Dict:
-        """Update OddsShark odds and trends data"""
-        try:
-            # Get current MLB trends
-            trends_data = self.odds_scraper.get_mlb_trends()
-            
-            # Get current odds
-            odds_data = self.odds_scraper.get_mlb_odds()
-            
-            # Combine trends and odds
-            all_odds_data = trends_data + odds_data
-            
-            if all_odds_data:
-                success = self.db_manager.store_odds_data(all_odds_data)
-                if success:
-                    return {
-                        'success': True,
-                        'message': f"Updated {len(all_odds_data)} odds records"
-                    }
-                else:
-                    return {
-                        'success': False,
-                        'error': "Failed to store odds data"
-                    }
-            else:
-                return {
-                    'success': False,
-                    'error': "No new odds data available"
-                }
-                
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f"OddsShark update error: {str(e)}"
-            }
+    # Note: _update_odds_data method removed - no longer using OddsShark odds data
     
     def _update_team_stats(self) -> Dict:
         """Update team statistics"""
