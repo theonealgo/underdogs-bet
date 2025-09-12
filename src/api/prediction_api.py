@@ -340,32 +340,6 @@ class PredictionAPI:
             self.logger.info(f"No games found in database for {date.date()}")
             return pd.DataFrame()
             
-            # If no games for today, create representative matchups based on recent teams
-            if not recent_games.empty:
-                # Get unique teams from recent games
-                teams = pd.concat([recent_games['home_team'], recent_games['away_team']]).unique()
-                
-                if len(teams) >= 6:
-                    # Create 3 sample matchups
-                    sample_games = []
-                    team_pairs = [
-                        (teams[0], teams[1]),
-                        (teams[2], teams[3]),
-                        (teams[4], teams[5] if len(teams) > 5 else teams[0])
-                    ]
-                    
-                    for i, (away_team, home_team) in enumerate(team_pairs):
-                        sample_games.append({
-                            'game_pk': f"sample_{date.strftime('%Y%m%d')}_{i}",
-                            'game_date': date.date(),
-                            'home_team': home_team,
-                            'away_team': away_team
-                        })
-                    
-                    return pd.DataFrame(sample_games)
-            
-            return pd.DataFrame()
-            
         except Exception as e:
             self.logger.error(f"Error getting today's games: {str(e)}")
             return pd.DataFrame()

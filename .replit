@@ -1,4 +1,4 @@
-modules = ["python-3.11"]
+modules = ["python-3.11", "postgresql-16"]
 [agent]
 integrations = ["web_scraper:1.0.0"]
 
@@ -47,5 +47,5 @@ localPort = 36583
 externalPort = 3000
 
 [[ports]]
-localPort = 46849
+localPort = 43199
 externalPort = 3002

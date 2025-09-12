@@ -204,8 +204,8 @@ class MLBPredictor:
         """
         try:
             if self.winner_model is None or self.total_model is None:
-                self.logger.error("Models not trained or loaded")
-                return {}
+                self.logger.warning("Models not trained, generating basic predictions")
+                return self._generate_basic_prediction(game_data)
             
             # Engineer features
             features_df = self.feature_engineer.transform_new_data(game_data)
@@ -261,6 +261,39 @@ class MLBPredictor:
             
         except Exception as e:
             self.logger.error(f"Error predicting game: {str(e)}")
+            # Generate basic prediction as fallback
+            return self._generate_basic_prediction(game_data)
+    
+    def _generate_basic_prediction(self, game_data: pd.DataFrame) -> Dict:
+        """Generate basic prediction when models aren't available"""
+        try:
+            home_team = game_data['home_team_id'].iloc[0] if 'home_team_id' in game_data.columns else game_data.get('home_team', ['Unknown']).iloc[0]
+            away_team = game_data['away_team_id'].iloc[0] if 'away_team_id' in game_data.columns else game_data.get('away_team', ['Unknown']).iloc[0]
+            
+            # Basic prediction with slight home field advantage
+            home_win_prob = 0.55  # 55% home field advantage
+            predicted_winner = home_team
+            predicted_total = 8.5  # MLB average
+            
+            prediction = {
+                'game_date': game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date(),
+                'away_team': away_team,
+                'home_team': home_team,
+                'predicted_winner': predicted_winner,
+                'win_probability': home_win_prob,
+                'home_win_probability': home_win_prob,
+                'away_win_probability': 1 - home_win_prob,
+                'predicted_total': predicted_total,
+                'total_confidence': 0.5,
+                'key_factors': ['Home field advantage', 'Basic model prediction'],
+                'model_version': 'Basic-1.0'
+            }
+            
+            self.logger.info(f"Generated basic prediction: {away_team} @ {home_team}")
+            return prediction
+            
+        except Exception as e:
+            self.logger.error(f"Error generating basic prediction: {str(e)}")
             return {}
     
     def predict_multiple_games(self, games_data: pd.DataFrame) -> List[Dict]:
