@@ -19,6 +19,7 @@ from src.utils.performance_visualizer import PerformanceVisualizer
 from src.utils.scheduler import DataScheduler
 from src.api.prediction_api import PredictionAPI
 from src.backtesting.backtester import Backtester
+from src.utils.sport_data_manager import SportDataManager
 
 # Initialize components
 @st.cache_resource
@@ -26,6 +27,7 @@ def initialize_components():
     db_manager = DatabaseManager()
     predictor = MLBPredictor()
     api = PredictionAPI(db_manager, predictor)
+    sport_data_manager = SportDataManager()
     
     # Initialize learning system components
     result_tracker = ResultTracker(db_manager)
@@ -33,80 +35,98 @@ def initialize_components():
     intelligent_retrainer = IntelligentRetrainer(db_manager, predictor)
     performance_visualizer = PerformanceVisualizer(db_manager)
     
-    return (db_manager, predictor, api, result_tracker, 
+    return (db_manager, predictor, api, sport_data_manager, result_tracker, 
             performance_analyzer, intelligent_retrainer, performance_visualizer)
 
 def main():
     st.set_page_config(
-        page_title="MLB Prediction System",
-        page_icon="⚾",
+        page_title="Multi-Sport Prediction System",
+        page_icon="🏆",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    st.title("⚾ MLB Game Prediction System")
-    st.markdown("Real-time MLB game winner and totals predictions using machine learning")
+    st.title("🏆 Multi-Sport Prediction System")
+    st.markdown("Real-time game predictions across multiple sports using machine learning")
     
     # Initialize components
-    (db_manager, predictor, api, result_tracker, 
+    (db_manager, predictor, api, sport_data_manager, result_tracker, 
      performance_analyzer, intelligent_retrainer, performance_visualizer) = initialize_components()
     
     # Sidebar navigation
-    st.sidebar.title("Navigation")
+    st.sidebar.title("🏆 Sports Navigation")
+    
+    # Sport selection
+    selected_sport = st.sidebar.selectbox(
+        "🏈 Choose Sport",
+        ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
+    )
+    
+    # Page selection based on sport
     page = st.sidebar.selectbox(
-        "Choose a page",
+        "📊 Choose Page",
         ["Today's Predictions", "Historical Data", "Model Performance", 
          "Learning System", "Result Tracking", "Data Pipeline", "Backtesting"]
     )
     
+    # Extract sport name from selection
+    sport_code = selected_sport.split()[0]  # Gets 'MLB', 'NBA', etc.
+    
     if page == "Today's Predictions":
-        show_predictions_page(api, db_manager)
+        show_predictions_page(api, db_manager, sport_data_manager, sport_code)
     elif page == "Historical Data":
-        show_historical_data_page(db_manager)
+        show_historical_data_page(db_manager, sport_code)
     elif page == "Model Performance":
-        show_model_performance_page(predictor, db_manager)
+        show_model_performance_page(predictor, db_manager, sport_code)
     elif page == "Learning System":
-        show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer)
+        show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer, sport_code)
     elif page == "Result Tracking":
-        show_result_tracking_page(result_tracker, performance_visualizer, db_manager)
+        show_result_tracking_page(result_tracker, performance_visualizer, db_manager, sport_code)
     elif page == "Data Pipeline":
-        show_data_pipeline_page(db_manager)
+        show_data_pipeline_page(db_manager, sport_code)
     elif page == "Backtesting":
-        show_backtesting_page(db_manager, predictor)
+        show_backtesting_page(db_manager, predictor, sport_code)
 
-def show_predictions_page(api, db_manager):
-    st.header("Today's Game Predictions")
+def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
+    st.header(f"📅 {sport_code} Today's Game Predictions")
     
     col1, col2 = st.columns([3, 1])
     
     with col2:
         st.subheader("Data Controls")
-        if st.button("🔄 Update Data", help="Fetch latest data from sources"):
-            with st.spinner("Updating data..."):
+        if st.button("🔄 Update Data", help=f"Fetch latest {sport_code} data"):
+            with st.spinner(f"Updating {sport_code} data..."):
                 try:
-                    # Import MLB schedule collector
-                    from src.data_collectors.mlb_schedule_collector import MLBScheduleCollector
+                    # Use sport-specific data manager
+                    result = sport_data_manager.update_sport_data(sport_code, days=7)
                     
-                    # Update today's schedule first
-                    schedule_collector = MLBScheduleCollector()
-                    todays_games = schedule_collector.get_todays_games()
-                    if not todays_games.empty:
-                        db_manager.store_games(todays_games)
-                        st.success(f"Found {len(todays_games)} games for today!")
+                    if result['success']:
+                        # Store games if found
+                        todays_games = sport_data_manager.get_todays_games(sport_code)
+                        if not todays_games.empty:
+                            # Standardize data before storing
+                            if hasattr(sport_data_manager._collectors[sport_code]['collector'], 'standardize_data'):
+                                todays_games = sport_data_manager._collectors[sport_code]['collector'].standardize_data(todays_games)
+                            elif sport_code == 'MLB':
+                                todays_games['sport'] = 'MLB'
+                                todays_games['league'] = 'MLB'
+                            
+                            db_manager.store_games(todays_games)
+                        
+                        # Show success messages
+                        for message in result['messages']:
+                            st.success(message)
+                        
+                        # Show any errors
+                        for error in result['errors']:
+                            st.warning(error)
                     else:
-                        st.warning("No games scheduled for today")
-                    
-                    # Update Baseball Savant data
-                    savant_scraper = BaseballSavantScraper()
-                    savant_data = savant_scraper.get_recent_games(days=7)
-                    if not savant_data.empty:
-                        db_manager.store_statcast_data(savant_data)
-                        st.success("Baseball Savant data updated!")
-                    
-                    # Note: OddsShark dependency removed - no longer using odds data
+                        st.error(f"Failed to update {sport_code} data")
+                        for error in result['errors']:
+                            st.error(error)
                         
                 except Exception as e:
-                    st.error(f"Error updating data: {str(e)}")
+                    st.error(f"Error updating {sport_code} data: {str(e)}")
         
         if st.button("🤖 Generate Predictions"):
             with st.spinner("Generating predictions..."):
@@ -157,8 +177,8 @@ def show_predictions_page(api, db_manager):
         else:
             st.info("Click 'Generate Predictions' to see today's game predictions")
 
-def show_historical_data_page(db_manager):
-    st.header("Historical Data Analysis")
+def show_historical_data_page(db_manager, sport_code):
+    st.header(f"📊 {sport_code} Historical Data Analysis")
     
     # Date range selector
     col1, col2 = st.columns(2)
@@ -209,8 +229,8 @@ def show_historical_data_page(db_manager):
         except Exception as e:
             st.error(f"Error loading historical data: {str(e)}")
 
-def show_model_performance_page(predictor, db_manager):
-    st.header("Model Performance Metrics")
+def show_model_performance_page(predictor, db_manager, sport_code):
+    st.header(f"⚡ {sport_code} Model Performance Metrics")
     
     try:
         # Get model metrics
@@ -267,8 +287,8 @@ def show_model_performance_page(predictor, db_manager):
     except Exception as e:
         st.error(f"Error loading model performance: {str(e)}")
 
-def show_data_pipeline_page(db_manager):
-    st.header("Data Pipeline Status")
+def show_data_pipeline_page(db_manager, sport_code):
+    st.header(f"🔧 {sport_code} Data Pipeline Status")
     
     # Pipeline status
     col1, col2 = st.columns(2)
@@ -328,8 +348,8 @@ def show_data_pipeline_page(db_manager):
             except Exception as e:
                 st.error(f"Error running data update: {str(e)}")
 
-def show_backtesting_page(db_manager, predictor):
-    st.header("Model Backtesting")
+def show_backtesting_page(db_manager, predictor, sport_code):
+    st.header(f"📈 {sport_code} Model Backtesting")
     
     # Backtesting parameters
     col1, col2, col3 = st.columns(3)
@@ -384,8 +404,8 @@ def show_backtesting_page(db_manager, predictor):
             except Exception as e:
                 st.error(f"Error running backtest: {str(e)}")
 
-def show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer):
-    st.header("🧠 Automated Learning System")
+def show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer, sport_code):
+    st.header(f"🧠 {sport_code} Automated Learning System")
     st.markdown("Monitor how the model learns from its mistakes and improves over time")
     
     # Learning system status
@@ -546,8 +566,8 @@ def show_learning_system_page(performance_analyzer, intelligent_retrainer, perfo
             for rec in evaluation['recommendations']:
                 st.write(f"• {rec}")
 
-def show_result_tracking_page(result_tracker, performance_visualizer, db_manager):
-    st.header("📊 Result Tracking & Accuracy Monitoring")
+def show_result_tracking_page(result_tracker, performance_visualizer, db_manager, sport_code):
+    st.header(f"📊 {sport_code} Result Tracking & Accuracy Monitoring")
     st.markdown("Track how predictions compare to actual game results")
     
     # Result tracking controls

@@ -19,12 +19,13 @@ class IntelligentRetrainer:
     Intelligent model retraining system that learns from prediction errors and performance trends
     """
     
-    def __init__(self, db_manager: DatabaseManager, predictor: MLBPredictor):
+    def __init__(self, db_manager: DatabaseManager, predictor, sport: str = 'MLB'):
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
         self.predictor = predictor
-        self.performance_analyzer = PerformanceAnalyzer(db_manager)
-        self.result_tracker = ResultTracker(db_manager)
+        self.sport = sport
+        self.performance_analyzer = PerformanceAnalyzer(db_manager, sport)
+        self.result_tracker = ResultTracker(db_manager, sport)
         
         # Retraining thresholds
         self.thresholds = {
@@ -47,10 +48,13 @@ class IntelligentRetrainer:
         # Load retraining history
         self._load_retraining_history()
     
-    def evaluate_retraining_need(self) -> Dict:
+    def evaluate_retraining_need(self, sport: Optional[str] = None) -> Dict:
         """
         Evaluate whether model retraining is needed based on multiple criteria
         
+        Args:
+            sport: Sport to evaluate (defaults to instance sport)
+            
         Returns:
             Dictionary with evaluation results and recommendation
         """
@@ -74,7 +78,8 @@ class IntelligentRetrainer:
                 return evaluation
             
             # Get recent performance data
-            recent_performance = self._get_recent_performance_metrics()
+            current_sport = sport or self.sport
+            recent_performance = self._get_recent_performance_metrics(current_sport)
             evaluation['metrics'] = recent_performance
             
             if not recent_performance.get('sufficient_data', False):
@@ -117,9 +122,10 @@ class IntelligentRetrainer:
                 'retraining_needed': False
             }
     
-    def _get_recent_performance_metrics(self) -> Dict:
+    def _get_recent_performance_metrics(self, sport: Optional[str] = None) -> Dict:
         """Get recent performance metrics for evaluation"""
         try:
+            current_sport = sport or self.sport
             current_date = datetime.now()
             
             # Get accuracy data for last 7 days
@@ -135,12 +141,12 @@ class IntelligentRetrainer:
                         total_rmse,
                         confidence_calibration
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND date_period >= DATE('now', '-7 days')
                     ORDER BY date_period DESC
                 """
                 
-                df = pd.read_sql_query(query, conn)
+                df = pd.read_sql_query(query, conn, params=[current_sport])
             
             if df.empty:
                 return {'sufficient_data': False, 'reason': 'No recent accuracy data'}
@@ -171,11 +177,11 @@ class IntelligentRetrainer:
             retrain_query = """
                 SELECT MAX(date_recorded) as last_retrain
                 FROM model_metrics
-                WHERE sport = 'MLB' AND metric_name = 'retraining_completed'
+                WHERE sport = ? AND metric_name = 'retraining_completed'
             """
             
             with sqlite3.connect(self.db_manager.db_path) as conn:
-                cursor = conn.execute(retrain_query)
+                cursor = conn.execute(retrain_query, (current_sport,))
                 result = cursor.fetchone()
                 last_retrain = result[0] if result and result[0] else None
             
@@ -258,7 +264,7 @@ class IntelligentRetrainer:
                 })
             
             # 6. Check for consecutive poor performance days
-            consecutive_poor = self._check_consecutive_poor_performance()
+            consecutive_poor = self._check_consecutive_poor_performance(self.sport)
             if consecutive_poor >= self.thresholds['consecutive_poor_days']:
                 triggers.append({
                     'type': 'consecutive_poor_performance',
@@ -269,7 +275,7 @@ class IntelligentRetrainer:
                 })
             
             # 7. Check high confidence error rate
-            high_conf_error_rate = self._check_high_confidence_error_rate()
+            high_conf_error_rate = self._check_high_confidence_error_rate(self.sport)
             if high_conf_error_rate > self.thresholds['high_confidence_error_rate']:
                 triggers.append({
                     'type': 'high_confidence_errors',
@@ -285,19 +291,20 @@ class IntelligentRetrainer:
             self.logger.error(f"Error evaluating trigger conditions: {str(e)}")
             return []
     
-    def _check_consecutive_poor_performance(self) -> int:
+    def _check_consecutive_poor_performance(self, sport: Optional[str] = None) -> int:
         """Check for consecutive days of poor performance"""
         try:
+            current_sport = sport or self.sport
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 query = """
                     SELECT accuracy_rate
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND date_period >= DATE('now', '-7 days')
                     ORDER BY date_period DESC
                 """
                 
-                cursor = conn.execute(query)
+                cursor = conn.execute(query, (current_sport,))
                 results = cursor.fetchall()
             
             consecutive_poor = 0
@@ -313,22 +320,23 @@ class IntelligentRetrainer:
             self.logger.error(f"Error checking consecutive poor performance: {str(e)}")
             return 0
     
-    def _check_high_confidence_error_rate(self) -> float:
+    def _check_high_confidence_error_rate(self, sport: Optional[str] = None) -> float:
         """Check the rate of errors in high-confidence predictions"""
         try:
+            current_sport = sport or self.sport
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 query = """
                     SELECT 
                         COUNT(*) as high_conf_predictions,
                         SUM(CASE WHEN win_prediction_correct = 0 THEN 1 ELSE 0 END) as high_conf_errors
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND win_probability > 0.75
                     AND result_updated_at IS NOT NULL
                     AND game_date >= DATE('now', '-7 days')
                 """
                 
-                cursor = conn.execute(query)
+                cursor = conn.execute(query, (current_sport,))
                 result = cursor.fetchone()
             
             if result and result[0] > 0:
@@ -561,7 +569,7 @@ class IntelligentRetrainer:
                         # Sample older data to balance with recent
                         if len(older_data) > len(recent_data):
                             older_sample = older_data.sample(n=len(recent_data), random_state=42)
-                            training_data = pd.concat([recent_data, older_sample]).reset_index(drop=True)
+                            training_data = pd.concat([recent_data, older_sample], ignore_index=True)
             
             self.logger.info(f"Prepared training data: {len(training_data)} samples from {days_back} days")
             return training_data
@@ -715,12 +723,24 @@ class IntelligentRetrainer:
                 return {'error': 'No predictions generated for validation'}
             
             # Calculate validation metrics
+            accurate_predictions = []
+            all_confidences = []
+            
+            for p, (_, game) in zip(predictions, validation_data.iterrows()):
+                actual_winner = game.get('actual_winner')
+                if actual_winner is not None and pd.notna(actual_winner):
+                    predicted_winner = p.get('predicted_winner')
+                    if predicted_winner is not None:
+                        accurate_predictions.append(1 if predicted_winner == actual_winner else 0)
+                
+                win_prob = p.get('win_probability', 0)
+                if win_prob is not None:
+                    all_confidences.append(win_prob)
+            
             validation_metrics = {
                 'total_predictions': len(predictions),
-                'accuracy': np.mean([p.get('predicted_winner') == game.get('actual_winner') 
-                                   for p, (_, game) in zip(predictions, validation_data.iterrows()) 
-                                   if pd.notna(game.get('actual_winner'))]),
-                'avg_confidence': np.mean([p.get('win_probability', 0) for p in predictions])
+                'accuracy': np.mean(accurate_predictions) if accurate_predictions else 0.0,
+                'avg_confidence': np.mean(all_confidences) if all_confidences else 0.0
             }
             
             return validation_metrics
@@ -766,7 +786,7 @@ class IntelligentRetrainer:
                 description = f"Retraining evaluation: {evaluation['priority']} priority, {len(evaluation.get('triggers', []))} triggers"
                 action = 'Retraining scheduled' if evaluation['retraining_needed'] else 'Continue monitoring'
                 
-                conn.execute(query, ('MLB', 'xgboost', 'retraining_evaluation', 'priority_assessment',
+                conn.execute(query, (self.sport, 'xgboost', 'retraining_evaluation', 'priority_assessment',
                                    description, 1.0, action))
                 conn.commit()
                 
@@ -780,14 +800,14 @@ class IntelligentRetrainer:
                 query = """
                     SELECT date_recorded, metric_name, metric_value
                     FROM model_metrics
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND model_type = 'xgboost'
                     AND metric_name IN ('retraining_completed', 'accuracy_improvement')
                     ORDER BY date_recorded DESC
                     LIMIT 10
                 """
                 
-                cursor = conn.execute(query)
+                cursor = conn.execute(query, (self.sport,))
                 results = cursor.fetchall()
                 
                 # Parse results into history

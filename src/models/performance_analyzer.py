@@ -15,25 +15,28 @@ class PerformanceAnalyzer:
     Advanced performance analysis and error pattern detection for MLB predictions
     """
     
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, sport: str = 'MLB'):
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
+        self.sport = sport
         
-    def analyze_prediction_errors(self, days_back: int = 30) -> Dict:
+    def analyze_prediction_errors(self, days_back: int = 30, sport: Optional[str] = None) -> Dict:
         """
         Perform comprehensive error analysis on recent predictions
         
         Args:
             days_back: Number of days to analyze
+            sport: Sport to analyze (defaults to instance sport)
             
         Returns:
             Dictionary with detailed error analysis
         """
         try:
+            current_sport = sport or self.sport
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_back)
             
-            self.logger.info(f"Analyzing prediction errors for last {days_back} days")
+            self.logger.info(f"Analyzing {current_sport} prediction errors for last {days_back} days")
             
             analysis = {
                 'analysis_period': {
@@ -45,7 +48,7 @@ class PerformanceAnalyzer:
             }
             
             # Get predictions with results
-            predictions_df = self._get_predictions_with_results(start_date, end_date)
+            predictions_df = self._get_predictions_with_results(start_date, end_date, current_sport)
             
             if predictions_df.empty:
                 analysis['error'] = 'No predictions with results found for analysis period'
@@ -92,9 +95,10 @@ class PerformanceAnalyzer:
             self.logger.error(f"Error analyzing prediction errors: {str(e)}")
             return {'error': str(e), 'timestamp': datetime.now().isoformat()}
     
-    def _get_predictions_with_results(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    def _get_predictions_with_results(self, start_date: datetime, end_date: datetime, sport: Optional[str] = None) -> pd.DataFrame:
         """Get predictions with actual results for analysis"""
         try:
+            current_sport = sport or self.sport
             query = """
                 SELECT 
                     p.*,
@@ -103,7 +107,7 @@ class PerformanceAnalyzer:
                     g.away_score as game_away_score
                 FROM predictions p
                 LEFT JOIN games g ON p.game_id = g.game_id AND p.sport = g.sport
-                WHERE p.sport = 'MLB'
+                WHERE p.sport = ?
                 AND p.game_date >= DATE(?)
                 AND p.game_date <= DATE(?)
                 AND p.result_updated_at IS NOT NULL
@@ -111,7 +115,7 @@ class PerformanceAnalyzer:
             """
             
             with sqlite3.connect(self.db_manager.db_path) as conn:
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=[current_sport, start_date.date(), end_date.date()])
             
             return df
             
@@ -170,12 +174,16 @@ class PerformanceAnalyzer:
             ]
             
             if len(wrong_high_confidence) > 0:
+                # Get examples as DataFrame to ensure proper typing
+                examples_df = wrong_high_confidence[['game_date', 'home_team_id', 'away_team_id', 
+                                                    'win_probability', 'predicted_winner', 'actual_winner']]
+                examples_list = examples_df.head(5).to_dict('records')
+                
                 analysis['high_confidence_errors'] = {
                     'count': len(wrong_high_confidence),
                     'percentage_of_total': len(wrong_high_confidence) / total_predictions,
                     'average_confidence': wrong_high_confidence['win_probability'].mean(),
-                    'examples': wrong_high_confidence[['game_date', 'home_team_id', 'away_team_id', 
-                                                    'win_probability', 'predicted_winner', 'actual_winner']].head(5).to_dict('records')
+                    'examples': examples_list
                 }
             
             return analysis
@@ -198,11 +206,11 @@ class PerformanceAnalyzer:
             
             analysis = {
                 'total_predictions': len(total_df),
-                'mean_error': errors.mean(),
-                'mean_absolute_error': abs_errors.mean(),
-                'root_mean_square_error': np.sqrt((errors ** 2).mean()),
-                'median_absolute_error': abs_errors.median(),
-                'std_error': errors.std()
+                'mean_error': float(errors.mean()),
+                'mean_absolute_error': float(abs_errors.mean()),
+                'root_mean_square_error': float(np.sqrt((errors ** 2).mean())),
+                'median_absolute_error': float(abs_errors.median()),
+                'std_error': float(errors.std())
             }
             
             # Analyze over/under patterns
@@ -230,11 +238,12 @@ class PerformanceAnalyzer:
             
             analysis['prediction_range_breakdown'] = bin_analysis.to_dict()
             
-            # Identify worst predictions (highest absolute error)
-            worst_predictions = total_df.nlargest(5, 'total_absolute_error')
-            analysis['worst_predictions'] = worst_predictions[['game_date', 'home_team_id', 'away_team_id',
-                                                             'predicted_total', 'actual_total', 
-                                                             'total_absolute_error']].to_dict('records')
+            # Identify worst predictions (highest absolute error)  
+            worst_predictions_df = total_df.nlargest(5, 'total_absolute_error')
+            worst_examples = worst_predictions_df[['game_date', 'home_team_id', 'away_team_id',
+                                                  'predicted_total', 'actual_total', 
+                                                  'total_absolute_error']]
+            analysis['worst_predictions'] = worst_examples.to_dict('records')
             
             # Check for systematic biases by teams
             team_errors = defaultdict(list)
@@ -274,7 +283,8 @@ class PerformanceAnalyzer:
             win_df['confidence_bin'] = pd.cut(win_df['win_probability'], bins=confidence_bins)
             
             calibration_data = []
-            for bin_range in win_df['confidence_bin'].cat.categories:
+            confidence_categories = win_df['confidence_bin'].cat.categories
+            for bin_range in confidence_categories:
                 bin_data = win_df[win_df['confidence_bin'] == bin_range]
                 if len(bin_data) > 0:
                     avg_confidence = bin_data['win_probability'].mean()
@@ -321,31 +331,41 @@ class PerformanceAnalyzer:
     def _analyze_team_performance_patterns(self, df: pd.DataFrame) -> Dict:
         """Analyze prediction accuracy by team"""
         try:
-            team_stats = defaultdict(lambda: {
+            team_stats: Dict[str, Dict] = defaultdict(lambda: {
                 'predictions': 0, 'correct': 0, 'total_errors': [], 'win_confidences': []
             })
             
             # Aggregate team statistics
             for _, row in df.iterrows():
                 for team in [row['home_team_id'], row['away_team_id']]:
-                    team_stats[team]['predictions'] += 1
+                    stats = team_stats[team]
+                    stats['predictions'] += 1
                     
-                    if pd.notna(row['win_prediction_correct']):
-                        team_stats[team]['correct'] += row['win_prediction_correct']
+                    win_correct = row['win_prediction_correct']
+                    if pd.notna(win_correct) and not pd.isna(win_correct):
+                        stats['correct'] += int(win_correct)
                     
-                    if pd.notna(row['total_absolute_error']):
-                        team_stats[team]['total_errors'].append(row['total_absolute_error'])
+                    total_error = row['total_absolute_error']
+                    if pd.notna(total_error) and not pd.isna(total_error):
+                        stats['total_errors'].append(float(total_error))
                     
-                    if pd.notna(row['win_probability']):
-                        team_stats[team]['win_confidences'].append(row['win_probability'])
+                    win_prob = row['win_probability']
+                    if pd.notna(win_prob) and not pd.isna(win_prob):
+                        stats['win_confidences'].append(float(win_prob))
             
             # Calculate team metrics
             team_analysis = {}
             for team, stats in team_stats.items():
-                if stats['predictions'] >= 3:  # At least 3 predictions
-                    win_accuracy = stats['correct'] / stats['predictions'] if stats['predictions'] > 0 else 0
-                    avg_total_error = np.mean(stats['total_errors']) if stats['total_errors'] else None
-                    avg_confidence = np.mean(stats['win_confidences']) if stats['win_confidences'] else None
+                predictions_count = stats['predictions']
+                if predictions_count >= 3:  # At least 3 predictions
+                    correct_count = stats['correct']
+                    win_accuracy = correct_count / predictions_count if predictions_count > 0 else 0
+                    
+                    total_errors_list = stats['total_errors']
+                    avg_total_error = np.mean(total_errors_list) if len(total_errors_list) > 0 else None
+                    
+                    win_confidences_list = stats['win_confidences']
+                    avg_confidence = np.mean(win_confidences_list) if len(win_confidences_list) > 0 else None
                     
                     team_analysis[team] = {
                         'prediction_count': stats['predictions'],

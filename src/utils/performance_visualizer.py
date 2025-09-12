@@ -16,9 +16,10 @@ class PerformanceVisualizer:
     Create comprehensive visualizations for model performance monitoring and learning trends
     """
     
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, sport: str = 'MLB'):
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
+        self.sport = sport
         
         # Color scheme for consistent visualizations
         self.colors = {
@@ -56,13 +57,13 @@ class PerformanceVisualizer:
                         total_mae,
                         confidence_calibration
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND date_period >= DATE(?)
                     AND date_period <= DATE(?)
                     ORDER BY date_period
                 """
                 
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=[self.sport, start_date.date(), end_date.date()])
             
             if df.empty:
                 # Return empty chart with message
@@ -219,13 +220,13 @@ class PerformanceVisualizer:
                         away_team_id,
                         game_date
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND game_date >= DATE(?)
                     AND game_date <= DATE(?)
                     AND result_updated_at IS NOT NULL
                 """
                 
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=[self.sport, start_date.date(), end_date.date()])
             
             if df.empty:
                 fig = go.Figure()
@@ -412,13 +413,13 @@ class PerformanceVisualizer:
                         predicted_winner,
                         actual_winner
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND game_date >= DATE(?)
                     AND game_date <= DATE(?)
                     AND result_updated_at IS NOT NULL
                 """
                 
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=[self.sport, start_date.date(), end_date.date()])
             
             if df.empty:
                 fig = go.Figure()
@@ -611,7 +612,7 @@ class PerformanceVisualizer:
                 retrain_query = """
                     SELECT date_recorded, metric_value, metric_name
                     FROM model_metrics
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND model_type = 'xgboost'
                     AND metric_name IN ('retraining_completed', 'accuracy_improvement')
                     ORDER BY date_recorded
@@ -623,7 +624,7 @@ class PerformanceVisualizer:
                 accuracy_query = """
                     SELECT date_period, accuracy_rate
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB'
+                    WHERE sport = ?
                     ORDER BY date_period
                 """
                 
@@ -813,14 +814,14 @@ class PerformanceVisualizer:
                         total_confidence,
                         total_absolute_error
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND game_date >= DATE(?)
                     AND game_date <= DATE(?)
                     AND result_updated_at IS NOT NULL
                     AND win_probability IS NOT NULL
                 """
                 
-                df = pd.read_sql_query(query, conn, params=[start_date.date(), end_date.date()])
+                df = pd.read_sql_query(query, conn, params=[self.sport, start_date.date(), end_date.date()])
             
             if df.empty:
                 fig = go.Figure()
@@ -1042,7 +1043,7 @@ class PerformanceVisualizer:
                         AVG(total_mae) as avg_mae,
                         AVG(confidence_calibration) as avg_calibration_error
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND date_period >= DATE(?)
                     AND date_period <= DATE(?)
                 """
@@ -1054,7 +1055,7 @@ class PerformanceVisualizer:
                 trend_query = """
                     SELECT accuracy_trend, improvement_score, retraining_triggered
                     FROM performance_trends
-                    WHERE sport = 'MLB' AND model_type = 'xgboost'
+                    WHERE sport = ? AND model_type = 'xgboost'
                     ORDER BY created_at DESC
                     LIMIT 1
                 """
@@ -1066,7 +1067,7 @@ class PerformanceVisualizer:
                 retrain_query = """
                     SELECT MAX(date_recorded) as last_retrain
                     FROM model_metrics
-                    WHERE sport = 'MLB' AND metric_name = 'retraining_completed'
+                    WHERE sport = ? AND metric_name = 'retraining_completed'
                 """
                 
                 retrain_cursor = conn.execute(retrain_query)

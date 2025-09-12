@@ -14,12 +14,18 @@ class ResultTracker:
     Tracks actual game results and compares them to predictions for learning
     """
     
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, sport: str = 'MLB'):
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
-        self.base_url = "https://statsapi.mlb.com/api/v1"
+        self.sport = sport
+        # Sport-specific API configurations
+        self.api_configs = {
+            'MLB': {'base_url': 'https://statsapi.mlb.com/api/v1', 'sport_id': 1},
+            # Add other sports as needed
+        }
+        self.base_url = self.api_configs.get(sport, {}).get('base_url', 'https://statsapi.mlb.com/api/v1')
         
-    def fetch_and_update_results(self, date: datetime = None, days_back: int = 1) -> Dict:
+    def fetch_and_update_results(self, date: Optional[datetime] = None, days_back: int = 1, sport: Optional[str] = None) -> Dict:
         """
         Fetch actual game results and update prediction accuracy
         
@@ -34,7 +40,10 @@ class ResultTracker:
             if date is None:
                 date = datetime.now() - timedelta(days=1)  # Default to yesterday
             
-            self.logger.info(f"Fetching game results for {date.date()}")
+            # Use provided sport or default to instance sport
+            current_sport = sport or self.sport
+            
+            self.logger.info(f"Fetching {current_sport} game results for {date.date()}")
             
             results = {
                 'success': True,
@@ -46,7 +55,7 @@ class ResultTracker:
             }
             
             # Fetch completed games for the date range
-            completed_games = self._fetch_completed_games(date, days_back)
+            completed_games = self._fetch_completed_games(date, days_back, current_sport)
             
             if completed_games.empty:
                 self.logger.info(f"No completed games found for {date.date()}")
@@ -55,18 +64,18 @@ class ResultTracker:
             results['games_processed'] = len(completed_games)
             
             # Update predictions with actual results
-            updated_predictions = self._update_predictions_with_results(completed_games)
+            updated_predictions = self._update_predictions_with_results(completed_games, current_sport)
             results['predictions_updated'] = updated_predictions
             
             # Calculate and store accuracy metrics
-            accuracy_metrics = self._calculate_and_store_accuracy(date)
+            accuracy_metrics = self._calculate_and_store_accuracy(date, current_sport)
             results['accuracy_calculated'] = len(accuracy_metrics)
             
             # Store performance trends
-            self._update_performance_trends(date)
+            self._update_performance_trends(date, current_sport)
             
             # Generate learning insights
-            insights = self._generate_learning_insights(date)
+            insights = self._generate_learning_insights(date, current_sport)
             if insights:
                 results['insights_generated'] = len(insights)
             
@@ -81,24 +90,37 @@ class ResultTracker:
                 'date': date.date().isoformat() if date else None
             }
     
-    def _fetch_completed_games(self, date: datetime, days_back: int) -> pd.DataFrame:
+    def _fetch_completed_games(self, date: datetime, days_back: int, sport: Optional[str] = None) -> pd.DataFrame:
         """
-        Fetch completed games from MLB API
+        Fetch completed games from sport API
         
         Args:
             date: Date to fetch games for
             days_back: Number of days to look back
+            sport: Sport to fetch games for
             
         Returns:
             DataFrame with completed games
         """
         try:
+            current_sport = sport or self.sport
+            
+            # Only proceed if we have API configuration for this sport
+            if current_sport not in self.api_configs:
+                self.logger.warning(f"No API configuration for {current_sport}, skipping game fetch")
+                return pd.DataFrame()
+            
             start_date = date - timedelta(days=days_back-1)
             end_date = date
             
-            url = f"{self.base_url}/schedule"
+            # Use sport-specific API configuration
+            config = self.api_configs[current_sport]
+            base_url = config['base_url']
+            sport_id = config['sport_id']
+            
+            url = f"{base_url}/schedule"
             params = {
-                'sportId': 1,  # MLB
+                'sportId': sport_id,
                 'startDate': start_date.strftime('%Y-%m-%d'),
                 'endDate': end_date.strftime('%Y-%m-%d'),
                 'hydrate': 'team,linescore,decisions'
@@ -184,12 +206,13 @@ class ResultTracker:
             self.logger.error(f"Error parsing completed game: {str(e)}")
             return None
     
-    def _update_predictions_with_results(self, completed_games: pd.DataFrame) -> int:
+    def _update_predictions_with_results(self, completed_games: pd.DataFrame, sport: Optional[str] = None) -> int:
         """
         Update predictions table with actual results
         
         Args:
             completed_games: DataFrame with completed game results
+            sport: Sport to update predictions for
             
         Returns:
             Number of predictions updated
@@ -200,13 +223,14 @@ class ResultTracker:
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 for _, game in completed_games.iterrows():
                     # Find matching prediction
+                    current_sport = sport or self.sport
                     query = """
                         SELECT id, predicted_winner, predicted_total, win_probability, total_confidence
                         FROM predictions 
-                        WHERE game_id = ? AND sport = 'MLB' AND result_updated_at IS NULL
+                        WHERE game_id = ? AND sport = ? AND result_updated_at IS NULL
                     """
                     
-                    cursor = conn.execute(query, (game['game_id'],))
+                    cursor = conn.execute(query, (game['game_id'], current_sport))
                     prediction_row = cursor.fetchone()
                     
                     if prediction_row:
@@ -256,17 +280,19 @@ class ResultTracker:
             self.logger.error(f"Error updating predictions with results: {str(e)}")
             return 0
     
-    def _calculate_and_store_accuracy(self, date: datetime) -> List[Dict]:
+    def _calculate_and_store_accuracy(self, date: datetime, sport: Optional[str] = None) -> List[Dict]:
         """
         Calculate and store accuracy metrics for the given date
         
         Args:
             date: Date to calculate accuracy for
+            sport: Sport to calculate accuracy for
             
         Returns:
             List of accuracy metrics calculated
         """
         try:
+            current_sport = sport or self.sport
             metrics = []
             
             with sqlite3.connect(self.db_manager.db_path) as conn:
@@ -279,12 +305,12 @@ class ResultTracker:
                         AVG(total_absolute_error) as total_mae,
                         SQRT(AVG(total_prediction_error * total_prediction_error)) as total_rmse
                     FROM predictions 
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND DATE(game_date) = DATE(?)
                     AND result_updated_at IS NOT NULL
                 """
                 
-                cursor = conn.execute(query, (date.date(),))
+                cursor = conn.execute(query, (current_sport, date.date()))
                 result = cursor.fetchone()
                 
                 if result and result[0] > 0:  # If we have predictions for this date
@@ -295,12 +321,12 @@ class ResultTracker:
                     calibration_query = """
                         SELECT AVG(win_probability), AVG(CAST(win_prediction_correct AS REAL))
                         FROM predictions 
-                        WHERE sport = 'MLB' 
+                        WHERE sport = ? 
                         AND DATE(game_date) = DATE(?)
                         AND result_updated_at IS NOT NULL
                     """
                     
-                    cal_cursor = conn.execute(calibration_query, (date.date(),))
+                    cal_cursor = conn.execute(calibration_query, (current_sport, date.date()))
                     cal_result = cal_cursor.fetchone()
                     
                     confidence_calibration = None
@@ -318,7 +344,7 @@ class ResultTracker:
                     """
                     
                     conn.execute(insert_query, (
-                        'MLB', 'xgboost', 'v1.0', date.date(), total_pred, 
+                        current_sport, 'xgboost', 'v1.0', date.date(), total_pred, 
                         correct_pred, accuracy_rate, avg_conf, mae, rmse, confidence_calibration
                     ))
                     
@@ -343,17 +369,20 @@ class ResultTracker:
             self.logger.error(f"Error calculating accuracy metrics: {str(e)}")
             return []
     
-    def _update_performance_trends(self, date: datetime) -> bool:
+    def _update_performance_trends(self, date: datetime, sport: Optional[str] = None) -> bool:
         """
         Update performance trends for monitoring model degradation
         
         Args:
             date: Current date for trend calculation
+            sport: Sport to update trends for
             
         Returns:
             True if successful
         """
         try:
+            current_sport = sport or self.sport
+            
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 # Calculate 7-day trend
                 week_ago = date - timedelta(days=7)
@@ -364,12 +393,12 @@ class ResultTracker:
                         AVG(total_mae) as avg_mae,
                         COUNT(*) as volume
                     FROM prediction_accuracy
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND date_period >= DATE(?) 
                     AND date_period <= DATE(?)
                 """
                 
-                cursor = conn.execute(trend_query, (week_ago.date(), date.date()))
+                cursor = conn.execute(trend_query, (current_sport, week_ago.date(), date.date()))
                 result = cursor.fetchone()
                 
                 if result and result[2] > 0:  # If we have data
@@ -379,7 +408,7 @@ class ResultTracker:
                     prev_week_start = week_ago - timedelta(days=7)
                     prev_week_end = week_ago
                     
-                    prev_cursor = conn.execute(trend_query, (prev_week_start.date(), prev_week_end.date()))
+                    prev_cursor = conn.execute(trend_query, (current_sport, prev_week_start.date(), prev_week_end.date()))
                     prev_result = prev_cursor.fetchone()
                     
                     accuracy_trend = 0
@@ -410,7 +439,7 @@ class ResultTracker:
                     """
                     
                     conn.execute(insert_query, (
-                        'MLB', 'xgboost', 'weekly', week_ago.date(), date.date(),
+                        current_sport, 'xgboost', 'weekly', week_ago.date(), date.date(),
                         accuracy_trend, mae_trend, volume_trend, improvement_score, retraining_triggered
                     ))
                     
@@ -427,17 +456,19 @@ class ResultTracker:
             self.logger.error(f"Error updating performance trends: {str(e)}")
             return False
     
-    def _generate_learning_insights(self, date: datetime) -> List[Dict]:
+    def _generate_learning_insights(self, date: datetime, sport: Optional[str] = None) -> List[Dict]:
         """
         Generate insights about model performance and errors
         
         Args:
             date: Date to generate insights for
+            sport: Sport to generate insights for
             
         Returns:
             List of learning insights
         """
         try:
+            current_sport = sport or self.sport
             insights = []
             
             with sqlite3.connect(self.db_manager.db_path) as conn:
@@ -452,7 +483,7 @@ class ResultTracker:
                         AVG(CAST(win_prediction_correct AS REAL)) as accuracy,
                         AVG(win_probability) as avg_confidence
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND DATE(game_date) >= DATE(?) 
                     AND DATE(game_date) <= DATE(?)
                     AND result_updated_at IS NOT NULL
@@ -460,7 +491,7 @@ class ResultTracker:
                     HAVING COUNT(*) >= 3
                 """
                 
-                cursor = conn.execute(team_bias_query, (week_ago.date(), date.date()))
+                cursor = conn.execute(team_bias_query, (current_sport, week_ago.date(), date.date()))
                 team_results = cursor.fetchall()
                 
                 for team, total, accuracy, confidence in team_results:
@@ -476,7 +507,7 @@ class ResultTracker:
                         insights.append(insight)
                         
                         # Store in database
-                        self._store_learning_insight('MLB', 'xgboost', 'error_pattern', 'team_bias',
+                        self._store_learning_insight(current_sport, 'xgboost', 'error_pattern', 'team_bias',
                                                    insight['description'], 0.8, 
                                                    f"Flag {team} predictions for review")
                 
@@ -487,14 +518,14 @@ class ResultTracker:
                         ABS(AVG(total_prediction_error)) as abs_avg_error,
                         COUNT(*) as total_predictions
                     FROM predictions
-                    WHERE sport = 'MLB' 
+                    WHERE sport = ? 
                     AND DATE(game_date) >= DATE(?) 
                     AND DATE(game_date) <= DATE(?)
                     AND result_updated_at IS NOT NULL
                     AND total_prediction_error IS NOT NULL
                 """
                 
-                cursor = conn.execute(total_pattern_query, (week_ago.date(), date.date()))
+                cursor = conn.execute(total_pattern_query, (current_sport, week_ago.date(), date.date()))
                 total_result = cursor.fetchone()
                 
                 if total_result and total_result[2] > 5:  # At least 5 predictions
@@ -512,7 +543,7 @@ class ResultTracker:
                         insights.append(insight)
                         
                         # Store in database
-                        self._store_learning_insight('MLB', 'xgboost', 'error_pattern', 'total_bias',
+                        self._store_learning_insight(current_sport, 'xgboost', 'error_pattern', 'total_bias',
                                                    insight['description'], 0.9, 
                                                    "Adjust total prediction calibration")
                 
