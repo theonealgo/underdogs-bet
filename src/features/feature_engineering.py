@@ -371,32 +371,58 @@ class FeatureEngineer:
             if len(numeric_columns) > 0:
                 if 'numeric' not in self.imputers:
                     self.imputers['numeric'] = SimpleImputer(strategy='median')
-                    features[numeric_columns] = self.imputers['numeric'].fit_transform(features[numeric_columns])
+                    features.loc[:, numeric_columns] = pd.DataFrame(
+                        self.imputers['numeric'].fit_transform(features[numeric_columns]),
+                        index=features.index,
+                        columns=numeric_columns
+                    )
                 else:
-                    features[numeric_columns] = self.imputers['numeric'].transform(features[numeric_columns])
+                    features.loc[:, numeric_columns] = pd.DataFrame(
+                        self.imputers['numeric'].transform(features[numeric_columns]),
+                        index=features.index,
+                        columns=numeric_columns
+                    )
             
             # Impute categorical columns
             if len(categorical_columns) > 0:
                 if 'categorical' not in self.imputers:
                     self.imputers['categorical'] = SimpleImputer(strategy='most_frequent')
-                    features[categorical_columns] = self.imputers['categorical'].fit_transform(features[categorical_columns])
+                    features.loc[:, categorical_columns] = pd.DataFrame(
+                        self.imputers['categorical'].fit_transform(features[categorical_columns]),
+                        index=features.index,
+                        columns=categorical_columns
+                    )
                 else:
-                    features[categorical_columns] = self.imputers['categorical'].transform(features[categorical_columns])
+                    features.loc[:, categorical_columns] = pd.DataFrame(
+                        self.imputers['categorical'].transform(features[categorical_columns]),
+                        index=features.index,
+                        columns=categorical_columns
+                    )
             
             # Scale features
             if 'features' not in self.scalers:
                 self.scalers['features'] = StandardScaler()
-                scaled_features = self.scalers['features'].fit_transform(features[numeric_columns])
+                scaled_features = pd.DataFrame(
+                    self.scalers['features'].fit_transform(features[numeric_columns]),
+                    index=features.index,
+                    columns=numeric_columns
+                )
             else:
-                scaled_features = self.scalers['features'].transform(features[numeric_columns])
+                scaled_features = pd.DataFrame(
+                    self.scalers['features'].transform(features[numeric_columns]),
+                    index=features.index,
+                    columns=numeric_columns
+                )
             
             # Create final feature DataFrame
             final_features = features.copy()
-            final_features[numeric_columns] = scaled_features
+            if len(numeric_columns) > 0:
+                final_features.loc[:, numeric_columns] = scaled_features
             
             self.logger.info(f"Prepared {len(final_features.columns)} features for training")
             
-            return final_features, targets
+            # Ensure we return proper DataFrames
+            return pd.DataFrame(final_features), pd.DataFrame(targets)
             
         except Exception as e:
             self.logger.error(f"Error preparing features for training: {str(e)}")
