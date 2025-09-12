@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import logging
 import json
+import sqlite3
 
 from data_storage.database import DatabaseManager
 from models.prediction_models import MLBPredictor
@@ -38,8 +39,25 @@ class PredictionAPI:
             
             self.logger.info(f"Getting predictions for {date.date()}")
             
-            # Get today's games from database or create mock games based on recent data
+            # Get today's games from database
             todays_games = self._get_todays_games(date)
+            
+            # If no games found, try to fetch from MLB API
+            if todays_games.empty:
+                self.logger.info("No games in database, fetching from MLB API...")
+                try:
+                    from data_collectors.mlb_schedule_collector import MLBScheduleCollector
+                    schedule_collector = MLBScheduleCollector()
+                    fresh_games = schedule_collector.get_todays_games(date.strftime('%Y-%m-%d'))
+                    
+                    if not fresh_games.empty:
+                        # Store the games in database
+                        self.db_manager.store_games(fresh_games)
+                        todays_games = fresh_games
+                        self.logger.info(f"Fetched {len(fresh_games)} games from MLB API")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error fetching from MLB API: {str(e)}")
             
             if todays_games.empty:
                 self.logger.warning(f"No games found for {date.date()}")
@@ -297,7 +315,7 @@ class PredictionAPI:
     
     def _get_todays_games(self, date: datetime) -> pd.DataFrame:
         """
-        Get today's games (or create representative games for demonstration)
+        Get today's games from the database
         
         Args:
             date: Date to get games for
@@ -306,17 +324,21 @@ class PredictionAPI:
             DataFrame with today's games
         """
         try:
-            # Try to get actual games for the date from recent data
-            recent_games = self.db_manager.get_historical_games(
-                date - timedelta(days=7),
-                date + timedelta(days=1)
-            )
+            # Get games from the games table for the specific date
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                query = """
+                    SELECT * FROM games 
+                    WHERE sport = 'MLB' AND date(game_date) = ?
+                    ORDER BY game_id
+                """
+                todays_games = pd.read_sql_query(query, conn, params=[date.strftime('%Y-%m-%d')])
+                
+                if not todays_games.empty:
+                    self.logger.info(f"Found {len(todays_games)} games in database for {date.date()}")
+                    return todays_games
             
-            # Filter for the specific date
-            todays_games = recent_games[recent_games['game_date'] == date.date()]
-            
-            if not todays_games.empty:
-                return todays_games
+            self.logger.info(f"No games found in database for {date.date()}")
+            return pd.DataFrame()
             
             # If no games for today, create representative matchups based on recent teams
             if not recent_games.empty:

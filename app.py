@@ -66,6 +66,18 @@ def show_predictions_page(api, db_manager):
         if st.button("🔄 Update Data", help="Fetch latest data from sources"):
             with st.spinner("Updating data..."):
                 try:
+                    # Import MLB schedule collector
+                    from data_collectors.mlb_schedule_collector import MLBScheduleCollector
+                    
+                    # Update today's schedule first
+                    schedule_collector = MLBScheduleCollector()
+                    todays_games = schedule_collector.get_todays_games()
+                    if not todays_games.empty:
+                        db_manager.store_games(todays_games)
+                        st.success(f"Found {len(todays_games)} games for today!")
+                    else:
+                        st.warning("No games scheduled for today")
+                    
                     # Update Baseball Savant data
                     savant_scraper = BaseballSavantScraper()
                     savant_data = savant_scraper.get_recent_games(days=7)
