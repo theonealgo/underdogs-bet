@@ -648,7 +648,7 @@ def show_result_tracking_page(result_tracker, performance_visualizer, db_manager
     st.subheader("🎯 Recent Predictions vs Results")
     
     try:
-        with db_manager.get_connection() as conn:
+        with db_manager._get_connection() as conn:
             query = """
                 SELECT 
                     game_date,
