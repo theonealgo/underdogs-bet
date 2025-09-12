@@ -11,6 +11,9 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_collectors.baseball_savant_scraper import BaseballSavantScraper
+from data_collectors.result_tracker import ResultTracker
+from models.performance_analyzer import PerformanceAnalyzer
+from models.intelligent_retrainer import IntelligentRetrainer
 # Note: OddsShark dependency removed
 from data_storage.database import DatabaseManager
 from models.prediction_models import MLBPredictor
@@ -26,6 +29,12 @@ class DataScheduler:
         self.baseball_scraper = BaseballSavantScraper()
         # Note: OddsShark dependency removed
         self.predictor = MLBPredictor()
+        
+        # Initialize learning system components
+        self.result_tracker = ResultTracker(db_manager)
+        self.performance_analyzer = PerformanceAnalyzer(db_manager)
+        self.intelligent_retrainer = IntelligentRetrainer(db_manager, self.predictor)
+        
         self.is_running = False
         self.scheduler_thread = None
     
@@ -42,8 +51,14 @@ class DataScheduler:
             schedule.every().day.at("14:00").do(self._update_live_data)
             schedule.every().day.at("20:00").do(self._evening_data_update)
             
-            # Schedule weekly model retraining
-            schedule.every().sunday.at("02:00").do(self._weekly_model_retrain)
+            # Schedule automated learning system tasks
+            schedule.every().day.at("09:00").do(self._daily_result_tracking)  # After games complete
+            schedule.every().day.at("10:00").do(self._performance_evaluation)  # Check if retraining needed
+            schedule.every().day.at("22:00").do(self._evening_result_tracking)  # End-of-day tracking
+            
+            # Schedule periodic analysis and learning
+            schedule.every().monday.at("03:00").do(self._weekly_performance_analysis)
+            schedule.every().sunday.at("04:00").do(self._intelligent_retraining_check)
             
             # Schedule monthly cleanup
             schedule.every().month.do(self._monthly_cleanup)
@@ -256,28 +271,129 @@ class DataScheduler:
         except Exception as e:
             self.logger.error(f"Error in evening data update: {str(e)}")
     
-    def _weekly_model_retrain(self):
-        """Weekly model retraining"""
+    def _daily_result_tracking(self):
+        """Daily automated result tracking"""
         try:
-            self.logger.info("Starting weekly model retraining")
+            self.logger.info("Starting daily result tracking")
             
-            # Get training data from last 90 days
-            training_data = self.db_manager.get_training_data(days_back=90)
+            # Fetch actual game results and compare to predictions
+            results = self.result_tracker.fetch_and_update_results()
             
-            if not training_data.empty and len(training_data) > 100:
-                results = self.predictor.train_models(training_data)
+            if results.get('success'):
+                self.logger.info(f"Result tracking: Updated {results.get('predictions_updated', 0)} predictions")
                 
-                if results:
-                    # Store model metrics
-                    self.db_manager.store_model_metrics(results)
-                    self.logger.info("Weekly model retraining completed")
-                else:
-                    self.logger.error("Model retraining failed")
+                if results.get('insights_generated'):
+                    self.logger.info(f"Generated {results['insights_generated']} new learning insights")
             else:
-                self.logger.warning("Insufficient data for model retraining")
+                self.logger.error(f"Result tracking failed: {results.get('error')}")
                 
         except Exception as e:
-            self.logger.error(f"Error in weekly model retraining: {str(e)}")
+            self.logger.error(f"Error in daily result tracking: {str(e)}")
+    
+    def _performance_evaluation(self):
+        """Daily performance evaluation and retraining need assessment"""
+        try:
+            self.logger.info("Starting performance evaluation")
+            
+            # Evaluate if retraining is needed
+            evaluation = self.intelligent_retrainer.evaluate_retraining_need()
+            
+            if evaluation.get('retraining_needed'):
+                priority = evaluation.get('priority', 'medium')
+                self.logger.warning(f"Retraining needed with {priority} priority")
+                
+                # Trigger retraining for high/critical priority
+                if priority in ['high', 'critical']:
+                    self.logger.info("Auto-triggering retraining due to high priority")
+                    retraining_result = self.intelligent_retrainer.execute_intelligent_retraining(priority)
+                    
+                    if retraining_result.get('success'):
+                        improvement = retraining_result.get('improvements', {}).get('accuracy_change')
+                        self.logger.info(f"Auto-retraining completed. Accuracy change: {improvement}")
+                    else:
+                        self.logger.error(f"Auto-retraining failed: {retraining_result.get('error')}")
+            else:
+                self.logger.info("Performance evaluation: No retraining needed")
+                
+        except Exception as e:
+            self.logger.error(f"Error in performance evaluation: {str(e)}")
+    
+    def _evening_result_tracking(self):
+        """Evening result tracking for completed games"""
+        try:
+            self.logger.info("Starting evening result tracking")
+            
+            # Track results for games that finished today
+            results = self.result_tracker.fetch_and_update_results(days_back=1)
+            
+            if results.get('success'):
+                self.logger.info(f"Evening tracking: Processed {results.get('games_processed', 0)} games")
+            else:
+                self.logger.error(f"Evening result tracking failed: {results.get('error')}")
+                
+        except Exception as e:
+            self.logger.error(f"Error in evening result tracking: {str(e)}")
+    
+    def _weekly_performance_analysis(self):
+        """Weekly comprehensive performance analysis"""
+        try:
+            self.logger.info("Starting weekly performance analysis")
+            
+            # Run detailed error analysis
+            analysis = self.performance_analyzer.analyze_prediction_errors(days_back=14)
+            
+            if 'error' not in analysis:
+                insights = analysis.get('actionable_insights', [])
+                high_priority_insights = [i for i in insights if i.get('priority') == 'high']
+                
+                if high_priority_insights:
+                    self.logger.warning(f"Weekly analysis found {len(high_priority_insights)} high-priority issues")
+                    for insight in high_priority_insights:
+                        self.logger.warning(f"Issue: {insight.get('description')}")
+                else:
+                    self.logger.info("Weekly analysis: No critical issues found")
+                    
+                self.logger.info(f"Weekly analysis completed with {len(insights)} total insights")
+            else:
+                self.logger.error(f"Weekly performance analysis failed: {analysis.get('error')}")
+                
+        except Exception as e:
+            self.logger.error(f"Error in weekly performance analysis: {str(e)}")
+    
+    def _intelligent_retraining_check(self):
+        """Weekly intelligent retraining assessment"""
+        try:
+            self.logger.info("Starting intelligent retraining check")
+            
+            # Comprehensive retraining evaluation
+            evaluation = self.intelligent_retrainer.evaluate_retraining_need()
+            
+            if evaluation.get('retraining_needed'):
+                priority = evaluation.get('priority', 'medium')
+                triggers = evaluation.get('triggers', [])
+                
+                self.logger.info(f"Weekly check: Retraining needed ({priority} priority)")
+                self.logger.info(f"Triggers: {[t.get('type') for t in triggers]}")
+                
+                # Execute retraining
+                retraining_result = self.intelligent_retrainer.execute_intelligent_retraining(priority)
+                
+                if retraining_result.get('success'):
+                    strategies = retraining_result.get('strategies_applied', [])
+                    improvements = retraining_result.get('improvements', {})
+                    
+                    self.logger.info(f"Weekly retraining completed successfully")
+                    self.logger.info(f"Strategies applied: {strategies}")
+                    
+                    if 'accuracy_change' in improvements:
+                        self.logger.info(f"Accuracy improvement: {improvements['accuracy_change']:+.3f}")
+                else:
+                    self.logger.error(f"Weekly retraining failed: {retraining_result.get('error')}")
+            else:
+                self.logger.info("Weekly check: No retraining needed")
+                
+        except Exception as e:
+            self.logger.error(f"Error in intelligent retraining check: {str(e)}")
     
     def _monthly_cleanup(self):
         """Monthly database cleanup"""

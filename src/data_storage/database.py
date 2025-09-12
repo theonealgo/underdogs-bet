@@ -86,7 +86,7 @@ class DatabaseManager:
                 
                 # Note: odds_data table removed - no longer using OddsShark
                 
-                # Create sport-aware predictions table
+                # Create sport-aware predictions table with result tracking
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS predictions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +102,14 @@ class DatabaseManager:
                         total_confidence REAL,
                         model_version TEXT,
                         key_factors TEXT,
+                        actual_winner INTEGER,
+                        actual_home_score INTEGER,
+                        actual_away_score INTEGER,
+                        actual_total REAL,
+                        win_prediction_correct INTEGER,
+                        total_prediction_error REAL,
+                        total_absolute_error REAL,
+                        result_updated_at TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -137,15 +145,76 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Create prediction accuracy tracking table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS prediction_accuracy (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        model_type TEXT NOT NULL,
+                        model_version TEXT,
+                        date_period DATE NOT NULL,
+                        total_predictions INTEGER NOT NULL,
+                        correct_predictions INTEGER NOT NULL,
+                        accuracy_rate REAL NOT NULL,
+                        avg_win_confidence REAL,
+                        total_mae REAL,
+                        total_rmse REAL,
+                        confidence_calibration REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, model_type, model_version, date_period)
+                    )
+                """)
+                
+                # Create model performance trends table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS performance_trends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        model_type TEXT NOT NULL,
+                        trend_period TEXT NOT NULL, -- 'daily', 'weekly', 'monthly'
+                        period_start DATE NOT NULL,
+                        period_end DATE NOT NULL,
+                        accuracy_trend REAL,
+                        mae_trend REAL,
+                        volume_trend REAL,
+                        improvement_score REAL,
+                        retraining_triggered INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create learning insights table for storing what the model learned
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS learning_insights (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        model_type TEXT NOT NULL,
+                        insight_type TEXT NOT NULL, -- 'error_pattern', 'feature_importance', 'retraining_trigger'
+                        insight_category TEXT, -- 'team_bias', 'total_overestimate', etc.
+                        insight_description TEXT NOT NULL,
+                        confidence_score REAL,
+                        action_taken TEXT,
+                        improvement_measure REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
                 # Create indexes for better performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_teams_sport_league ON teams(sport, league)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_games_sport_date ON games(sport, game_date)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_games_teams ON games(home_team_id, away_team_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_statcast_game_date ON statcast_data(game_date)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_statcast_game_pk ON statcast_data(game_pk)")
+                # Add missing columns to existing predictions table for learning system
+                self._migrate_predictions_table(conn)
+                
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_sport_date ON predictions(sport, game_date)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_result_tracking ON predictions(game_id, result_updated_at)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_team_stats_sport_team ON team_stats(sport, team_id, season)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_model_metrics_sport ON model_metrics(sport, model_type)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_prediction_accuracy_sport_date ON prediction_accuracy(sport, model_type, date_period)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_performance_trends_sport ON performance_trends(sport, model_type, period_start)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_insights_type ON learning_insights(sport, model_type, insight_type)")
                 
                 conn.commit()
                 self.logger.info("Multi-sport database initialized successfully")
@@ -153,6 +222,46 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error initializing database: {str(e)}")
             raise
+    
+    def _migrate_predictions_table(self, conn):
+        """Add missing columns to existing predictions table for learning system"""
+        try:
+            # Check if result tracking columns exist
+            cursor = conn.execute("PRAGMA table_info(predictions)")
+            existing_columns = [row[1] for row in cursor.fetchall()]
+            
+            # Define new columns needed for learning system
+            new_columns = {
+                'actual_winner': 'INTEGER',
+                'actual_home_score': 'INTEGER', 
+                'actual_away_score': 'INTEGER',
+                'actual_total': 'REAL',
+                'win_prediction_correct': 'INTEGER',
+                'total_prediction_error': 'REAL',
+                'total_absolute_error': 'REAL',
+                'result_updated_at': 'TIMESTAMP'
+            }
+            
+            # Add missing columns
+            columns_added = 0
+            for column_name, column_type in new_columns.items():
+                if column_name not in existing_columns:
+                    try:
+                        conn.execute(f"ALTER TABLE predictions ADD COLUMN {column_name} {column_type}")
+                        columns_added += 1
+                        self.logger.info(f"Added column {column_name} to predictions table")
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column name" not in str(e):
+                            self.logger.warning(f"Could not add column {column_name}: {str(e)}")
+            
+            if columns_added > 0:
+                self.logger.info(f"Migration completed: Added {columns_added} learning system columns to predictions table")
+            else:
+                self.logger.debug("Predictions table already has all learning system columns")
+                
+        except Exception as e:
+            self.logger.error(f"Error migrating predictions table: {str(e)}")
+            # Don't raise - migration failure shouldn't prevent database initialization
     
     def store_statcast_data(self, data: pd.DataFrame) -> bool:
         """
