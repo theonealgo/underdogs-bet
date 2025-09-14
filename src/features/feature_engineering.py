@@ -81,10 +81,14 @@ class FeatureEngineer:
                     df['home_team_encoded'] = team_encoder.transform(df['home_team'])
                     df['away_team_encoded'] = team_encoder.transform(df['away_team'])
             
-            # Game context features
+            # Game context features (only if statcast data is available)
             if 'total_pitches' in df.columns:
                 df['pitches_per_inning'] = df['total_pitches'] / 9
                 df['game_pace'] = np.where(df['total_pitches'] > df['total_pitches'].median(), 1, 0)
+            else:
+                # Default values for schedule data
+                df['pitches_per_inning'] = 17.0  # Average pitches per inning
+                df['game_pace'] = 0  # Normal pace
             
             return df
             
@@ -206,21 +210,27 @@ class FeatureEngineer:
             if 'hard_hits' in df.columns and 'barrels' in df.columns:
                 df['quality_contact_rate'] = (df['hard_hits'] + df['barrels']) / (df['total_pitches'] + 1)
             
-            # Team batting trends
+            # Team batting trends (only if statcast data exists)
             for team_col in ['home_team', 'away_team']:
                 if team_col in df.columns:
                     prefix = team_col.split('_')[0]
                     
-                    # Rolling batting stats
+                    # Rolling batting stats (only if source data exists)
                     if 'avg_exit_velocity' in df.columns:
                         df[f'{prefix}_exit_velocity_avg_5'] = df.groupby(team_col)['avg_exit_velocity'].transform(
                             lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
                         )
+                    else:
+                        # Default batting performance for schedule data
+                        df[f'{prefix}_exit_velocity_avg_5'] = 89.0  # League average exit velocity
                     
                     if 'quality_contact_rate' in df.columns:
                         df[f'{prefix}_quality_contact_avg_5'] = df.groupby(team_col)['quality_contact_rate'].transform(
                             lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
                         )
+                    else:
+                        # Default quality contact rate
+                        df[f'{prefix}_quality_contact_avg_5'] = 0.25  # Average quality contact rate
             
             return df
             
@@ -231,32 +241,70 @@ class FeatureEngineer:
     def _add_situational_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add situational and contextual features"""
         try:
-            # Home field advantage proxy
+            # Only add features if the required columns exist
+            if df.empty:
+                return df
+                
+            # Home field advantage proxy (only if we have game scores)
             if 'home_score' in df.columns and 'away_score' in df.columns:
                 df['score_differential'] = df['home_score'] - df['away_score']
+            else:
+                # Default home field advantage for schedule data
+                df['score_differential'] = 0.5  # Slight home advantage
             
-            # Rest days (simplified - would need actual schedule data)
-            if 'game_date' in df.columns:
-                df = df.sort_values(['home_team', 'game_date'])
-                df['home_rest_days'] = df.groupby('home_team')['game_date'].diff().dt.days
-                df['home_rest_days'] = df['home_rest_days'].fillna(3)  # Default rest
+            # Rest days calculation (only if we have teams and dates)
+            if 'game_date' in df.columns and 'home_team' in df.columns and 'away_team' in df.columns:
+                df = df.copy()  # Ensure we're working with a copy
                 
-                df = df.sort_values(['away_team', 'game_date'])
-                df['away_rest_days'] = df.groupby('away_team')['game_date'].diff().dt.days
-                df['away_rest_days'] = df['away_rest_days'].fillna(3)
+                # Convert game_date to datetime if it's not already
+                df['game_date'] = pd.to_datetime(df['game_date'])
                 
-                # Rest advantage
-                df['rest_advantage'] = df['home_rest_days'] - df['away_rest_days']
+                # Calculate rest days with proper error handling
+                try:
+                    df = df.sort_values(['home_team', 'game_date'])
+                    df['home_rest_days'] = df.groupby('home_team')['game_date'].diff().dt.days
+                    df['home_rest_days'] = df['home_rest_days'].fillna(3).astype(float)  # Default rest
+                    
+                    df = df.sort_values(['away_team', 'game_date'])
+                    df['away_rest_days'] = df.groupby('away_team')['game_date'].diff().dt.days
+                    df['away_rest_days'] = df['away_rest_days'].fillna(3).astype(float)
+                    
+                    # Rest advantage
+                    df['rest_advantage'] = df['home_rest_days'] - df['away_rest_days']
+                except:
+                    # Fallback if groupby fails
+                    df['home_rest_days'] = 3.0
+                    df['away_rest_days'] = 3.0
+                    df['rest_advantage'] = 0.0
+            else:
+                # Default values for schedule data without historical context
+                df['home_rest_days'] = 3.0
+                df['away_rest_days'] = 3.0
+                df['rest_advantage'] = 0.0
             
-            # Season timing features
+            # Season timing features (only if day_of_year exists)
             if 'day_of_year' in df.columns:
                 df['early_season'] = (df['day_of_year'] < 120).astype(int)  # Before May
                 df['late_season'] = (df['day_of_year'] > 240).astype(int)   # After August
+            else:
+                # Default mid-season values
+                df['early_season'] = 0
+                df['late_season'] = 0
             
             return df
             
         except Exception as e:
             self.logger.error(f"Error adding situational features: {str(e)}")
+            # Return original DataFrame with basic default features
+            try:
+                df['score_differential'] = 0.5
+                df['home_rest_days'] = 3.0
+                df['away_rest_days'] = 3.0
+                df['rest_advantage'] = 0.0
+                df['early_season'] = 0
+                df['late_season'] = 0
+            except:
+                pass
             return df
     
     def _add_rolling_stats(self, df: pd.DataFrame) -> pd.DataFrame:
