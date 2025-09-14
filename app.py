@@ -105,11 +105,15 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                         todays_games = sport_data_manager.get_todays_games(sport_code)
                         if not todays_games.empty:
                             # Standardize data before storing
-                            if hasattr(sport_data_manager._collectors[sport_code]['collector'], 'standardize_data'):
-                                todays_games = sport_data_manager._collectors[sport_code]['collector'].standardize_data(todays_games)
-                            elif sport_code == 'MLB':
+                            if sport_code == 'MLB':
+                                # MLB has different structure - just add required fields
                                 todays_games['sport'] = 'MLB'
                                 todays_games['league'] = 'MLB'
+                            elif sport_code in sport_data_manager._collectors and 'collector' in sport_data_manager._collectors[sport_code]:
+                                # For other sports with collector structure
+                                collector = sport_data_manager._collectors[sport_code]['collector']
+                                if hasattr(collector, 'standardize_data'):
+                                    todays_games = collector.standardize_data(todays_games)
                             
                             db_manager.store_games(todays_games)
                         

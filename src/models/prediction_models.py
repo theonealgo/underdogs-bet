@@ -26,6 +26,7 @@ class MLBPredictor:
         # Initialize models
         self.winner_model = None
         self.total_model = None
+        self.is_trained = False
         
         # Model parameters
         self.winner_params = {
@@ -103,6 +104,9 @@ class MLBPredictor:
             
             # Save models
             self._save_models()
+            
+            # Set trained flag after successful training
+            self.is_trained = True
             
             results = {
                 'winner_model': winner_results,
@@ -470,6 +474,11 @@ class MLBPredictor:
                 with open(feature_eng_path, 'rb') as f:
                     self.feature_engineer = pickle.load(f)
                 self.logger.info("Feature engineer loaded")
+            
+            # Set trained flag if all models are loaded
+            if self.winner_model is not None and self.total_model is not None:
+                self.is_trained = True
+                self.logger.info("Models are trained and ready for predictions")
             
         except Exception as e:
             self.logger.warning(f"Could not load existing models: {str(e)}")
