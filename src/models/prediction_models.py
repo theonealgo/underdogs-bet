@@ -240,9 +240,6 @@ class MLBPredictor:
             # Simple confidence for totals (based on model performance)
             total_confidence = 0.7  # This would be based on historical MAE
             
-            # Get key factors (top features)
-            key_factors = self._get_key_factors(features, feature_columns)
-            
             prediction = {
                 'game_date': game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date(),
                 'away_team': game_data['away_team'].iloc[0],
@@ -251,9 +248,6 @@ class MLBPredictor:
                 'win_probability': win_confidence,
                 'home_win_probability': home_win_prob,
                 'away_win_probability': 1 - home_win_prob,
-                'predicted_total': predicted_total,
-                'total_confidence': total_confidence,
-                'key_factors': key_factors,
                 'model_version': '1.0'
             }
             
@@ -265,31 +259,24 @@ class MLBPredictor:
             return self._generate_basic_prediction(game_data)
     
     def _generate_basic_prediction(self, game_data: pd.DataFrame) -> Dict:
-        """Generate basic prediction when models aren't available"""
+        """Generate basic prediction when models aren't available - NO FILLER DATA"""
         try:
             home_team = game_data['home_team_id'].iloc[0] if 'home_team_id' in game_data.columns else game_data.get('home_team', ['Unknown']).iloc[0]
             away_team = game_data['away_team_id'].iloc[0] if 'away_team_id' in game_data.columns else game_data.get('away_team', ['Unknown']).iloc[0]
             
-            # Basic prediction with slight home field advantage
-            home_win_prob = 0.55  # 55% home field advantage
-            predicted_winner = home_team
-            predicted_total = 8.5  # MLB average
-            
+            # ONLY return real data - no filler
             prediction = {
                 'game_date': game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date(),
                 'away_team': away_team,
                 'home_team': home_team,
-                'predicted_winner': predicted_winner,
-                'win_probability': home_win_prob,
-                'home_win_probability': home_win_prob,
-                'away_win_probability': 1 - home_win_prob,
-                'predicted_total': predicted_total,
-                'total_confidence': 0.5,
-                'key_factors': ['Home field advantage', 'Basic model prediction'],
-                'model_version': 'Basic-1.0'
+                'predicted_winner': None,  # No placeholder strings
+                'win_probability': None,
+                'home_win_probability': None,
+                'away_win_probability': None,
+                'model_version': None
             }
             
-            self.logger.info(f"Generated basic prediction: {away_team} @ {home_team}")
+            self.logger.warning(f"Models not trained for: {away_team} @ {home_team}")
             return prediction
             
         except Exception as e:

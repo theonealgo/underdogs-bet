@@ -156,26 +156,60 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                         )
                     
                     with col2_inner:
-                        st.metric(
-                            "Total Runs",
-                            f"{prediction['predicted_total']:.1f}",
-                            f"{prediction['total_confidence']:.1%} confidence"
-                        )
+                        if prediction.get('win_probability'):
+                            st.metric(
+                                "Confidence",
+                                f"{prediction['win_probability']:.1%}",
+                                "Win Probability"
+                            )
+                        else:
+                            st.info("Models need training")
                     
                     with col3_inner:
                         st.metric(
-                            "Game Time",
-                            prediction.get('game_time', 'TBD'),
-                            f"Model Score: {prediction.get('model_score', 0):.2f}"
+                            "Model Version",
+                            prediction.get('model_version', 'Unknown'),
+                            "Prediction System"
                         )
                     
-                    # Show key factors
-                    if 'key_factors' in prediction:
-                        st.write("**Key Factors:**")
-                        for factor in prediction['key_factors'][:3]:
-                            st.write(f"• {factor}")
+                    # Key factors removed per user request
         else:
             st.info("Click 'Generate Predictions' to see today's game predictions")
+    
+    # Previous predictions sidebar
+    with st.sidebar:
+        st.subheader("📈 Previous Record")
+        try:
+            with db_manager._get_connection() as conn:
+                query = """
+                    SELECT 
+                        DATE(game_date) as date,
+                        COUNT(*) as total_predictions,
+                        SUM(CASE WHEN win_prediction_correct = 1 THEN 1 ELSE 0 END) as correct,
+                        ROUND(AVG(CASE WHEN win_prediction_correct = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) as accuracy
+                    FROM predictions 
+                    WHERE sport = ? AND result_updated_at IS NOT NULL
+                    AND game_date >= DATE('now', '-7 days')
+                    GROUP BY DATE(game_date)
+                    ORDER BY game_date DESC
+                    LIMIT 7
+                """
+                
+                df = pd.read_sql_query(query, conn, params=[sport_code])
+                
+                if not df.empty:
+                    for _, row in df.iterrows():
+                        col1_side, col2_side = st.columns(2)
+                        with col1_side:
+                            st.write(f"📅 {row['date']}")
+                        with col2_side:
+                            accuracy = row['accuracy'] if pd.notna(row['accuracy']) else 0
+                            st.write(f"{row['correct']}/{row['total_predictions']} ({accuracy:.1f}%)")
+                else:
+                    st.write("📊 No recent results")
+                    
+        except Exception as e:
+            st.write("⚠️ Results pending")
 
 def show_historical_data_page(db_manager, sport_code):
     st.header(f"📊 {sport_code} Historical Data Analysis")

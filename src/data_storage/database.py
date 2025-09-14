@@ -84,9 +84,25 @@ class DatabaseManager:
                     )
                 """)
                 
-                # Note: odds_data table removed - no longer using OddsShark
+                # Create odds data table for real betting lines
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS odds_data (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        game_date DATE NOT NULL,
+                        sport TEXT NOT NULL,
+                        away_team TEXT NOT NULL,
+                        home_team TEXT NOT NULL,
+                        away_odds INTEGER,
+                        home_odds INTEGER,
+                        away_implied_prob REAL,
+                        home_implied_prob REAL,
+                        bookmaker_count INTEGER,
+                        collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(game_date, sport, away_team, home_team)
+                    )
+                """)
                 
-                # Create sport-aware predictions table with result tracking
+                # Create sport-aware predictions table with result tracking - no filler data
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS predictions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,21 +112,16 @@ class DatabaseManager:
                         game_date DATE NOT NULL,
                         home_team_id TEXT NOT NULL,
                         away_team_id TEXT NOT NULL,
-                        predicted_winner INTEGER,
+                        predicted_winner TEXT,
                         win_probability REAL,
-                        predicted_total REAL,
-                        total_confidence REAL,
                         model_version TEXT,
-                        key_factors TEXT,
-                        actual_winner INTEGER,
+                        actual_winner TEXT,
                         actual_home_score INTEGER,
                         actual_away_score INTEGER,
-                        actual_total REAL,
                         win_prediction_correct INTEGER,
-                        total_prediction_error REAL,
-                        total_absolute_error REAL,
                         result_updated_at TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, game_date, home_team_id, away_team_id)
                     )
                 """)
                 
@@ -533,6 +544,55 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error storing team stats data: {str(e)}")
             return False
+    
+    def save_odds(self, odds_df: pd.DataFrame, sport: str) -> bool:
+        """Save odds data to database"""
+        if odds_df.empty:
+            return True
+            
+        try:
+            with self._get_connection() as conn:
+                for _, row in odds_df.iterrows():
+                    conn.execute("""
+                        INSERT OR REPLACE INTO odds_data 
+                        (game_date, sport, away_team, home_team, away_odds, home_odds, 
+                         away_implied_prob, home_implied_prob, bookmaker_count, collected_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        row['game_date'], sport, row['away_team'], row['home_team'],
+                        row['away_odds'], row['home_odds'], row['away_implied_prob'],
+                        row['home_implied_prob'], row['bookmaker_count'], row['collected_at']
+                    ))
+                conn.commit()
+                self.logger.info(f"Saved {len(odds_df)} odds records for {sport}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Error saving odds: {str(e)}")
+            return False
+    
+    def get_odds_for_game(self, game_date, sport: str, away_team: str, home_team: str) -> Optional[Dict]:
+        """Get odds for a specific game"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT away_odds, home_odds, away_implied_prob, home_implied_prob
+                    FROM odds_data 
+                    WHERE game_date = ? AND sport = ? AND away_team = ? AND home_team = ?
+                    ORDER BY collected_at DESC LIMIT 1
+                """, (game_date, sport, away_team, home_team))
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'away_odds': row[0],
+                        'home_odds': row[1], 
+                        'away_implied_prob': row[2],
+                        'home_implied_prob': row[3]
+                    }
+                return None
+        except Exception as e:
+            self.logger.error(f"Error getting odds: {str(e)}")
+            return None
     
     def store_predictions(self, predictions: List[Dict]) -> bool:
         """

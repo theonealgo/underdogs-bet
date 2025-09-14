@@ -68,6 +68,14 @@ class SportDataManager:
             
         except Exception as e:
             logger.error(f"Error initializing collectors: {e}")
+        
+        # Initialize odds collector for all sports
+        try:
+            from src.data_collectors.odds_collector import OddsCollector
+            self._odds_collector = OddsCollector()
+        except ImportError:
+            logger.warning("Odds collector not available")
+            self._odds_collector = None
     
     def get_todays_games(self, sport_code: str) -> pd.DataFrame:
         """Get today's games for the specified sport."""
@@ -117,7 +125,7 @@ class SportDataManager:
                 except Exception as e:
                     result['errors'].append(f"Baseball Savant update failed: {str(e)}")
             
-            elif sport_code in self._collectors:
+            elif sport_code in self._collectors and 'collector' in self._collectors[sport_code]:
                 # For other sports, try to get recent data if available
                 try:
                     collector = self._collectors[sport_code]['collector']
@@ -128,6 +136,21 @@ class SportDataManager:
                             result['messages'].append(f"Updated {len(recent_data)} {sport_code} records")
                 except Exception as e:
                     result['errors'].append(f"{sport_code} data update failed: {str(e)}")
+            
+            # Update odds data for this sport
+            if self._odds_collector:
+                try:
+                    odds_data = self._odds_collector.get_sport_odds(sport_code)
+                    if not odds_data.empty:
+                        # Import db_manager to save odds
+                        from ..data_storage.database import DatabaseManager
+                        db_manager = DatabaseManager()
+                        if db_manager.save_odds(odds_data, sport_code):
+                            result['messages'].append(f"Updated {len(odds_data)} odds records for {sport_code}")
+                        else:
+                            result['errors'].append("Failed to save odds data")
+                except Exception as e:
+                    result['errors'].append(f"Odds update failed: {str(e)}")
             
             result['success'] = True
             return result
