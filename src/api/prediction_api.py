@@ -63,8 +63,11 @@ class PredictionAPI:
                 self.logger.warning(f"No games found for {date.date()}")
                 return []
             
+            # Enhance game data before generating predictions
+            enhanced_games = self._enhance_game_data(todays_games)
+            
             # Generate predictions
-            predictions = self.predictor.predict_multiple_games(todays_games)
+            predictions = self.predictor.predict_multiple_games(enhanced_games)
             
             # Enhance predictions with additional data
             enhanced_predictions = []

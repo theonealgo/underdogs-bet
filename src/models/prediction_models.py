@@ -27,6 +27,7 @@ class MLBPredictor:
         self.winner_model = None
         self.total_model = None
         self.is_trained = False
+        self.trained_feature_names = None
         
         # Model parameters
         self.winner_params = {
@@ -101,6 +102,9 @@ class MLBPredictor:
             
             # Train totals prediction model
             total_results = self._train_total_model(features, targets['total_runs'])
+            
+            # Save trained feature names for consistency
+            self.trained_feature_names = features.columns.tolist()
             
             # Save models
             self._save_models()
@@ -207,27 +211,49 @@ class MLBPredictor:
             Dictionary with predictions
         """
         try:
-            if self.winner_model is None or self.total_model is None:
-                self.logger.warning("Models not trained, generating basic predictions")
+            # Check if models are trained, attempt to load if not
+            if not self.is_trained:
+                self.logger.info("Models not loaded, attempting to load...")
+                self._load_models()
+                
+            if self.winner_model is None or self.total_model is None or not self.is_trained:
+                self.logger.warning(f"Models not trained for: {game_data['away_team'].iloc[0]} @ {game_data['home_team'].iloc[0]}")
                 return self._generate_basic_prediction(game_data)
             
-            # Engineer features
+            # Engineer features using the loaded feature engineer
             features_df = self.feature_engineer.transform_new_data(game_data)
             
-            # Get features for prediction
-            feature_columns = [col for col in features_df.columns if col not in [
+            # Get all possible features (excluding targets and metadata)
+            available_features = [col for col in features_df.columns if col not in [
                 'game_pk', 'game_date', 'home_team', 'away_team', 'matchup', 'team_matchup',
-                'home_win', 'total_runs'
+                'home_win', 'total_runs', 'id', 'season', 'sport', 'league', 'game_id', 
+                'home_team_id', 'away_team_id', 'status', 'created_at', 'updated_at'
             ]]
             
-            if not feature_columns:
-                self.logger.error("No features available for prediction")
-                return {}
+            # Align features to trained schema if available
+            if self.trained_feature_names:
+                # Use trained feature names and fill missing with 0
+                features = features_df.reindex(columns=self.trained_feature_names, fill_value=0)
+                self.logger.debug(f"Aligned to {len(self.trained_feature_names)} trained features")
+            else:
+                # Fallback: use available numeric features
+                features = features_df[available_features]
+                self.logger.warning("No trained feature names available, using all available features")
             
-            features = features_df[feature_columns]
+            if features.empty:
+                self.logger.error("No features available for prediction after alignment")
+                return self._generate_basic_prediction(game_data)
             
-            # Handle missing values
-            features = features.fillna(0)
+            # Ensure all features are numeric and handle missing values
+            numeric_features = features.select_dtypes(include=[np.number])
+            if len(numeric_features.columns) < len(features.columns):
+                # Drop non-numeric columns and log them
+                dropped_cols = set(features.columns) - set(numeric_features.columns)
+                self.logger.debug(f"Dropped non-numeric columns: {dropped_cols}")
+                features = numeric_features
+            
+            # Final data cleaning
+            features = features.fillna(0).astype(np.float32)
             
             # Make predictions
             win_proba = self.winner_model.predict_proba(features)[0]
@@ -445,7 +471,10 @@ class MLBPredictor:
                     pickle.dump(self.total_model, f)
                 self.logger.info("Total model saved")
             
-            # Save feature engineer
+            # Save feature engineer with trained feature names
+            if hasattr(self, 'trained_feature_names'):
+                self.feature_engineer.trained_feature_names = self.trained_feature_names
+            
             feature_eng_path = os.path.join(self.model_dir, 'feature_engineer.pkl')
             with open(feature_eng_path, 'wb') as f:
                 pickle.dump(self.feature_engineer, f)
@@ -475,10 +504,14 @@ class MLBPredictor:
                     self.feature_engineer = pickle.load(f)
                 self.logger.info("Feature engineer loaded")
             
-            # Set trained flag if all models are loaded
-            if self.winner_model is not None and self.total_model is not None:
+            # Set trained flag only if all models AND feature engineer are loaded
+            if self.winner_model is not None and self.total_model is not None and self.feature_engineer is not None:
+                # Try to get trained feature names from feature engineer
+                if hasattr(self.feature_engineer, 'trained_feature_names'):
+                    self.trained_feature_names = self.feature_engineer.trained_feature_names
+                
                 self.is_trained = True
-                self.logger.info("Models are trained and ready for predictions")
+                self.logger.info(f"Models are trained and ready for predictions with {len(self.trained_feature_names) if self.trained_feature_names else 'unknown'} features")
             
         except Exception as e:
             self.logger.warning(f"Could not load existing models: {str(e)}")

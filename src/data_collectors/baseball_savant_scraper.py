@@ -270,6 +270,10 @@ class BaseballSavantScraper:
                     'away_score': 'max'
                 }).reset_index()
                 
+                # Handle NA values before calculations
+                game_stats['home_score'] = game_stats['home_score'].fillna(0)
+                game_stats['away_score'] = game_stats['away_score'].fillna(0)
+                
                 game_stats['total_runs'] = game_stats['home_score'] + game_stats['away_score']
                 game_stats['home_win'] = (game_stats['home_score'] > game_stats['away_score']).astype(int)
                 
@@ -282,6 +286,10 @@ class BaseballSavantScraper:
             
             # Add pitch-level features
             if 'launch_speed' in data.columns and 'launch_angle' in data.columns:
+                # Fill NA values before boolean operations
+                data['launch_speed'] = data['launch_speed'].fillna(0)
+                data['launch_angle'] = data['launch_angle'].fillna(0)
+                
                 # Calculate expected batting average (simplified)
                 data['hard_hit'] = (data['launch_speed'] >= 95).astype(int)
                 data['barrel'] = (
