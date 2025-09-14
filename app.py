@@ -149,17 +149,21 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                     col1_inner, col2_inner, col3_inner = st.columns(3)
                     
                     with col1_inner:
+                        winner = prediction.get('predicted_winner') or "Models need training"
+                        confidence = prediction.get('win_probability')
+                        confidence_text = f"{confidence:.1%} confidence" if confidence is not None else "Training required"
                         st.metric(
                             "Winner Prediction",
-                            prediction['predicted_winner'],
-                            f"{prediction['win_probability']:.1%} confidence"
+                            winner,
+                            confidence_text
                         )
                     
                     with col2_inner:
-                        if prediction.get('win_probability'):
+                        confidence = prediction.get('win_probability')
+                        if confidence is not None:
                             st.metric(
                                 "Confidence",
-                                f"{prediction['win_probability']:.1%}",
+                                f"{confidence:.1%}",
                                 "Win Probability"
                             )
                         else:

@@ -241,9 +241,14 @@ class MLBPredictor:
             total_confidence = 0.7  # This would be based on historical MAE
             
             prediction = {
+                'sport': 'MLB',
+                'league': 'MLB', 
+                'game_id': f"{game_data['away_team'].iloc[0]}_{game_data['home_team'].iloc[0]}_{game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date()}",
                 'game_date': game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date(),
                 'away_team': game_data['away_team'].iloc[0],
                 'home_team': game_data['home_team'].iloc[0],
+                'away_team_id': game_data['away_team'].iloc[0],
+                'home_team_id': game_data['home_team'].iloc[0],
                 'predicted_winner': predicted_winner,
                 'win_probability': win_confidence,
                 'home_win_probability': home_win_prob,
@@ -266,9 +271,14 @@ class MLBPredictor:
             
             # ONLY return real data - no filler
             prediction = {
+                'sport': 'MLB',
+                'league': 'MLB',
+                'game_id': f"{away_team}_{home_team}_{game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date()}",
                 'game_date': game_data['game_date'].iloc[0] if 'game_date' in game_data.columns else datetime.now().date(),
                 'away_team': away_team,
                 'home_team': home_team,
+                'away_team_id': away_team,
+                'home_team_id': home_team,
                 'predicted_winner': None,  # No placeholder strings
                 'win_probability': None,
                 'home_win_probability': None,

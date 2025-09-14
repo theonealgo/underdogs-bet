@@ -78,7 +78,8 @@ class OddsCollector:
                         'away_implied_prob': self._american_to_probability(best_away_odds),
                         'home_implied_prob': self._american_to_probability(best_home_odds),
                         'bookmaker_count': bookmaker_count,
-                        'collected_at': datetime.now()
+                        'sport': 'MLB',
+                        'collected_at': datetime.now().isoformat()
                     })
             
             df = pd.DataFrame(parsed_odds)
@@ -164,7 +165,7 @@ class OddsCollector:
                         'home_implied_prob': self._american_to_probability(best_home_odds),
                         'bookmaker_count': bookmaker_count,
                         'sport': sport_key,
-                        'collected_at': datetime.now()
+                        'collected_at': datetime.now().isoformat()
                     })
             
             df = pd.DataFrame(parsed_odds)
