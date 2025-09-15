@@ -450,29 +450,71 @@ class PredictionAPI:
         try:
             enhanced = prediction.copy()
             
-            # Add game time (would come from schedule data in real implementation)
-            enhanced['game_time'] = self._get_estimated_game_time(game_date)
+            # Get real odds data for ROI calculations
+            home_team = enhanced.get('home_team')
+            away_team = enhanced.get('away_team')
             
-            # Add weather info (placeholder - would come from weather API)
-            enhanced['weather'] = self._get_weather_info(game_date)
-            
-            # Note: Betting odds context removed - no longer using OddsShark
-            
-            # Add model confidence score
-            enhanced['model_score'] = self._calculate_model_score(prediction)
-            
-            # Add recent trends
-            trends = self._get_recent_trends(
-                prediction.get('home_team'),
-                prediction.get('away_team')
-            )
-            enhanced['recent_trends'] = trends
+            if home_team and away_team:
+                # Get odds from database
+                odds_data = self._get_odds_data(home_team, away_team, game_date)
+                if odds_data:
+                    enhanced.update(odds_data)
+                
+                # Calculate head-to-head record
+                h2h_record = self._get_head_to_head_record(home_team, away_team)
+                if h2h_record:
+                    enhanced['head_to_head_record'] = h2h_record
             
             return enhanced
             
         except Exception as e:
             self.logger.error(f"Error enhancing prediction: {str(e)}")
             return prediction
+    
+    def _get_odds_data(self, home_team: str, away_team: str, game_date: datetime) -> Dict:
+        """Get betting odds for the game"""
+        try:
+            # Try to get odds from database first
+            odds = self.db_manager.get_odds_for_game(home_team, away_team, game_date)
+            
+            if odds and not odds.empty:
+                odds_row = odds.iloc[0]
+                return {
+                    'home_odds': float(odds_row.get('home_odds', 0)),
+                    'away_odds': float(odds_row.get('away_odds', 0)),
+                    'total_odds': float(odds_row.get('total_odds', 0))
+                }
+            
+            # If no odds in database, log and return empty
+            self.logger.info(f"No odds found for {away_team} @ {home_team}")
+            return {}
+            
+        except Exception as e:
+            self.logger.error(f"Error getting odds data: {str(e)}")
+            return {}
+    
+    def _get_head_to_head_record(self, home_team: str, away_team: str) -> str:
+        """Get head-to-head record between teams"""
+        try:
+            # Get historical games between these teams
+            h2h_games = self.db_manager.get_head_to_head_games(home_team, away_team)
+            
+            if h2h_games.empty:
+                return None
+            
+            # Calculate wins for each team
+            home_wins = len(h2h_games[h2h_games['home_win'] == 1])
+            away_wins = len(h2h_games[h2h_games['home_win'] == 0])
+            total_games = len(h2h_games)
+            
+            if total_games > 0:
+                return f"{home_team} {home_wins}-{away_wins} {away_team} (Last {total_games})"
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error getting head-to-head record: {str(e)}")
+            return None
     
     def _get_estimated_game_time(self, game_date: datetime) -> str:
         """Get estimated game time (placeholder implementation)"""

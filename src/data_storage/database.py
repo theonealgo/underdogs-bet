@@ -784,6 +784,68 @@ class DatabaseManager:
             self.logger.error(f"Error getting training data: {str(e)}")
             return pd.DataFrame()
     
+    def get_odds_for_game(self, home_team: str, away_team: str, game_date: datetime) -> pd.DataFrame:
+        """
+        Get betting odds for a specific game
+        
+        Args:
+            home_team: Home team abbreviation
+            away_team: Away team abbreviation  
+            game_date: Date of the game
+            
+        Returns:
+            DataFrame with odds data
+        """
+        try:
+            query = """
+                SELECT home_odds, away_odds, home_implied_prob, away_implied_prob
+                FROM odds_data
+                WHERE home_team = ? AND away_team = ? AND game_date = ?
+                ORDER BY collected_at DESC
+                LIMIT 1
+            """
+            
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn, params=[home_team, away_team, game_date.date()])
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error getting odds data: {str(e)}")
+            return pd.DataFrame()
+    
+    def get_head_to_head_games(self, home_team: str, away_team: str, limit: int = 10) -> pd.DataFrame:
+        """
+        Get head-to-head games between two teams
+        
+        Args:
+            home_team: Home team abbreviation
+            away_team: Away team abbreviation
+            limit: Maximum number of recent games to return
+            
+        Returns:
+            DataFrame with historical matchup data
+        """
+        try:
+            query = """
+                SELECT game_date, home_team, away_team, home_score, away_score, home_win
+                FROM statcast_data
+                WHERE ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))
+                    AND home_score IS NOT NULL AND away_score IS NOT NULL
+                GROUP BY game_pk
+                ORDER BY game_date DESC
+                LIMIT ?
+            """
+            
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn, params=[home_team, away_team, away_team, home_team, limit])
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error getting head-to-head games: {str(e)}")
+            return pd.DataFrame()
+    
     def get_latest_data_timestamp(self, table: str) -> Optional[str]:
         """
         Get the latest data timestamp for a table

@@ -154,31 +154,26 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                     
                     with col1_inner:
                         winner = prediction.get('predicted_winner') or "Models need training"
-                        confidence = prediction.get('win_probability')
-                        confidence_text = f"{confidence:.1%} confidence" if confidence is not None else "Training required"
-                        st.metric(
-                            "Winner Prediction",
-                            winner,
-                            confidence_text
-                        )
+                        st.metric("Winner Prediction", winner)
                     
                     with col2_inner:
-                        confidence = prediction.get('win_probability')
-                        if confidence is not None:
-                            st.metric(
-                                "Confidence",
-                                f"{confidence:.1%}",
-                                "Win Probability"
-                            )
+                        # Show odds and potential ROI if available
+                        home_odds = prediction.get('home_odds')
+                        away_odds = prediction.get('away_odds')
+                        if home_odds and away_odds:
+                            winning_odds = home_odds if prediction.get('predicted_winner') == prediction.get('home_team') else away_odds
+                            potential_roi = f"+{((winning_odds - 1) * 100):.0f}%" if winning_odds > 1 else "No data"
+                            st.metric("Potential ROI", potential_roi, "If $100 bet wins")
                         else:
-                            st.info("Models need training")
+                            st.info("No odds data")
                     
                     with col3_inner:
-                        st.metric(
-                            "Model Version",
-                            prediction.get('model_version', 'Unknown'),
-                            "Prediction System"
-                        )
+                        # Show previous head-to-head record if available
+                        h2h_record = prediction.get('head_to_head_record')
+                        if h2h_record:
+                            st.metric("Head-to-Head", h2h_record, "Previous matchups")
+                        else:
+                            st.info("No H2H data")
                     
                     # Key factors removed per user request
         else:
