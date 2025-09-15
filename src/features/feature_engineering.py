@@ -16,6 +16,17 @@ class FeatureEngineer:
         self.scalers = {}
         self.encoders = {}
         self.imputers = {}
+        
+        # Deterministic pregame feature schema - only features available before games
+        self.PREGAME_FEATURES = [
+            'month', 'day_of_week', 'day_of_year', 'is_weekend',
+            'home_team_encoded', 'away_team_encoded',
+            'pitches_per_inning', 'game_pace'
+        ]
+    
+    def get_pregame_feature_columns(self):
+        """Return the exact feature columns used for pregame predictions"""
+        return self.PREGAME_FEATURES.copy()
     
     def create_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -67,30 +78,41 @@ class FeatureEngineer:
             data: Raw game data with schedule information
             
         Returns:
-            DataFrame with pregame-only engineered features
+            DataFrame with exactly PREGAME_FEATURES columns
         """
         try:
             if data.empty:
-                return data
+                return pd.DataFrame(columns=self.PREGAME_FEATURES)
             
             self.logger.info(f"Creating pregame features for {len(data)} games...")
             features_df = data.copy()
             
-            # Add only pregame-available features (no statcast-dependent features)
+            # Add only basic pregame features 
             features_df = self._add_basic_features(features_df)
-            features_df = self._add_situational_features(features_df)
-            # Skip team_features, pitching, batting, rolling stats that depend on statcast
             
-            # Clean numeric columns
-            numeric_columns = features_df.select_dtypes(include=[np.number]).columns
-            features_df[numeric_columns] = features_df[numeric_columns].fillna(0)
+            # Select only the defined pregame features, fill missing with defaults
+            result_df = pd.DataFrame(index=features_df.index)
+            for feature in self.PREGAME_FEATURES:
+                if feature in features_df.columns:
+                    result_df[feature] = features_df[feature]
+                else:
+                    # Default values for missing pregame features
+                    if 'encoded' in feature:
+                        result_df[feature] = 0  # Default team encoding
+                    elif feature in ['month', 'day_of_week', 'day_of_year']:
+                        result_df[feature] = 1  # Default date values
+                    else:
+                        result_df[feature] = 0  # Default numeric values
             
-            self.logger.info(f"Created {len(features_df.columns)} pregame features")
-            return features_df
+            # Ensure all numeric and no NaN values
+            result_df = result_df.fillna(0).astype(float)
+            
+            self.logger.info(f"Created pregame features with {len(result_df.columns)} columns: {list(result_df.columns)}")
+            return result_df
             
         except Exception as e:
             self.logger.error(f"Error creating pregame features: {str(e)}")
-            return data
+            return pd.DataFrame(columns=self.PREGAME_FEATURES)
     
     def _add_basic_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add basic game-level features"""

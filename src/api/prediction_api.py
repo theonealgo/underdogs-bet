@@ -66,6 +66,13 @@ class PredictionAPI:
             # Enhance game data before generating predictions
             enhanced_games = self._enhance_game_data(todays_games)
             
+            # Check if models need training and train if necessary
+            if not self.predictor.is_trained:
+                self.logger.info("Models not trained, attempting to train...")
+                training_result = self._ensure_models_trained()
+                if not training_result:
+                    self.logger.warning("Model training failed, using basic predictions")
+            
             # Generate predictions
             predictions = self.predictor.predict_multiple_games(enhanced_games)
             
@@ -85,6 +92,39 @@ class PredictionAPI:
         except Exception as e:
             self.logger.error(f"Error getting today's predictions: {str(e)}")
             return []
+    
+    def _ensure_models_trained(self) -> bool:
+        """
+        Ensure models are trained by getting training data and training if needed
+        
+        Returns:
+            True if models are trained successfully, False otherwise
+        """
+        try:
+            self.logger.info("Ensuring models are trained...")
+            
+            # Get training data from database
+            training_data = self.db_manager.get_training_data()
+            
+            if training_data.empty:
+                self.logger.warning("No training data available in database")
+                return False
+            
+            self.logger.info(f"Found {len(training_data)} training records")
+            
+            # Train models using pregame features
+            training_results = self.predictor.train_models(training_data)
+            
+            if training_results and len(training_results) > 0:
+                self.logger.info("Model training completed successfully")
+                return True
+            else:
+                self.logger.error("Model training failed or returned empty results")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error during model training: {str(e)}")
+            return False
     
     def get_team_prediction(self, home_team: str, away_team: str, game_date: datetime = None) -> Dict:
         """

@@ -78,30 +78,43 @@ class MLBPredictor:
             # Engineer pregame features only (no post-game statcast data)
             features_df = self.feature_engineer.create_pregame_features(training_data)
             
-            # Prepare features and targets
-            target_columns = ['home_win', 'total_runs']
-            features, targets = self.feature_engineer.prepare_features_for_training(
-                features_df, target_columns
-            )
+            # Get exact pregame features and store for prediction alignment
+            pregame_cols = self.feature_engineer.get_pregame_feature_columns()
+            features = features_df[pregame_cols].copy()
             
-            if features.empty or targets.empty:
+            # Store trained feature names for exact prediction alignment
+            self.trained_feature_names = list(features.columns)
+            self.logger.info(f"Training with exact pregame features: {self.trained_feature_names}")
+            
+            # Remove unused targets dictionary - using y_winner and y_total instead
+            
+            if features.empty:
                 self.logger.error("Feature engineering failed")
                 return {}
             
+            # Ensure we have valid targets
+            if 'home_win' not in training_data.columns or 'total_runs' not in training_data.columns:
+                self.logger.error("Missing target columns in training data")
+                return {}
+            
+            y_winner = training_data['home_win'].fillna(0)
+            y_total = training_data['total_runs'].fillna(0)
+            
             # Remove rows with missing targets
-            valid_rows = ~targets.isnull().any(axis=1)
+            valid_rows = ~(y_winner.isnull() | y_total.isnull())
             features = features[valid_rows]
-            targets = targets[valid_rows]
+            y_winner = y_winner[valid_rows]
+            y_total = y_total[valid_rows]
             
             if len(features) < 10:
                 self.logger.error("Insufficient training data after cleaning")
                 return {}
             
             # Train winner prediction model
-            winner_results = self._train_winner_model(features, targets['home_win'])
+            winner_results = self._train_winner_model(features, y_winner)
             
             # Train totals prediction model
-            total_results = self._train_total_model(features, targets['total_runs'])
+            total_results = self._train_total_model(features, y_total)
             
             # Save trained feature names for consistency
             self.trained_feature_names = features.columns.tolist()
@@ -471,6 +484,13 @@ class MLBPredictor:
                     pickle.dump(self.total_model, f)
                 self.logger.info("Total model saved")
             
+            # Save trained feature names for exact prediction alignment
+            if hasattr(self, 'trained_feature_names') and self.trained_feature_names:
+                feature_names_path = os.path.join(self.model_dir, 'trained_feature_names.pkl')
+                with open(feature_names_path, 'wb') as f:
+                    pickle.dump(self.trained_feature_names, f)
+                self.logger.info(f"Saved trained feature names: {self.trained_feature_names}")
+            
             # Save feature engineer with trained feature names
             if hasattr(self, 'trained_feature_names'):
                 self.feature_engineer.trained_feature_names = self.trained_feature_names
@@ -496,6 +516,16 @@ class MLBPredictor:
                 with open(total_path, 'rb') as f:
                     self.total_model = pickle.load(f)
                 self.logger.info("Total model loaded")
+            
+            # Load trained feature names for exact prediction alignment
+            feature_names_path = os.path.join(self.model_dir, 'trained_feature_names.pkl')
+            if os.path.exists(feature_names_path):
+                with open(feature_names_path, 'rb') as f:
+                    self.trained_feature_names = pickle.load(f)
+                self.logger.info(f"Loaded trained feature names: {self.trained_feature_names}")
+            else:
+                self.trained_feature_names = []
+                self.logger.warning("No trained feature names file found")
             
             # Load feature engineer
             feature_eng_path = os.path.join(self.model_dir, 'feature_engineer.pkl')
