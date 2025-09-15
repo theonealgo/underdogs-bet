@@ -75,8 +75,8 @@ class MLBPredictor:
             
             self.logger.info(f"Training models with {len(training_data)} records")
             
-            # Engineer features
-            features_df = self.feature_engineer.create_features(training_data)
+            # Engineer pregame features only (no post-game statcast data)
+            features_df = self.feature_engineer.create_pregame_features(training_data)
             
             # Prepare features and targets
             target_columns = ['home_win', 'total_runs']
@@ -220,8 +220,8 @@ class MLBPredictor:
                 self.logger.warning(f"Models not trained for: {game_data['away_team'].iloc[0]} @ {game_data['home_team'].iloc[0]}")
                 return self._generate_basic_prediction(game_data)
             
-            # Engineer features using the loaded feature engineer
-            features_df = self.feature_engineer.transform_new_data(game_data)
+            # Engineer pregame features (same schema as training)
+            features_df = self.feature_engineer.create_pregame_features(game_data)
             
             # Get all possible features (excluding targets and metadata)
             available_features = [col for col in features_df.columns if col not in [

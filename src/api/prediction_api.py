@@ -360,24 +360,35 @@ class PredictionAPI:
         try:
             enhanced_data = game_data.copy()
             
-            for _, game in game_data.iterrows():
-                home_team = game['home_team']
-                away_team = game['away_team']
+            # Ensure proper column names for feature engineering
+            if 'home_team_id' in enhanced_data.columns and 'home_team' not in enhanced_data.columns:
+                enhanced_data['home_team'] = enhanced_data['home_team_id']
+            if 'away_team_id' in enhanced_data.columns and 'away_team' not in enhanced_data.columns:
+                enhanced_data['away_team'] = enhanced_data['away_team_id']
+            
+            for idx, game in game_data.iterrows():
+                # Handle both possible column name formats
+                home_team = game.get('home_team') or game.get('home_team_id')
+                away_team = game.get('away_team') or game.get('away_team_id')
                 
+                if not home_team or not away_team:
+                    self.logger.warning(f"Missing team data in game: {game}")
+                    continue
+                    
                 # Get recent performance for both teams
                 home_performance = self.db_manager.get_team_recent_performance(home_team, days=30)
                 away_performance = self.db_manager.get_team_recent_performance(away_team, days=30)
                 
-                # Add basic team stats to the game data
+                # Add basic team stats to the game data using the current row index
                 if not home_performance.empty:
-                    enhanced_data.loc[enhanced_data.index[0], 'home_recent_wins'] = home_performance['team_won'].sum()
-                    enhanced_data.loc[enhanced_data.index[0], 'home_recent_games'] = len(home_performance)
-                    enhanced_data.loc[enhanced_data.index[0], 'home_avg_score'] = home_performance['team_score'].mean()
+                    enhanced_data.loc[idx, 'home_recent_wins'] = home_performance['team_won'].sum()
+                    enhanced_data.loc[idx, 'home_recent_games'] = len(home_performance)
+                    enhanced_data.loc[idx, 'home_avg_score'] = home_performance['team_score'].mean()
                 
                 if not away_performance.empty:
-                    enhanced_data.loc[enhanced_data.index[0], 'away_recent_wins'] = away_performance['team_won'].sum()
-                    enhanced_data.loc[enhanced_data.index[0], 'away_recent_games'] = len(away_performance)
-                    enhanced_data.loc[enhanced_data.index[0], 'away_avg_score'] = away_performance['team_score'].mean()
+                    enhanced_data.loc[idx, 'away_recent_wins'] = away_performance['team_won'].sum()
+                    enhanced_data.loc[idx, 'away_recent_games'] = len(away_performance)
+                    enhanced_data.loc[idx, 'away_avg_score'] = away_performance['team_score'].mean()
             
             return enhanced_data
             

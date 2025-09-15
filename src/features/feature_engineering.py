@@ -59,6 +59,39 @@ class FeatureEngineer:
             self.logger.error(f"Error creating features: {str(e)}")
             return data
     
+    def create_pregame_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create features using only pregame-available data (no post-game statcast)
+        
+        Args:
+            data: Raw game data with schedule information
+            
+        Returns:
+            DataFrame with pregame-only engineered features
+        """
+        try:
+            if data.empty:
+                return data
+            
+            self.logger.info(f"Creating pregame features for {len(data)} games...")
+            features_df = data.copy()
+            
+            # Add only pregame-available features (no statcast-dependent features)
+            features_df = self._add_basic_features(features_df)
+            features_df = self._add_situational_features(features_df)
+            # Skip team_features, pitching, batting, rolling stats that depend on statcast
+            
+            # Clean numeric columns
+            numeric_columns = features_df.select_dtypes(include=[np.number]).columns
+            features_df[numeric_columns] = features_df[numeric_columns].fillna(0)
+            
+            self.logger.info(f"Created {len(features_df.columns)} pregame features")
+            return features_df
+            
+        except Exception as e:
+            self.logger.error(f"Error creating pregame features: {str(e)}")
+            return data
+    
     def _add_basic_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add basic game-level features"""
         try:
