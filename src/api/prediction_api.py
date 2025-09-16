@@ -477,7 +477,7 @@ class PredictionAPI:
             # Try to get odds from database first
             odds = self.db_manager.get_odds_for_game(home_team, away_team, game_date)
             
-            if odds and not odds.empty:
+            if not odds.empty:
                 odds_row = odds.iloc[0]
                 return {
                     'home_odds': float(odds_row.get('home_odds', 0)),
