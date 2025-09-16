@@ -457,7 +457,7 @@ class PredictionAPI:
             if home_team and away_team:
                 # Get odds from database
                 odds_data = self._get_odds_data(home_team, away_team, game_date)
-                if odds_data:
+                if odds_data and len(odds_data) > 0:
                     enhanced.update(odds_data)
                 
                 # Calculate head-to-head record

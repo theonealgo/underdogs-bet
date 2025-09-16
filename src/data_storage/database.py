@@ -114,13 +114,19 @@ class DatabaseManager:
                         away_team_id TEXT NOT NULL,
                         predicted_winner TEXT,
                         win_probability REAL,
+                        predicted_total REAL,
+                        total_confidence REAL,
                         model_version TEXT,
-                        actual_winner TEXT,
+                        key_factors TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        actual_winner INTEGER,
                         actual_home_score INTEGER,
                         actual_away_score INTEGER,
+                        actual_total REAL,
                         win_prediction_correct INTEGER,
+                        total_prediction_error REAL,
+                        total_absolute_error REAL,
                         result_updated_at TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(sport, game_date, home_team_id, away_team_id)
                     )
                 """)

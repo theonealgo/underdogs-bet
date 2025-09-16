@@ -150,32 +150,22 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
             
             for prediction in predictions:
                 with st.expander(f"🏟️ {prediction['away_team']} @ {prediction['home_team']}", expanded=True):
-                    col1_inner, col2_inner, col3_inner = st.columns(3)
+                    col1_inner, col2_inner = st.columns(2)
                     
                     with col1_inner:
                         winner = prediction.get('predicted_winner') or "Models need training"
                         st.metric("Winner Prediction", winner)
                     
                     with col2_inner:
-                        # Show odds and potential ROI if available
-                        home_odds = prediction.get('home_odds')
-                        away_odds = prediction.get('away_odds')
-                        if home_odds and away_odds:
-                            winning_odds = home_odds if prediction.get('predicted_winner') == prediction.get('home_team') else away_odds
-                            potential_roi = f"+{((winning_odds - 1) * 100):.0f}%" if winning_odds > 1 else "No data"
-                            st.metric("Potential ROI", potential_roi, "If $100 bet wins")
+                        # Show predicted final score
+                        home_score = prediction.get('predicted_home_score')
+                        away_score = prediction.get('predicted_away_score')
+                        
+                        if home_score is not None and away_score is not None:
+                            final_score = f"{prediction['away_team']} {away_score} - {home_score} {prediction['home_team']}"
+                            st.metric("Predicted Final Score", final_score)
                         else:
-                            st.info("No odds data")
-                    
-                    with col3_inner:
-                        # Show previous head-to-head record if available
-                        h2h_record = prediction.get('head_to_head_record')
-                        if h2h_record:
-                            st.metric("Head-to-Head", h2h_record, "Previous matchups")
-                        else:
-                            st.info("No H2H data")
-                    
-                    # Key factors removed per user request
+                            st.info("No score prediction available")
         else:
             st.info("Click 'Generate Predictions' to see today's game predictions")
     
@@ -184,7 +174,8 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
         st.subheader("📈 Previous Record")
         try:
             with db_manager._get_connection() as conn:
-                query = """
+                # First try to get completed predictions with results
+                query_completed = """
                     SELECT 
                         DATE(game_date) as date,
                         COUNT(*) as total_predictions,
@@ -198,18 +189,45 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                     LIMIT 7
                 """
                 
-                df = pd.read_sql_query(query, conn, params=[sport_code])
+                df_completed = pd.read_sql_query(query_completed, conn, params=[sport_code])
                 
-                if not df.empty:
-                    for _, row in df.iterrows():
+                # If no completed predictions, show pending predictions
+                if df_completed.empty:
+                    query_pending = """
+                        SELECT 
+                            DATE(game_date) as date,
+                            COUNT(*) as total_predictions,
+                            0 as correct,
+                            NULL as accuracy
+                        FROM predictions 
+                        WHERE sport = ? 
+                        AND game_date >= DATE('now', '-7 days')
+                        GROUP BY DATE(game_date)
+                        ORDER BY game_date DESC
+                        LIMIT 7
+                    """
+                    
+                    df_pending = pd.read_sql_query(query_pending, conn, params=[sport_code])
+                    
+                    if not df_pending.empty:
+                        st.write("📊 **Recent Predictions** (Results Pending)")
+                        for _, row in df_pending.iterrows():
+                            col1_side, col2_side = st.columns(2)
+                            with col1_side:
+                                st.write(f"📅 {row['date']}")
+                            with col2_side:
+                                st.write(f"{row['total_predictions']} predictions (⏳ pending)")
+                    else:
+                        st.write("📊 No recent predictions")
+                else:
+                    st.write("📊 **Recent Results**")
+                    for _, row in df_completed.iterrows():
                         col1_side, col2_side = st.columns(2)
                         with col1_side:
                             st.write(f"📅 {row['date']}")
                         with col2_side:
                             accuracy = row['accuracy'] if pd.notna(row['accuracy']) else 0
                             st.write(f"{row['correct']}/{row['total_predictions']} ({accuracy:.1f}%)")
-                else:
-                    st.write("📊 No recent results")
                     
         except Exception as e:
             st.write("⚠️ Results pending")

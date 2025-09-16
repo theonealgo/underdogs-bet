@@ -283,6 +283,14 @@ class MLBPredictor:
             # Simple confidence for totals (based on model performance)
             total_confidence = 0.7  # This would be based on historical MAE
             
+            # Calculate individual team scores from total
+            # Use simple split based on home field advantage (MLB average ~52% home scoring)
+            home_score_ratio = 0.52 if home_win_prob > 0.5 else 0.48
+            away_score_ratio = 1 - home_score_ratio
+            
+            predicted_home_score = round(predicted_total * home_score_ratio)
+            predicted_away_score = round(predicted_total * away_score_ratio)
+            
             prediction = {
                 'sport': 'MLB',
                 'league': 'MLB', 
@@ -296,6 +304,9 @@ class MLBPredictor:
                 'win_probability': win_confidence,
                 'home_win_probability': home_win_prob,
                 'away_win_probability': 1 - home_win_prob,
+                'predicted_total': round(predicted_total, 1),
+                'predicted_home_score': predicted_home_score,
+                'predicted_away_score': predicted_away_score,
                 'model_version': '1.0'
             }
             
