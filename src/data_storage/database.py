@@ -162,6 +162,64 @@ class DatabaseManager:
                     )
                 """)
                 
+                # Create team metrics table for advanced baseball statistics
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS team_metrics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sport TEXT NOT NULL,
+                        league TEXT NOT NULL,
+                        team_id TEXT NOT NULL,
+                        season INTEGER NOT NULL,
+                        date DATE NOT NULL,
+                        -- Core Pythagorean Stats
+                        runs_scored INTEGER,
+                        runs_allowed INTEGER,
+                        run_differential INTEGER,
+                        games_played INTEGER,
+                        wins INTEGER,
+                        losses INTEGER,
+                        -- Top Correlated Pitching Stats (11 of top 19)
+                        era REAL,
+                        fip REAL,
+                        lob_percent REAL,
+                        war_pitching REAL,
+                        whip REAL,
+                        h_per_9 REAL,
+                        batting_avg_against REAL,
+                        saves INTEGER,
+                        bb_per_k_pitchers REAL,
+                        wrc_plus_pitchers REAL,
+                        iso_pitchers REAL,
+                        -- Top Hitting Stats
+                        war_hitting REAL,
+                        obp REAL,
+                        slg REAL,
+                        wrc_plus REAL,
+                        iso REAL,
+                        woba REAL,
+                        ops REAL,
+                        -- Pythagorean Calculations
+                        pythag_wins REAL,
+                        pythag_win_pct REAL,
+                        pythag_exponent REAL DEFAULT 2.0,
+                        -- Rolling Windows (14 and 30 days)
+                        runs_scored_14 REAL,
+                        runs_allowed_14 REAL,
+                        run_diff_14 REAL,
+                        era_14 REAL,
+                        fip_14 REAL,
+                        pythag_win_pct_14 REAL,
+                        runs_scored_30 REAL,
+                        runs_allowed_30 REAL,
+                        run_diff_30 REAL,
+                        era_30 REAL,
+                        fip_30 REAL,
+                        pythag_win_pct_30 REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(sport, league, team_id, date)
+                    )
+                """)
+                
                 # Create prediction accuracy tracking table
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS prediction_accuracy (
@@ -850,6 +908,72 @@ class DatabaseManager:
             
         except Exception as e:
             self.logger.error(f"Error getting head-to-head games: {str(e)}")
+            return pd.DataFrame()
+    
+    def store_team_metrics(self, metrics_data: pd.DataFrame) -> bool:
+        """
+        Store team metrics data with Pythagorean calculations
+        
+        Args:
+            metrics_data: DataFrame with team metrics
+            
+        Returns:
+            True if successful
+        """
+        try:
+            if metrics_data.empty:
+                self.logger.warning("No team metrics data to store")
+                return False
+            
+            # Ensure required columns exist
+            required_columns = ['sport', 'league', 'team_id', 'season', 'date']
+            missing_columns = [col for col in required_columns if col not in metrics_data.columns]
+            
+            if missing_columns:
+                self.logger.error(f"Missing required columns in team metrics: {missing_columns}")
+                return False
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Use INSERT OR REPLACE to handle updates
+                metrics_data.to_sql('team_metrics', conn, if_exists='append', index=False, method='multi')
+                
+            self.logger.info(f"Stored {len(metrics_data)} team metrics records")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error storing team metrics: {str(e)}")
+            return False
+    
+    def get_team_metrics(self, team_id: str, date: datetime, days_back: int = 1) -> pd.DataFrame:
+        """
+        Get team metrics for a specific team and date range
+        
+        Args:
+            team_id: Team abbreviation
+            date: Reference date  
+            days_back: Days to look back from date
+            
+        Returns:
+            DataFrame with team metrics
+        """
+        try:
+            start_date = date - timedelta(days=days_back)
+            
+            query = """
+                SELECT *
+                FROM team_metrics
+                WHERE team_id = ? AND date BETWEEN ? AND ?
+                ORDER BY date DESC
+                LIMIT 1
+            """
+            
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn, params=[team_id, start_date.date(), date.date()])
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error getting team metrics: {str(e)}")
             return pd.DataFrame()
     
     def get_latest_data_timestamp(self, table: str) -> Optional[str]:

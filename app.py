@@ -25,7 +25,7 @@ from src.utils.sport_data_manager import SportDataManager
 @st.cache_resource
 def initialize_components():
     db_manager = DatabaseManager()
-    predictor = MLBPredictor()
+    predictor = MLBPredictor(db_manager=db_manager)  # Pass db_manager for Pythagorean features
     api = PredictionAPI(db_manager, predictor)
     sport_data_manager = SportDataManager()
     

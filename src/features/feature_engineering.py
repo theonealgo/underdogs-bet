@@ -18,11 +18,50 @@ class FeatureEngineer:
         self.imputers = {}
         
         # Deterministic pregame feature schema - only features available before games
+        # Based on Bill James Pythagorean Theorem and high-correlation stats
         self.PREGAME_FEATURES = [
+            # Basic temporal features
             'month', 'day_of_week', 'day_of_year', 'is_weekend',
             'home_team_encoded', 'away_team_encoded',
+            
+            # Pythagorean expectation features (highest correlation with wins)
+            'home_pythag_win_pct', 'away_pythag_win_pct', 'pythag_matchup_diff',
+            'home_pythag_14', 'away_pythag_14', 'pythag_14_diff',
+            'home_pythag_30', 'away_pythag_30', 'pythag_30_diff',
+            
+            # Run differential (R² = 0.887 - highest correlation)
+            'home_run_diff', 'away_run_diff', 'run_diff_matchup',
+            'home_run_diff_14', 'away_run_diff_14', 'run_diff_14_matchup',
+            'home_run_diff_30', 'away_run_diff_30', 'run_diff_30_matchup',
+            
+            # Top pitching stats (11 of top 19 correlations)
+            'home_era', 'away_era', 'era_matchup_diff',
+            'home_fip', 'away_fip', 'fip_matchup_diff', 
+            'home_whip', 'away_whip', 'whip_matchup_diff',
+            'home_h_per_9', 'away_h_per_9', 'h9_matchup_diff',
+            'home_baa', 'away_baa', 'baa_matchup_diff',
+            
+            # Top hitting stats
+            'home_obp', 'away_obp', 'obp_matchup_diff',
+            'home_slg', 'away_slg', 'slg_matchup_diff',
+            'home_ops', 'away_ops', 'ops_matchup_diff',
+            
+            # Composite strength indices (weighted by correlations)
+            'home_pitching_index', 'away_pitching_index', 'pitching_matchup_diff',
+            'home_hitting_index', 'away_hitting_index', 'hitting_matchup_diff',
+            
+            # Legacy features for compatibility
             'pitches_per_inning', 'game_pace'
         ]
+        
+        # Correlation weights for composite indices (from user's analysis)
+        self.PITCHING_WEIGHTS = {
+            'era': 0.790, 'fip': 0.770, 'whip': 0.691, 'h_per_9': 0.676, 'baa': 0.663
+        }
+        
+        self.HITTING_WEIGHTS = {
+            'obp': 0.343, 'slg': 0.399, 'ops': 0.422  # Normalized weights
+        }
     
     def get_pregame_feature_columns(self):
         """Return the exact feature columns used for pregame predictions"""
@@ -70,25 +109,32 @@ class FeatureEngineer:
             self.logger.error(f"Error creating features: {str(e)}")
             return data
     
-    def create_pregame_features(self, data: pd.DataFrame) -> pd.DataFrame:
+    def create_pregame_features(self, data: pd.DataFrame, db_manager=None) -> pd.DataFrame:
         """
-        Create features using only pregame-available data (no post-game statcast)
+        Create features using only pregame-available data with Pythagorean statistics
         
         Args:
             data: Raw game data with schedule information
+            db_manager: Database manager for team metrics lookup
             
         Returns:
-            DataFrame with exactly PREGAME_FEATURES columns
+            DataFrame with exactly PREGAME_FEATURES columns including Pythagorean stats
         """
         try:
             if data.empty:
                 return pd.DataFrame(columns=self.PREGAME_FEATURES)
             
-            self.logger.info(f"Creating pregame features for {len(data)} games...")
+            self.logger.info(f"Creating advanced pregame features for {len(data)} games...")
             features_df = data.copy()
             
-            # Add only basic pregame features 
+            # Add basic pregame features 
             features_df = self._add_basic_features(features_df)
+            
+            # Add advanced team metrics and Pythagorean features
+            if db_manager is not None:
+                features_df = self._add_team_metrics_features(features_df, db_manager)
+            else:
+                self.logger.warning("No database manager provided - using basic features only")
             
             # Select only the defined pregame features, fill missing with defaults
             result_df = pd.DataFrame(index=features_df.index)
@@ -101,18 +147,317 @@ class FeatureEngineer:
                         result_df[feature] = 0  # Default team encoding
                     elif feature in ['month', 'day_of_week', 'day_of_year']:
                         result_df[feature] = 1  # Default date values
+                    elif 'pythag' in feature.lower():
+                        result_df[feature] = 0.5  # Default win percentage
+                    elif 'diff' in feature or 'matchup' in feature:
+                        result_df[feature] = 0  # Default difference
+                    elif 'era' in feature:
+                        result_df[feature] = 4.5  # Default ERA
+                    elif any(stat in feature for stat in ['obp', 'slg', 'ops']):
+                        result_df[feature] = 0.75 if 'ops' in feature else 0.32  # Default hitting stats
                     else:
                         result_df[feature] = 0  # Default numeric values
             
             # Ensure all numeric and no NaN values
             result_df = result_df.fillna(0).astype(float)
             
-            self.logger.info(f"Created pregame features with {len(result_df.columns)} columns: {list(result_df.columns)}")
+            self.logger.info(f"Created pregame features with {len(result_df.columns)} columns including Pythagorean stats")
             return result_df
             
         except Exception as e:
             self.logger.error(f"Error creating pregame features: {str(e)}")
             return pd.DataFrame(columns=self.PREGAME_FEATURES)
+    
+    def _add_team_metrics_features(self, df: pd.DataFrame, db_manager) -> pd.DataFrame:
+        """
+        Add advanced team metrics features including Pythagorean calculations
+        
+        Args:
+            df: DataFrame with game data
+            db_manager: Database manager for metrics lookup
+            
+        Returns:
+            DataFrame with team metrics features added
+        """
+        try:
+            if 'game_date' not in df.columns or 'home_team' not in df.columns or 'away_team' not in df.columns:
+                self.logger.warning("Missing required columns for team metrics")
+                return df
+            
+            self.logger.info("Adding Pythagorean and advanced team statistics...")
+            
+            for idx, row in df.iterrows():
+                game_date = pd.to_datetime(row['game_date'])
+                home_team = row['home_team']
+                away_team = row['away_team']
+                
+                # Get team metrics for both teams (from previous day to avoid data leakage)
+                prev_date = game_date - timedelta(days=1)
+                home_metrics = db_manager.get_team_metrics(home_team, prev_date)
+                away_metrics = db_manager.get_team_metrics(away_team, prev_date)
+                
+                # Add Pythagorean features
+                df = self._add_pythagorean_features(df, idx, home_metrics, away_metrics, 'home', 'away')
+                
+                # Add run differential features  
+                df = self._add_run_differential_features(df, idx, home_metrics, away_metrics)
+                
+                # Add pitching statistics
+                df = self._add_pitching_stat_features(df, idx, home_metrics, away_metrics)
+                
+                # Add hitting statistics
+                df = self._add_hitting_stat_features(df, idx, home_metrics, away_metrics)
+                
+                # Calculate composite strength indices
+                df = self._add_composite_indices(df, idx, home_metrics, away_metrics)
+            
+            self.logger.info("Successfully added team metrics features")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding team metrics features: {str(e)}")
+            return df
+    
+    def _add_pythagorean_features(self, df: pd.DataFrame, idx: int, home_metrics: pd.DataFrame, 
+                                 away_metrics: pd.DataFrame, home_prefix: str, away_prefix: str) -> pd.DataFrame:
+        """Add Pythagorean win percentage features"""
+        try:
+            # Season Pythagorean win percentages
+            home_pythag = home_metrics['pythag_win_pct'].iloc[0] if not home_metrics.empty and 'pythag_win_pct' in home_metrics.columns else 0.5
+            away_pythag = away_metrics['pythag_win_pct'].iloc[0] if not away_metrics.empty and 'pythag_win_pct' in away_metrics.columns else 0.5
+            
+            df.loc[idx, f'{home_prefix}_pythag_win_pct'] = home_pythag
+            df.loc[idx, f'{away_prefix}_pythag_win_pct'] = away_pythag
+            df.loc[idx, 'pythag_matchup_diff'] = home_pythag - away_pythag
+            
+            # 14-day rolling Pythagorean
+            home_pythag_14 = home_metrics['pythag_win_pct_14'].iloc[0] if not home_metrics.empty and 'pythag_win_pct_14' in home_metrics.columns else home_pythag
+            away_pythag_14 = away_metrics['pythag_win_pct_14'].iloc[0] if not away_metrics.empty and 'pythag_win_pct_14' in away_metrics.columns else away_pythag
+            
+            df.loc[idx, f'{home_prefix}_pythag_14'] = home_pythag_14
+            df.loc[idx, f'{away_prefix}_pythag_14'] = away_pythag_14
+            df.loc[idx, 'pythag_14_diff'] = home_pythag_14 - away_pythag_14
+            
+            # 30-day rolling Pythagorean
+            home_pythag_30 = home_metrics['pythag_win_pct_30'].iloc[0] if not home_metrics.empty and 'pythag_win_pct_30' in home_metrics.columns else home_pythag
+            away_pythag_30 = away_metrics['pythag_win_pct_30'].iloc[0] if not away_metrics.empty and 'pythag_win_pct_30' in away_metrics.columns else away_pythag
+            
+            df.loc[idx, f'{home_prefix}_pythag_30'] = home_pythag_30
+            df.loc[idx, f'{away_prefix}_pythag_30'] = away_pythag_30
+            df.loc[idx, 'pythag_30_diff'] = home_pythag_30 - away_pythag_30
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding Pythagorean features: {str(e)}")
+            return df
+    
+    def _add_run_differential_features(self, df: pd.DataFrame, idx: int, 
+                                     home_metrics: pd.DataFrame, away_metrics: pd.DataFrame) -> pd.DataFrame:
+        """Add run differential features (highest correlation R² = 0.887)"""
+        try:
+            # Season run differentials
+            home_run_diff = home_metrics['run_differential'].iloc[0] if not home_metrics.empty and 'run_differential' in home_metrics.columns else 0
+            away_run_diff = away_metrics['run_differential'].iloc[0] if not away_metrics.empty and 'run_differential' in away_metrics.columns else 0
+            
+            df.loc[idx, 'home_run_diff'] = home_run_diff
+            df.loc[idx, 'away_run_diff'] = away_run_diff
+            df.loc[idx, 'run_diff_matchup'] = home_run_diff - away_run_diff
+            
+            # 14-day run differentials
+            home_run_diff_14 = home_metrics['run_diff_14'].iloc[0] if not home_metrics.empty and 'run_diff_14' in home_metrics.columns else home_run_diff
+            away_run_diff_14 = away_metrics['run_diff_14'].iloc[0] if not away_metrics.empty and 'run_diff_14' in away_metrics.columns else away_run_diff
+            
+            df.loc[idx, 'home_run_diff_14'] = home_run_diff_14
+            df.loc[idx, 'away_run_diff_14'] = away_run_diff_14
+            df.loc[idx, 'run_diff_14_matchup'] = home_run_diff_14 - away_run_diff_14
+            
+            # 30-day run differentials  
+            home_run_diff_30 = home_metrics['run_diff_30'].iloc[0] if not home_metrics.empty and 'run_diff_30' in home_metrics.columns else home_run_diff
+            away_run_diff_30 = away_metrics['run_diff_30'].iloc[0] if not away_metrics.empty and 'run_diff_30' in away_metrics.columns else away_run_diff
+            
+            df.loc[idx, 'home_run_diff_30'] = home_run_diff_30
+            df.loc[idx, 'away_run_diff_30'] = away_run_diff_30
+            df.loc[idx, 'run_diff_30_matchup'] = home_run_diff_30 - away_run_diff_30
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding run differential features: {str(e)}")
+            return df
+    
+    def _add_pitching_stat_features(self, df: pd.DataFrame, idx: int,
+                                  home_metrics: pd.DataFrame, away_metrics: pd.DataFrame) -> pd.DataFrame:
+        """Add top pitching statistics (11 of top 19 correlations)"""
+        try:
+            # ERA (R² = 0.790)
+            home_era = home_metrics['era'].iloc[0] if not home_metrics.empty and 'era' in home_metrics.columns else 4.5
+            away_era = away_metrics['era'].iloc[0] if not away_metrics.empty and 'era' in away_metrics.columns else 4.5
+            df.loc[idx, 'home_era'] = home_era
+            df.loc[idx, 'away_era'] = away_era
+            df.loc[idx, 'era_matchup_diff'] = away_era - home_era  # Lower ERA is better, so home advantage when away ERA > home ERA
+            
+            # FIP (R² = 0.770)
+            home_fip = home_metrics['fip'].iloc[0] if not home_metrics.empty and 'fip' in home_metrics.columns else 4.5
+            away_fip = away_metrics['fip'].iloc[0] if not away_metrics.empty and 'fip' in away_metrics.columns else 4.5
+            df.loc[idx, 'home_fip'] = home_fip
+            df.loc[idx, 'away_fip'] = away_fip
+            df.loc[idx, 'fip_matchup_diff'] = away_fip - home_fip
+            
+            # WHIP (R² = 0.691)
+            home_whip = home_metrics['whip'].iloc[0] if not home_metrics.empty and 'whip' in home_metrics.columns else 1.3
+            away_whip = away_metrics['whip'].iloc[0] if not away_metrics.empty and 'whip' in away_metrics.columns else 1.3
+            df.loc[idx, 'home_whip'] = home_whip
+            df.loc[idx, 'away_whip'] = away_whip
+            df.loc[idx, 'whip_matchup_diff'] = away_whip - home_whip
+            
+            # H/9 (R² = 0.676)
+            home_h9 = home_metrics['h_per_9'].iloc[0] if not home_metrics.empty and 'h_per_9' in home_metrics.columns else 9.0
+            away_h9 = away_metrics['h_per_9'].iloc[0] if not away_metrics.empty and 'h_per_9' in away_metrics.columns else 9.0
+            df.loc[idx, 'home_h_per_9'] = home_h9
+            df.loc[idx, 'away_h_per_9'] = away_h9
+            df.loc[idx, 'h9_matchup_diff'] = away_h9 - home_h9
+            
+            # BAA - Batting Average Against (R² = 0.663)
+            home_baa = home_metrics['batting_avg_against'].iloc[0] if not home_metrics.empty and 'batting_avg_against' in home_metrics.columns else 0.250
+            away_baa = away_metrics['batting_avg_against'].iloc[0] if not away_metrics.empty and 'batting_avg_against' in away_metrics.columns else 0.250
+            df.loc[idx, 'home_baa'] = home_baa
+            df.loc[idx, 'away_baa'] = away_baa
+            df.loc[idx, 'baa_matchup_diff'] = away_baa - home_baa
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding pitching stat features: {str(e)}")
+            return df
+    
+    def _add_hitting_stat_features(self, df: pd.DataFrame, idx: int,
+                                 home_metrics: pd.DataFrame, away_metrics: pd.DataFrame) -> pd.DataFrame:
+        """Add top hitting statistics"""
+        try:
+            # OBP (On-base percentage)
+            home_obp = home_metrics['obp'].iloc[0] if not home_metrics.empty and 'obp' in home_metrics.columns else 0.320
+            away_obp = away_metrics['obp'].iloc[0] if not away_metrics.empty and 'obp' in away_metrics.columns else 0.320
+            df.loc[idx, 'home_obp'] = home_obp
+            df.loc[idx, 'away_obp'] = away_obp
+            df.loc[idx, 'obp_matchup_diff'] = home_obp - away_obp
+            
+            # SLG (Slugging percentage)
+            home_slg = home_metrics['slg'].iloc[0] if not home_metrics.empty and 'slg' in home_metrics.columns else 0.400
+            away_slg = away_metrics['slg'].iloc[0] if not away_metrics.empty and 'slg' in away_metrics.columns else 0.400
+            df.loc[idx, 'home_slg'] = home_slg
+            df.loc[idx, 'away_slg'] = away_slg
+            df.loc[idx, 'slg_matchup_diff'] = home_slg - away_slg
+            
+            # OPS (On-base Plus Slugging)
+            home_ops = home_metrics['ops'].iloc[0] if not home_metrics.empty and 'ops' in home_metrics.columns else 0.720
+            away_ops = away_metrics['ops'].iloc[0] if not away_metrics.empty and 'ops' in away_metrics.columns else 0.720
+            df.loc[idx, 'home_ops'] = home_ops
+            df.loc[idx, 'away_ops'] = away_ops
+            df.loc[idx, 'ops_matchup_diff'] = home_ops - away_ops
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding hitting stat features: {str(e)}")
+            return df
+    
+    def _add_composite_indices(self, df: pd.DataFrame, idx: int,
+                             home_metrics: pd.DataFrame, away_metrics: pd.DataFrame) -> pd.DataFrame:
+        """Add composite strength indices weighted by correlation values"""
+        try:
+            # Calculate pitching strength index (weighted by correlations)
+            home_pitching_stats = {
+                'era': df.loc[idx, 'home_era'] if 'home_era' in df.columns else 4.5,
+                'fip': df.loc[idx, 'home_fip'] if 'home_fip' in df.columns else 4.5,
+                'whip': df.loc[idx, 'home_whip'] if 'home_whip' in df.columns else 1.3,
+                'h_per_9': df.loc[idx, 'home_h_per_9'] if 'home_h_per_9' in df.columns else 9.0,
+                'baa': df.loc[idx, 'home_baa'] if 'home_baa' in df.columns else 0.250
+            }
+            
+            away_pitching_stats = {
+                'era': df.loc[idx, 'away_era'] if 'away_era' in df.columns else 4.5,
+                'fip': df.loc[idx, 'away_fip'] if 'away_fip' in df.columns else 4.5,
+                'whip': df.loc[idx, 'away_whip'] if 'away_whip' in df.columns else 1.3,
+                'h_per_9': df.loc[idx, 'away_h_per_9'] if 'away_h_per_9' in df.columns else 9.0,
+                'baa': df.loc[idx, 'away_baa'] if 'away_baa' in df.columns else 0.250
+            }
+            
+            # Calculate weighted pitching indices (normalize and invert for "lower is better" stats)
+            home_pitching_index = self._calculate_pitching_index(home_pitching_stats)
+            away_pitching_index = self._calculate_pitching_index(away_pitching_stats)
+            
+            df.loc[idx, 'home_pitching_index'] = home_pitching_index
+            df.loc[idx, 'away_pitching_index'] = away_pitching_index
+            df.loc[idx, 'pitching_matchup_diff'] = home_pitching_index - away_pitching_index
+            
+            # Calculate hitting strength index
+            home_hitting_stats = {
+                'obp': df.loc[idx, 'home_obp'] if 'home_obp' in df.columns else 0.320,
+                'slg': df.loc[idx, 'home_slg'] if 'home_slg' in df.columns else 0.400,
+                'ops': df.loc[idx, 'home_ops'] if 'home_ops' in df.columns else 0.720
+            }
+            
+            away_hitting_stats = {
+                'obp': df.loc[idx, 'away_obp'] if 'away_obp' in df.columns else 0.320,
+                'slg': df.loc[idx, 'away_slg'] if 'away_slg' in df.columns else 0.400,
+                'ops': df.loc[idx, 'away_ops'] if 'away_ops' in df.columns else 0.720
+            }
+            
+            home_hitting_index = self._calculate_hitting_index(home_hitting_stats)
+            away_hitting_index = self._calculate_hitting_index(away_hitting_stats)
+            
+            df.loc[idx, 'home_hitting_index'] = home_hitting_index
+            df.loc[idx, 'away_hitting_index'] = away_hitting_index
+            df.loc[idx, 'hitting_matchup_diff'] = home_hitting_index - away_hitting_index
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding composite indices: {str(e)}")
+            return df
+    
+    def _calculate_pitching_index(self, stats: Dict[str, float]) -> float:
+        """Calculate weighted pitching strength index"""
+        try:
+            # Normalize weights
+            total_weight = sum(self.PITCHING_WEIGHTS.values())
+            normalized_weights = {k: v/total_weight for k, v in self.PITCHING_WEIGHTS.items()}
+            
+            # Calculate weighted index (invert for lower-is-better stats)
+            index = 0
+            for stat, weight in normalized_weights.items():
+                if stat in stats:
+                    # Invert ERA, FIP, WHIP, H/9, BAA (lower is better)
+                    normalized_stat = 1.0 / (1.0 + stats[stat]) if stats[stat] > 0 else 0
+                    index += weight * normalized_stat
+            
+            return index
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating pitching index: {str(e)}")
+            return 0.5
+    
+    def _calculate_hitting_index(self, stats: Dict[str, float]) -> float:
+        """Calculate weighted hitting strength index"""
+        try:
+            # Normalize weights
+            total_weight = sum(self.HITTING_WEIGHTS.values())
+            normalized_weights = {k: v/total_weight for k, v in self.HITTING_WEIGHTS.items()}
+            
+            # Calculate weighted index (higher is better for hitting stats)
+            index = 0
+            for stat, weight in normalized_weights.items():
+                if stat in stats:
+                    # Normalize hitting stats to 0-1 scale
+                    normalized_stat = min(stats[stat] / 0.5, 1.0) if stat == 'ops' else min(stats[stat] / 0.4, 1.0)
+                    index += weight * normalized_stat
+            
+            return index
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating hitting index: {str(e)}")
+            return 0.5
     
     def _add_basic_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add basic game-level features"""

@@ -18,9 +18,10 @@ class MLBPredictor:
     Machine learning models for MLB game predictions
     """
     
-    def __init__(self, model_dir: str = "models"):
+    def __init__(self, model_dir: str = "models", db_manager=None):
         self.logger = logging.getLogger(__name__)
         self.model_dir = model_dir
+        self.db_manager = db_manager
         self.feature_engineer = FeatureEngineer()
         
         # Initialize models
@@ -28,6 +29,9 @@ class MLBPredictor:
         self.total_model = None
         self.is_trained = False
         self.trained_feature_names = None
+        
+        # Pythagorean blending parameters
+        self.pythagorean_weight = 0.3  # Weight for Pythagorean prior (tunable via CV)
         
         # Model parameters
         self.winner_params = {
@@ -233,8 +237,8 @@ class MLBPredictor:
                 self.logger.warning(f"Models not trained for: {game_data['away_team'].iloc[0]} @ {game_data['home_team'].iloc[0]}")
                 return self._generate_basic_prediction(game_data)
             
-            # Engineer pregame features (same schema as training)
-            features_df = self.feature_engineer.create_pregame_features(game_data)
+            # Engineer pregame features with advanced team metrics
+            features_df = self.feature_engineer.create_pregame_features(game_data, self.db_manager)
             
             # Get all possible features (excluding targets and metadata)
             available_features = [col for col in features_df.columns if col not in [
@@ -268,28 +272,35 @@ class MLBPredictor:
             # Final data cleaning
             features = features.fillna(0).astype(np.float32)
             
-            # Make predictions
+            # Make XGBoost predictions
             win_proba = self.winner_model.predict_proba(features)[0]
-            home_win_prob = win_proba[1]
-            
+            xgb_home_win_prob = win_proba[1]
             predicted_total = self.total_model.predict(features)[0]
             
+            # Calculate Pythagorean prior from features if available
+            pythag_prior = self._calculate_pythagorean_prior(features_df, game_data)
+            
+            # Blend XGBoost prediction with Pythagorean prior
+            if pythag_prior is not None:
+                blended_home_win_prob = (
+                    self.pythagorean_weight * pythag_prior + 
+                    (1 - self.pythagorean_weight) * xgb_home_win_prob
+                )
+                self.logger.debug(f"Blended prediction: XGB={xgb_home_win_prob:.3f}, Pythag={pythag_prior:.3f}, Final={blended_home_win_prob:.3f}")
+            else:
+                blended_home_win_prob = xgb_home_win_prob
+                self.logger.debug("Using XGBoost prediction only (no Pythagorean data)")
+            
             # Determine predicted winner
-            predicted_winner = game_data['home_team'].iloc[0] if home_win_prob > 0.5 else game_data['away_team'].iloc[0]
+            predicted_winner = game_data['home_team'].iloc[0] if blended_home_win_prob > 0.5 else game_data['away_team'].iloc[0]
             
             # Calculate confidence scores
-            win_confidence = max(home_win_prob, 1 - home_win_prob)
+            win_confidence = max(blended_home_win_prob, 1 - blended_home_win_prob)
             
-            # Simple confidence for totals (based on model performance)
-            total_confidence = 0.7  # This would be based on historical MAE
-            
-            # Calculate individual team scores from total
-            # Use simple split based on home field advantage (MLB average ~52% home scoring)
-            home_score_ratio = 0.52 if home_win_prob > 0.5 else 0.48
-            away_score_ratio = 1 - home_score_ratio
-            
-            predicted_home_score = round(predicted_total * home_score_ratio)
-            predicted_away_score = round(predicted_total * away_score_ratio)
+            # Use Pythagorean ratios for realistic score allocation
+            predicted_home_score, predicted_away_score = self._allocate_scores_pythagorean(
+                predicted_total, features_df, game_data, blended_home_win_prob
+            )
             
             prediction = {
                 'sport': 'MLB',
@@ -302,8 +313,8 @@ class MLBPredictor:
                 'home_team_id': game_data['home_team'].iloc[0],
                 'predicted_winner': predicted_winner,
                 'win_probability': win_confidence,
-                'home_win_probability': home_win_prob,
-                'away_win_probability': 1 - home_win_prob,
+                'home_win_probability': blended_home_win_prob,
+                'away_win_probability': 1 - blended_home_win_prob,
                 'predicted_total': round(predicted_total, 1),
                 'predicted_home_score': predicted_home_score,
                 'predicted_away_score': predicted_away_score,
@@ -346,6 +357,119 @@ class MLBPredictor:
         except Exception as e:
             self.logger.error(f"Error generating basic prediction: {str(e)}")
             return {}
+    
+    def _calculate_pythagorean_prior(self, features_df: pd.DataFrame, game_data: pd.DataFrame) -> Optional[float]:
+        """
+        Calculate Pythagorean prior win probability from team metrics
+        
+        Args:
+            features_df: DataFrame with engineered features including Pythagorean stats
+            game_data: Original game data
+            
+        Returns:
+            Home team win probability based on Pythagorean expectation, or None if unavailable
+        """
+        try:
+            # Check if Pythagorean features are available
+            if 'home_pythag_win_pct' not in features_df.columns or 'away_pythag_win_pct' not in features_df.columns:
+                return None
+            
+            home_pythag = features_df['home_pythag_win_pct'].iloc[0] 
+            away_pythag = features_df['away_pythag_win_pct'].iloc[0]
+            
+            if pd.isna(home_pythag) or pd.isna(away_pythag):
+                return None
+            
+            # Use logistic function to convert Pythagorean expectations to game win probability
+            # P(home_win) = home_pythag / (home_pythag + away_pythag)
+            total_pythag = home_pythag + away_pythag
+            if total_pythag > 0:
+                pythag_prior = home_pythag / total_pythag
+                
+                # Apply home field advantage adjustment (~53% in MLB)
+                home_field_adjustment = 0.53
+                adjusted_prior = pythag_prior * home_field_adjustment + (1 - pythag_prior) * (1 - home_field_adjustment)
+                
+                return max(0.1, min(0.9, adjusted_prior))  # Bound between 10-90%
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating Pythagorean prior: {str(e)}")
+            return None
+    
+    def _allocate_scores_pythagorean(self, predicted_total: float, features_df: pd.DataFrame, 
+                                   game_data: pd.DataFrame, home_win_prob: float) -> Tuple[int, int]:
+        """
+        Allocate predicted total score using Pythagorean ratios for realistic team scores
+        
+        Args:
+            predicted_total: Total runs predicted for the game
+            features_df: DataFrame with team metrics features
+            game_data: Original game data 
+            home_win_prob: Home team win probability
+            
+        Returns:
+            Tuple of (home_score, away_score)
+        """
+        try:
+            # Try to get actual runs scored rates from features
+            if ('home_run_diff' in features_df.columns and 'away_run_diff' in features_df.columns):
+                home_run_diff = features_df['home_run_diff'].iloc[0]
+                away_run_diff = features_df['away_run_diff'].iloc[0]
+                
+                # Estimate runs scored per game from differential
+                # Assume league average ~4.5 runs per team per game
+                league_avg = 4.5
+                home_runs_per_game = league_avg + (home_run_diff / 162)  # Season-long differential spread over 162 games
+                away_runs_per_game = league_avg + (away_run_diff / 162)
+                
+                # Use Pythagorean-style allocation based on expected run scoring
+                total_expected_runs = home_runs_per_game + away_runs_per_game
+                
+                if total_expected_runs > 0:
+                    home_ratio = home_runs_per_game / total_expected_runs
+                    away_ratio = away_runs_per_game / total_expected_runs
+                    
+                    home_score = round(predicted_total * home_ratio)
+                    away_score = round(predicted_total * away_ratio)
+                    
+                    # Ensure winner gets more runs if win probability is strong
+                    if abs(home_win_prob - 0.5) > 0.15:  # Strong prediction
+                        if home_win_prob > 0.5 and home_score <= away_score:
+                            home_score = away_score + 1
+                        elif home_win_prob < 0.5 and away_score <= home_score:
+                            away_score = home_score + 1
+                    
+                    return home_score, away_score
+            
+            # Fallback: Use win probability for allocation
+            if home_win_prob > 0.5:
+                # Home team favored - gets slight scoring advantage
+                home_ratio = 0.52 + (home_win_prob - 0.5) * 0.1  # Range ~0.52-0.57
+                away_ratio = 1 - home_ratio
+            else:
+                # Away team favored
+                away_ratio = 0.52 + (0.5 - home_win_prob) * 0.1
+                home_ratio = 1 - away_ratio
+            
+            home_score = round(predicted_total * home_ratio)
+            away_score = round(predicted_total * away_ratio)
+            
+            # Ensure winner actually wins
+            if home_win_prob > 0.5 and home_score <= away_score:
+                home_score = away_score + 1
+            elif home_win_prob < 0.5 and away_score <= home_score:
+                away_score = home_score + 1
+                
+            return home_score, away_score
+            
+        except Exception as e:
+            self.logger.error(f"Error allocating scores with Pythagorean ratios: {str(e)}")
+            # Fallback to simple allocation
+            home_score = round(predicted_total * 0.52)
+            away_score = round(predicted_total * 0.48)
+            return home_score, away_score
     
     def predict_multiple_games(self, games_data: pd.DataFrame) -> List[Dict]:
         """
