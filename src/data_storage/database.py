@@ -96,6 +96,13 @@ class DatabaseManager:
                         home_odds INTEGER,
                         away_implied_prob REAL,
                         home_implied_prob REAL,
+                        away_spread REAL,
+                        away_spread_odds INTEGER,
+                        home_spread REAL,
+                        home_spread_odds INTEGER,
+                        total_line REAL,
+                        over_odds INTEGER,
+                        under_odds INTEGER,
                         bookmaker_count INTEGER,
                         collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(game_date, sport, away_team, home_team)
@@ -610,7 +617,7 @@ class DatabaseManager:
             return False
     
     def save_odds(self, odds_df: pd.DataFrame, sport: str) -> bool:
-        """Save odds data to database"""
+        """Save odds data to database including moneyline, spreads, and totals"""
         if odds_df.empty:
             return True
             
@@ -620,12 +627,18 @@ class DatabaseManager:
                     conn.execute("""
                         INSERT OR REPLACE INTO odds_data 
                         (game_date, sport, away_team, home_team, away_odds, home_odds, 
-                         away_implied_prob, home_implied_prob, bookmaker_count, collected_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         away_implied_prob, home_implied_prob, away_spread, away_spread_odds,
+                         home_spread, home_spread_odds, total_line, over_odds, under_odds,
+                         bookmaker_count, collected_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         row['game_date'], sport, row['away_team'], row['home_team'],
                         row['away_odds'], row['home_odds'], row['away_implied_prob'],
-                        row['home_implied_prob'], row['bookmaker_count'], row['collected_at']
+                        row['home_implied_prob'], 
+                        row.get('away_spread'), row.get('away_spread_odds'),
+                        row.get('home_spread'), row.get('home_spread_odds'),
+                        row.get('total_line'), row.get('over_odds'), row.get('under_odds'),
+                        row['bookmaker_count'], row['collected_at']
                     ))
                 conn.commit()
                 self.logger.info(f"Saved {len(odds_df)} odds records for {sport}")
@@ -633,6 +646,10 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error saving odds: {str(e)}")
             return False
+    
+    def store_odds_data(self, odds_df: pd.DataFrame, sport: str = 'MLB') -> bool:
+        """Alias for save_odds to maintain compatibility"""
+        return self.save_odds(odds_df, sport)
     
     def get_odds_for_game(self, game_date, sport: str, away_team: str, home_team: str) -> Optional[Dict]:
         """Get odds for a specific game"""
@@ -850,7 +867,7 @@ class DatabaseManager:
     
     def get_odds_for_game(self, home_team: str, away_team: str, game_date: datetime) -> pd.DataFrame:
         """
-        Get betting odds for a specific game
+        Get betting odds for a specific game including moneyline, spreads, and totals
         
         Args:
             home_team: Home team abbreviation
@@ -862,7 +879,9 @@ class DatabaseManager:
         """
         try:
             query = """
-                SELECT home_odds, away_odds, home_implied_prob, away_implied_prob
+                SELECT home_odds, away_odds, home_implied_prob, away_implied_prob,
+                       away_spread, away_spread_odds, home_spread, home_spread_odds,
+                       total_line, over_odds, under_odds
                 FROM odds_data
                 WHERE home_team = ? AND away_team = ? AND game_date = ?
                 ORDER BY collected_at DESC

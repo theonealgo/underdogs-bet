@@ -475,8 +475,14 @@ class PredictionAPI:
         """Get betting odds for the game including moneyline, spreads, and totals"""
         try:
             import pandas as pd
+            from utils.mlb_team_mapper import MLBTeamMapper
+            
+            # Convert team abbreviations to full names for odds lookup
+            home_team_full = MLBTeamMapper.abbrev_to_full(home_team)
+            away_team_full = MLBTeamMapper.abbrev_to_full(away_team)
+            
             # Try to get odds from database first
-            odds = self.db_manager.get_odds_for_game(home_team, away_team, game_date)
+            odds = self.db_manager.get_odds_for_game(home_team_full, away_team_full, game_date)
             
             if not odds.empty:
                 odds_row = odds.iloc[0]
