@@ -77,15 +77,30 @@ class SportDataManager:
             logger.warning("Odds collector not available")
             self._odds_collector = None
     
-    def get_todays_games(self, sport_code: str) -> pd.DataFrame:
-        """Get today's games for the specified sport."""
+    def get_todays_games(self, sport_code: str, date: Optional[str] = None) -> pd.DataFrame:
+        """
+        Get games for the specified sport and date.
+        
+        Args:
+            sport_code: Sport code (MLB, NBA, NFL, etc.)
+            date: Date in YYYY-MM-DD format. If None, uses today.
+        
+        Returns:
+            DataFrame with games for the specified date
+        """
         try:
             if sport_code == 'MLB':
                 collector = self._collectors['MLB']['schedule']
-                return collector.get_todays_games()
+                return collector.get_todays_games(date=date)
             elif sport_code in self._collectors:
                 collector = self._collectors[sport_code]['collector']
-                return collector.get_todays_games()
+                # For now, other sports only support today's games
+                # TODO: Add date parameter support to other sport collectors
+                if date is None:
+                    return collector.get_todays_games()
+                else:
+                    logger.warning(f"{sport_code} collector doesn't support date filtering yet. Showing today's games.")
+                    return collector.get_todays_games()
             else:
                 logger.warning(f"No collector found for sport: {sport_code}")
                 return pd.DataFrame()

@@ -25,11 +25,10 @@ from src.utils.sport_data_manager import SportDataManager
 @st.cache_resource
 def initialize_components():
     db_manager = DatabaseManager()
-    predictor = MLBPredictor(db_manager=db_manager)  # Pass db_manager for Pythagorean features
+    predictor = MLBPredictor(db_manager=db_manager)
     api = PredictionAPI(db_manager, predictor)
     sport_data_manager = SportDataManager()
     
-    # Initialize learning system components
     result_tracker = ResultTracker(db_manager)
     performance_analyzer = PerformanceAnalyzer(db_manager)
     intelligent_retrainer = IntelligentRetrainer(db_manager, predictor)
@@ -38,257 +37,538 @@ def initialize_components():
     return (db_manager, predictor, api, sport_data_manager, result_tracker, 
             performance_analyzer, intelligent_retrainer, performance_visualizer)
 
+# Custom CSS for dratings.com-like styling
+def apply_custom_css():
+    st.markdown("""
+    <style>
+    /* Main container styling */
+    .main {
+        background-color: #f5f5f5;
+    }
+    
+    /* Header styling */
+    .stApp header {
+        background-color: #ffffff;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    /* Sport navigation tabs */
+    .sport-nav {
+        background-color: #ffffff;
+        padding: 15px 20px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* Prediction table styling */
+    .pred-table {
+        background-color: #ffffff;
+        border-radius: 5px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    
+    /* Table headers */
+    .pred-table th {
+        background-color: #f8f8f8;
+        padding: 12px;
+        font-weight: 600;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    /* Table rows */
+    .pred-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    /* Team names */
+    .team-name {
+        font-weight: 600;
+        color: #333;
+    }
+    
+    /* Win percentage styling */
+    .win-pct {
+        font-weight: 600;
+        color: #2c7a2c;
+    }
+    
+    /* Date navigation */
+    .date-nav {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+        padding: 15px;
+        background-color: #f8f8f8;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+        background-color: #f8f8f8;
+        padding: 5px;
+        border-radius: 5px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background-color: #ffffff;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-weight: 600;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #ff6b35;
+        color: white;
+    }
+    
+    /* Bet value indicators */
+    .bet-value-high {
+        color: #2c7a2c;
+        font-weight: bold;
+    }
+    
+    .bet-value-medium {
+        color: #ff9800;
+        font-weight: bold;
+    }
+    
+    .bet-value-low {
+        color: #999;
+    }
+    
+    /* Updated timestamp */
+    .updated-time {
+        color: #666;
+        font-size: 14px;
+        font-style: italic;
+        margin-bottom: 15px;
+    }
+    
+    /* Hide streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
 def main():
     st.set_page_config(
-        page_title="Multi-Sport Prediction System",
+        page_title="Sports Predictions & Analysis",
         page_icon="🏆",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="collapsed"
     )
     
-    st.title("🏆 Multi-Sport Prediction System")
-    st.markdown("Real-time game predictions across multiple sports using machine learning")
+    apply_custom_css()
     
     # Initialize components
     (db_manager, predictor, api, sport_data_manager, result_tracker, 
      performance_analyzer, intelligent_retrainer, performance_visualizer) = initialize_components()
     
-    # Sidebar navigation
-    st.sidebar.title("🏆 Sports Navigation")
+    # Sport mapping (must match SportDataManager collector keys)
+    sport_mapping = {
+        "MLB ⚾": "MLB",
+        "NBA 🏀": "NBA",
+        "NFL 🏈": "NFL",
+        "NHL 🏒": "NHL",
+        "NCAA Football 🏈": "NCAA",  # Maps to NCAA Football collector
+        "NCAA Basketball 🏀": "NCAAB",
+        "WNBA 🏀": "WNBA"
+    }
     
-    # Sport selection
-    selected_sport = st.sidebar.selectbox(
-        "🏈 Choose Sport",
-        ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
-    )
+    # Top navigation header
+    st.markdown('<div class="sport-nav">', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([2, 3, 1])
     
-    # Page selection based on sport
-    page = st.sidebar.selectbox(
-        "📊 Choose Page",
-        ["Today's Predictions", "Historical Data", "Model Performance", 
-         "Learning System", "Result Tracking", "Data Pipeline", "Backtesting"]
-    )
+    with col1:
+        st.markdown("### 🏆 SPORTS PREDICTIONS")
     
-    # Extract sport name from selection
-    sport_code = selected_sport.split()[0]  # Gets 'MLB', 'NBA', etc.
+    with col2:
+        # Sport selection in horizontal layout
+        sports = ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
+        sport_cols = st.columns(len(sports))
+        
+        if 'selected_sport' not in st.session_state:
+            st.session_state.selected_sport = "MLB ⚾"
+        
+        for idx, sport in enumerate(sports):
+            with sport_cols[idx]:
+                if st.button(sport, key=f"sport_{idx}", use_container_width=True):
+                    st.session_state.selected_sport = sport
+                    st.rerun()
     
-    if page == "Today's Predictions":
+    with col3:
+        # Additional pages dropdown
+        page = st.selectbox(
+            "More",
+            ["Predictions", "Model Performance", "Backtesting", "Data Pipeline"],
+            label_visibility="collapsed"
+        )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Extract sport code using mapping
+    sport_code = sport_mapping.get(st.session_state.selected_sport, "MLB")
+    
+    # Route to appropriate page
+    if page == "Predictions":
         show_predictions_page(api, db_manager, sport_data_manager, sport_code)
-    elif page == "Historical Data":
-        show_historical_data_page(db_manager, sport_code)
     elif page == "Model Performance":
         show_model_performance_page(predictor, db_manager, sport_code)
-    elif page == "Learning System":
-        show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer, sport_code)
-    elif page == "Result Tracking":
-        show_result_tracking_page(result_tracker, performance_visualizer, db_manager, sport_code)
-    elif page == "Data Pipeline":
-        show_data_pipeline_page(db_manager, sport_code)
     elif page == "Backtesting":
         show_backtesting_page(db_manager, predictor, sport_code)
+    elif page == "Data Pipeline":
+        show_data_pipeline_page(db_manager, sport_code)
 
 def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
-    st.header(f"📅 {sport_code} Today's Game Predictions")
+    # Date navigation
+    if 'prediction_date' not in st.session_state:
+        st.session_state.prediction_date = datetime.now().date()
     
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        st.subheader("Data Controls")
-        if st.button("🔄 Update Data", help=f"Fetch latest {sport_code} data"):
-            with st.spinner(f"Updating {sport_code} data..."):
-                try:
-                    # Use sport-specific data manager
-                    result = sport_data_manager.update_sport_data(sport_code, days=7)
-                    
-                    if result['success']:
-                        # Store games if found
-                        todays_games = sport_data_manager.get_todays_games(sport_code)
-                        if not todays_games.empty:
-                            # Standardize data before storing
-                            if sport_code == 'MLB':
-                                # MLB has different structure - just add required fields
-                                todays_games['sport'] = 'MLB'
-                                todays_games['league'] = 'MLB'
-                            elif sport_code in sport_data_manager._collectors and 'collector' in sport_data_manager._collectors[sport_code]:
-                                # For other sports with collector structure
-                                collector = sport_data_manager._collectors[sport_code]['collector']
-                                if hasattr(collector, 'standardize_data'):
-                                    todays_games = collector.standardize_data(todays_games)
-                            
-                            db_manager.store_games(todays_games)
-                        
-                        # Show success messages
-                        for message in result['messages']:
-                            st.success(message)
-                        
-                        # Show any errors
-                        for error in result['errors']:
-                            st.warning(error)
-                    else:
-                        st.error(f"Failed to update {sport_code} data")
-                        for error in result['errors']:
-                            st.error(error)
-                        
-                except Exception as e:
-                    st.error(f"Error updating {sport_code} data: {str(e)}")
-        
-        if st.button("🤖 Generate Predictions"):
-            with st.spinner("Generating predictions..."):
-                try:
-                    predictions = api.get_todays_predictions()
-                    if predictions:
-                        st.success(f"Generated {len(predictions)} predictions!")
-                        st.session_state['predictions'] = predictions
-                    else:
-                        st.warning("No games found for today")
-                except Exception as e:
-                    st.error(f"Error generating predictions: {str(e)}")
+    col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
     
     with col1:
-        if 'predictions' in st.session_state:
-            predictions = st.session_state['predictions']
-            
-            for prediction in predictions:
-                with st.expander(f"🏟️ {prediction['away_team']} @ {prediction['home_team']}", expanded=True):
-                    col1_inner, col2_inner = st.columns(2)
-                    
-                    with col1_inner:
-                        winner = prediction.get('predicted_winner') or "Models need training"
-                        st.metric("Winner Prediction", winner)
-                    
-                    with col2_inner:
-                        # Show predicted final score
-                        home_score = prediction.get('predicted_home_score')
-                        away_score = prediction.get('predicted_away_score')
-                        
-                        if home_score is not None and away_score is not None:
-                            final_score = f"{prediction['away_team']} {away_score} - {home_score} {prediction['home_team']}"
-                            st.metric("Predicted Final Score", final_score)
-                        else:
-                            st.info("No score prediction available")
-        else:
-            st.info("Click 'Generate Predictions' to see today's game predictions")
+        if st.button("◀ Previous Day"):
+            st.session_state.prediction_date -= timedelta(days=1)
+            st.rerun()
     
-    # Previous predictions sidebar
-    with st.sidebar:
-        st.subheader("📈 Previous Record")
+    with col3:
+        selected_date = st.date_input(
+            "Date",
+            value=st.session_state.prediction_date,
+            key="date_picker",
+            label_visibility="collapsed"
+        )
+        if selected_date != st.session_state.prediction_date:
+            st.session_state.prediction_date = selected_date
+            st.rerun()
+    
+    with col5:
+        if st.button("Next Day ▶"):
+            st.session_state.prediction_date += timedelta(days=1)
+            st.rerun()
+    
+    # Title and update timestamp
+    st.markdown(f"## {sport_code} Predictions")
+    st.markdown(f'<p class="updated-time">Updated {datetime.now().strftime("%B %d, %Y at %I:%M %p")}</p>', 
+                unsafe_allow_html=True)
+    
+    # Auto-load predictions
+    prediction_date = datetime.combine(st.session_state.prediction_date, datetime.min.time())
+    
+    with st.spinner("Loading predictions..."):
         try:
-            with db_manager._get_connection() as conn:
-                # First try to get completed predictions with results
-                query_completed = """
+            # Currently only MLB predictions are fully supported with ML models
+            if sport_code == "MLB":
+                predictions = api.get_todays_predictions(date=prediction_date)
+            else:
+                # For other sports, fetch games from sport data manager
+                date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
+                todays_games = sport_data_manager.get_todays_games(sport_code, date=date_str)
+                # Convert to prediction format (basic predictions without ML model)
+                predictions = []
+                if not todays_games.empty:
+                    for _, game in todays_games.iterrows():
+                        predictions.append({
+                            'game_id': game.get('game_id', ''),
+                            'game_time': game.get('game_time', 'TBD'),
+                            'game_date': game.get('game_date', prediction_date),
+                            'home_team': game.get('home_team', ''),
+                            'away_team': game.get('away_team', ''),
+                            'home_win_probability': 0.5,  # Neutral until ML model is trained
+                            'away_win_probability': 0.5,
+                            'predicted_home_score': None,
+                            'predicted_away_score': None,
+                            'predicted_winner': 'TBD - ML model training in progress'
+                        })
+        except Exception as e:
+            st.error(f"Error loading predictions: {str(e)}")
+            predictions = []
+    
+    # Get completed games for the same date
+    try:
+        with db_manager._get_connection() as conn:
+            completed_query = """
+                SELECT 
+                    p.*,
+                    g.home_score,
+                    g.away_score,
+                    g.status
+                FROM predictions p
+                LEFT JOIN games g ON p.game_id = g.game_id
+                WHERE DATE(p.game_date) = DATE(?)
+                AND p.sport = ?
+                AND (g.status = 'completed' OR p.result_updated_at IS NOT NULL)
+                ORDER BY p.game_time
+            """
+            completed_df = pd.read_sql_query(
+                completed_query, 
+                conn, 
+                params=[st.session_state.prediction_date.strftime('%Y-%m-%d'), sport_code]
+            )
+    except Exception as e:
+        st.warning(f"Could not load completed games: {str(e)}")
+        completed_df = pd.DataFrame()
+    
+    # Tabs for Upcoming and Completed
+    tab1, tab2, tab3, tab4 = st.tabs(["📅 Upcoming", "✅ Completed", "📊 Season", "ℹ️ Methodology"])
+    
+    with tab1:
+        show_upcoming_predictions(predictions, sport_code)
+    
+    with tab2:
+        show_completed_predictions(completed_df, sport_code)
+    
+    with tab3:
+        show_season_stats(db_manager, sport_code)
+    
+    with tab4:
+        show_methodology(sport_code)
+
+def show_upcoming_predictions(predictions, sport_code):
+    if not predictions:
+        st.info(f"No upcoming {sport_code} games found for this date. Try a different date or update data.")
+        return
+    
+    st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
+    st.markdown(f"### Upcoming Games for {st.session_state.prediction_date.strftime('%B %d, %Y')}")
+    
+    # Create DataFrame for display
+    display_data = []
+    for pred in predictions:
+        try:
+            win_prob_home = pred.get('home_win_probability', 0.5) * 100
+            win_prob_away = pred.get('away_win_probability', 0.5) * 100
+            
+            home_score = pred.get('predicted_home_score', 0)
+            away_score = pred.get('predicted_away_score', 0)
+            total_runs = home_score + away_score if home_score and away_score else 0
+            
+            # Calculate bet value (simplified - based on confidence)
+            confidence = abs(win_prob_home - 50)
+            if confidence > 15:
+                bet_value = "🔥🔥"
+            elif confidence > 8:
+                bet_value = "🔥"
+            else:
+                bet_value = "→"
+            
+            display_data.append({
+                'Time': pred.get('game_time', 'TBD'),
+                'Away Team': pred.get('away_team', ''),
+                'Away Win %': f"{win_prob_away:.1f}%",
+                'Home Team': pred.get('home_team', ''),
+                'Home Win %': f"{win_prob_home:.1f}%",
+                'Predicted Score': f"{away_score:.0f} - {home_score:.0f}" if home_score and away_score else "N/A",
+                'Total': f"{total_runs:.1f}" if total_runs else "N/A",
+                'Bet Value': bet_value,
+                'Winner': pred.get('predicted_winner', 'TBD')
+            })
+        except Exception as e:
+            st.warning(f"Error processing prediction: {str(e)}")
+            continue
+    
+    if display_data:
+        df = pd.DataFrame(display_data)
+        
+        # Style the dataframe
+        st.dataframe(
+            df,
+            width='stretch',
+            hide_index=True,
+            column_config={
+                "Time": st.column_config.TextColumn("Time", width="small"),
+                "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
+                "Away Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
+                "Home Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Predicted Score": st.column_config.TextColumn("Score", width="small"),
+                "Total": st.column_config.TextColumn("Total", width="small"),
+                "Bet Value": st.column_config.TextColumn("Value", width="small"),
+                "Winner": st.column_config.TextColumn("Predicted Winner", width="medium")
+            }
+        )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def show_completed_predictions(completed_df, sport_code):
+    if completed_df.empty:
+        st.info(f"No completed {sport_code} games found for this date.")
+        return
+    
+    st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
+    st.markdown(f"### Completed Games")
+    
+    # Create display DataFrame
+    display_data = []
+    for _, row in completed_df.iterrows():
+        try:
+            actual_winner = row['home_team'] if row.get('home_score', 0) > row.get('away_score', 0) else row['away_team']
+            predicted_winner = row.get('predicted_winner', 'N/A')
+            correct = "✅" if actual_winner == predicted_winner else "❌"
+            
+            home_win_prob = row.get('home_win_probability', 0.5) * 100
+            away_win_prob = row.get('away_win_probability', 0.5) * 100
+            
+            display_data.append({
+                'Time': row.get('game_time', 'TBD'),
+                'Away Team': row.get('away_team', ''),
+                'Away Win %': f"{away_win_prob:.1f}%",
+                'Home Team': row.get('home_team', ''),
+                'Home Win %': f"{home_win_prob:.1f}%",
+                'Final Score': f"{row.get('away_score', 0)} - {row.get('home_score', 0)}",
+                'Predicted': predicted_winner,
+                'Actual': actual_winner,
+                'Result': correct
+            })
+        except Exception as e:
+            continue
+    
+    if display_data:
+        df = pd.DataFrame(display_data)
+        st.dataframe(
+            df,
+            width='stretch',
+            hide_index=True
+        )
+        
+        # Calculate and display accuracy
+        correct_count = len([d for d in display_data if d['Result'] == "✅"])
+        total_count = len(display_data)
+        accuracy = (correct_count / total_count * 100) if total_count > 0 else 0
+        
+        st.markdown(f"**Accuracy: {correct_count}/{total_count} ({accuracy:.1f}%)**")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def show_season_stats(db_manager, sport_code):
+    st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
+    st.markdown("### Season Prediction Results")
+    
+    try:
+        with db_manager._get_connection() as conn:
+            season_query = """
+                SELECT 
+                    COUNT(*) as total_predictions,
+                    SUM(CASE WHEN win_prediction_correct = 1 THEN 1 ELSE 0 END) as correct_predictions,
+                    ROUND(AVG(CASE WHEN win_prediction_correct = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as accuracy,
+                    AVG(total_runs_error) as avg_total_error
+                FROM predictions
+                WHERE sport = ?
+                AND result_updated_at IS NOT NULL
+                AND game_date >= DATE('now', '-90 days')
+            """
+            
+            season_stats = pd.read_sql_query(season_query, conn, params=[sport_code])
+            
+            if not season_stats.empty and season_stats['total_predictions'].iloc[0] > 0:
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Predictions", int(season_stats['total_predictions'].iloc[0]))
+                
+                with col2:
+                    st.metric("Correct", int(season_stats['correct_predictions'].iloc[0]))
+                
+                with col3:
+                    st.metric("Accuracy", f"{season_stats['accuracy'].iloc[0]:.1f}%")
+                
+                with col4:
+                    avg_error = season_stats['avg_total_error'].iloc[0]
+                    if pd.notna(avg_error):
+                        st.metric("Avg Total Error", f"{avg_error:.2f}")
+                
+                # Weekly performance chart
+                weekly_query = """
                     SELECT 
-                        DATE(game_date) as date,
-                        COUNT(*) as total_predictions,
-                        SUM(CASE WHEN win_prediction_correct = 1 THEN 1 ELSE 0 END) as correct,
+                        strftime('%Y-%W', game_date) as week,
+                        COUNT(*) as predictions,
                         ROUND(AVG(CASE WHEN win_prediction_correct = 1 THEN 1.0 ELSE 0.0 END) * 100, 1) as accuracy
-                    FROM predictions 
-                    WHERE sport = ? AND result_updated_at IS NOT NULL
-                    AND game_date >= DATE('now', '-7 days')
-                    GROUP BY DATE(game_date)
-                    ORDER BY game_date DESC
-                    LIMIT 7
+                    FROM predictions
+                    WHERE sport = ?
+                    AND result_updated_at IS NOT NULL
+                    AND game_date >= DATE('now', '-90 days')
+                    GROUP BY strftime('%Y-%W', game_date)
+                    ORDER BY week
                 """
                 
-                df_completed = pd.read_sql_query(query_completed, conn, params=[sport_code])
+                weekly_df = pd.read_sql_query(weekly_query, conn, params=[sport_code])
                 
-                # If no completed predictions, show pending predictions
-                if df_completed.empty:
-                    query_pending = """
-                        SELECT 
-                            DATE(game_date) as date,
-                            COUNT(*) as total_predictions,
-                            0 as correct,
-                            NULL as accuracy
-                        FROM predictions 
-                        WHERE sport = ? 
-                        AND game_date >= DATE('now', '-7 days')
-                        GROUP BY DATE(game_date)
-                        ORDER BY game_date DESC
-                        LIMIT 7
-                    """
-                    
-                    df_pending = pd.read_sql_query(query_pending, conn, params=[sport_code])
-                    
-                    if not df_pending.empty:
-                        st.write("📊 **Recent Predictions** (Results Pending)")
-                        for _, row in df_pending.iterrows():
-                            col1_side, col2_side = st.columns(2)
-                            with col1_side:
-                                st.write(f"📅 {row['date']}")
-                            with col2_side:
-                                st.write(f"{row['total_predictions']} predictions (⏳ pending)")
-                    else:
-                        st.write("📊 No recent predictions")
-                else:
-                    st.write("📊 **Recent Results**")
-                    for _, row in df_completed.iterrows():
-                        col1_side, col2_side = st.columns(2)
-                        with col1_side:
-                            st.write(f"📅 {row['date']}")
-                        with col2_side:
-                            accuracy = row['accuracy'] if pd.notna(row['accuracy']) else 0
-                            st.write(f"{row['correct']}/{row['total_predictions']} ({accuracy:.1f}%)")
-                    
-        except Exception as e:
-            st.write("⚠️ Results pending")
-
-def show_historical_data_page(db_manager, sport_code):
-    st.header(f"📊 {sport_code} Historical Data Analysis")
-    
-    # Date range selector
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=30))
-    with col2:
-        end_date = st.date_input("End Date", value=datetime.now())
-    
-    if st.button("Load Historical Data"):
-        try:
-            # Get historical game data
-            historical_data = db_manager.get_historical_games(start_date, end_date)
-            
-            if not historical_data.empty:
-                st.subheader(f"Games from {start_date} to {end_date}")
-                
-                # Summary statistics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Games", len(historical_data))
-                with col2:
-                    avg_runs = historical_data['total_runs'].mean() if 'total_runs' in historical_data.columns else 0
-                    st.metric("Avg Total Runs", f"{avg_runs:.1f}")
-                with col3:
-                    home_wins = historical_data['home_win'].sum() if 'home_win' in historical_data.columns else 0
-                    home_win_pct = home_wins / len(historical_data) if len(historical_data) > 0 else 0
-                    st.metric("Home Win %", f"{home_win_pct:.1%}")
-                with col4:
-                    unique_teams = historical_data[['home_team', 'away_team']].stack().nunique() if not historical_data.empty else 0
-                    st.metric("Teams", unique_teams)
-                
-                # Data visualization
-                if 'total_runs' in historical_data.columns:
-                    fig = px.histogram(
-                        historical_data, 
-                        x='total_runs',
-                        title="Distribution of Total Runs",
-                        nbins=20
+                if not weekly_df.empty:
+                    fig = px.line(
+                        weekly_df,
+                        x='week',
+                        y='accuracy',
+                        title='Weekly Prediction Accuracy',
+                        markers=True
+                    )
+                    fig.update_layout(
+                        xaxis_title="Week",
+                        yaxis_title="Accuracy (%)",
+                        yaxis_range=[0, 100]
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                
-                # Show raw data
-                st.subheader("Raw Data")
-                st.dataframe(historical_data.head(100))
             else:
-                st.warning("No historical data found for the selected date range")
+                st.info("No season data available yet. Predictions will appear here once games are completed.")
                 
-        except Exception as e:
-            st.error(f"Error loading historical data: {str(e)}")
+    except Exception as e:
+        st.error(f"Error loading season stats: {str(e)}")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def show_methodology(sport_code):
+    st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
+    st.markdown("### Prediction Methodology")
+    
+    st.markdown(f"""
+    Our {sport_code} prediction system uses advanced machine learning algorithms to forecast game outcomes:
+    
+    #### Data Sources
+    - **Historical Game Data**: Comprehensive game results and statistics
+    - **Team Performance Metrics**: Advanced statistics including offensive and defensive ratings
+    - **Player Statistics**: Individual player performance data
+    - **Betting Odds**: Market odds from multiple sportsbooks
+    - **Real-time Updates**: Live data feeds for the most current information
+    
+    #### Machine Learning Models
+    - **XGBoost Classifier**: For win/loss predictions
+    - **XGBoost Regressor**: For total score predictions
+    - **Feature Engineering**: Over 50+ features including:
+        - Team strength ratings
+        - Recent form (rolling averages)
+        - Head-to-head history
+        - Home/away splits
+        - Rest days and scheduling factors
+    
+    #### Model Performance
+    - Models are continuously retrained with new data
+    - Automated performance monitoring and improvement
+    - Cross-validation ensures robust predictions
+    
+    #### Bet Value Indicators
+    - 🔥🔥 High Value: Strong confidence, significant edge over market
+    - 🔥 Medium Value: Moderate confidence, some edge over market
+    - → Low Value: Close game, minimal edge
+    
+    #### Important Notes
+    - All predictions are for informational and entertainment purposes only
+    - Past performance does not guarantee future results
+    - Always gamble responsibly
+    """)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def show_model_performance_page(predictor, db_manager, sport_code):
     st.header(f"⚡ {sport_code} Model Performance Metrics")
     
     try:
-        # Get model metrics
         metrics = predictor.get_model_metrics()
         
         if metrics:
@@ -310,7 +590,6 @@ def show_model_performance_page(predictor, db_manager, sport_code):
                 st.metric("R² Score", f"{total_metrics.get('r2_score', 0):.3f}")
                 st.metric("MAPE", f"{total_metrics.get('mape', 0):.1%}")
             
-            # Feature importance
             if 'feature_importance' in metrics:
                 st.subheader("Feature Importance")
                 importance_df = pd.DataFrame(metrics['feature_importance'])
@@ -328,7 +607,6 @@ def show_model_performance_page(predictor, db_manager, sport_code):
         if st.button("Retrain Models"):
             with st.spinner("Training models..."):
                 try:
-                    # Get training data
                     training_data = db_manager.get_training_data()
                     if not training_data.empty:
                         predictor.train_models(training_data)
@@ -345,13 +623,11 @@ def show_model_performance_page(predictor, db_manager, sport_code):
 def show_data_pipeline_page(db_manager, sport_code):
     st.header(f"🔧 {sport_code} Data Pipeline Status")
     
-    # Pipeline status
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("Data Sources")
         
-        # Check Baseball Savant data
         try:
             latest_savant = db_manager.get_latest_data_timestamp('statcast')
             if latest_savant:
@@ -361,15 +637,14 @@ def show_data_pipeline_page(db_manager, sport_code):
         except:
             st.error("❌ Baseball Savant: Connection error")
         
-        # Check OddsShark data
         try:
             latest_odds = db_manager.get_latest_data_timestamp('odds')
             if latest_odds:
-                st.success(f"✅ OddsShark: {latest_odds}")
+                st.success(f"✅ Odds Data: {latest_odds}")
             else:
-                st.warning("⚠️ OddsShark: No data")
+                st.warning("⚠️ Odds Data: No data")
         except:
-            st.error("❌ OddsShark: Connection error")
+            st.error("❌ Odds Data: Connection error")
     
     with col2:
         st.subheader("Database Status")
@@ -382,7 +657,6 @@ def show_data_pipeline_page(db_manager, sport_code):
         except Exception as e:
             st.error(f"Database error: {str(e)}")
     
-    # Manual data collection
     st.subheader("Manual Data Collection")
     
     if st.button("🔄 Run Full Data Update"):
@@ -406,7 +680,6 @@ def show_data_pipeline_page(db_manager, sport_code):
 def show_backtesting_page(db_manager, predictor, sport_code):
     st.header(f"📈 {sport_code} Model Backtesting")
     
-    # Backtesting parameters
     col1, col2, col3 = st.columns(3)
     with col1:
         start_date = st.date_input("Backtest Start", value=datetime.now() - timedelta(days=90))
@@ -419,14 +692,15 @@ def show_backtesting_page(db_manager, predictor, sport_code):
         with st.spinner("Running backtest..."):
             try:
                 backtester = Backtester(db_manager, predictor)
-                results = backtester.run_backtest(datetime.combine(start_date, datetime.min.time()), 
-                                                  datetime.combine(end_date, datetime.min.time()), 
-                                                  min_confidence)
+                results = backtester.run_backtest(
+                    datetime.combine(start_date, datetime.min.time()), 
+                    datetime.combine(end_date, datetime.min.time()), 
+                    min_confidence
+                )
                 
                 if results:
                     st.subheader("Backtest Results")
                     
-                    # Overall metrics
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.metric("Total Predictions", results['total_predictions'])
@@ -437,7 +711,6 @@ def show_backtesting_page(db_manager, predictor, sport_code):
                     with col4:
                         st.metric("ROI", f"{results['roi']:.1%}")
                     
-                    # Performance over time
                     if 'daily_performance' in results:
                         daily_perf = pd.DataFrame(results['daily_performance'])
                         fig = px.line(
@@ -448,7 +721,6 @@ def show_backtesting_page(db_manager, predictor, sport_code):
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # Detailed results
                     if st.checkbox("Show Detailed Results"):
                         if 'predictions' in results:
                             pred_df = pd.DataFrame(results['predictions'])
@@ -458,317 +730,6 @@ def show_backtesting_page(db_manager, predictor, sport_code):
                     
             except Exception as e:
                 st.error(f"Error running backtest: {str(e)}")
-
-def show_learning_system_page(performance_analyzer, intelligent_retrainer, performance_visualizer, sport_code):
-    st.header(f"🧠 {sport_code} Automated Learning System")
-    st.markdown("Monitor how the model learns from its mistakes and improves over time")
-    
-    # Learning system status
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.subheader("🎯 Current Performance")
-        try:
-            summary = performance_visualizer.get_performance_summary_stats(days=7)
-            
-            if 'error' not in summary:
-                accuracy = summary.get('average_accuracy')
-                if accuracy:
-                    st.metric("7-Day Accuracy", f"{accuracy:.1%}", 
-                             delta=f"{summary.get('accuracy_trend', 0):.2%}" if summary.get('accuracy_trend') else None)
-                    st.metric("Total Predictions", summary.get('total_predictions', 0))
-                    st.metric("Status", summary.get('accuracy_status', 'unknown').title())
-                else:
-                    st.warning("No recent performance data available")
-            else:
-                st.error("Error loading performance data")
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
-    
-    with col2:
-        st.subheader("🔄 Retraining Status")
-        try:
-            retraining_status = intelligent_retrainer.get_retraining_status()
-            
-            if 'error' not in retraining_status:
-                if retraining_status.get('retraining_in_progress'):
-                    st.warning("🔄 Retraining in progress...")
-                else:
-                    last_retrain = retraining_status.get('last_retrain_date')
-                    if last_retrain:
-                        days_since = retraining_status.get('days_since_retrain', 0)
-                        st.metric("Last Retrain", f"{days_since} days ago")
-                    else:
-                        st.info("No retraining history")
-                
-                evaluation = retraining_status.get('current_evaluation', {})
-                if evaluation.get('retraining_needed'):
-                    st.warning(f"⚠️ Retraining needed: {evaluation.get('priority', 'unknown')} priority")
-                else:
-                    st.success("✅ Performance stable")
-            else:
-                st.error("Error loading retraining status")
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
-    
-    with col3:
-        st.subheader("⚡ Actions")
-        
-        if st.button("🔍 Analyze Performance", help="Run detailed error analysis"):
-            with st.spinner("Analyzing performance..."):
-                try:
-                    analysis = performance_analyzer.analyze_prediction_errors(days_back=14)
-                    if 'error' not in analysis:
-                        st.session_state['analysis_results'] = analysis
-                        st.success("Analysis completed!")
-                    else:
-                        st.error(f"Analysis failed: {analysis.get('error')}")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-        
-        if st.button("🔄 Check Retraining Need", help="Evaluate if retraining is needed"):
-            with st.spinner("Evaluating retraining need..."):
-                try:
-                    evaluation = intelligent_retrainer.evaluate_retraining_need()
-                    if 'error' not in evaluation:
-                        st.session_state['retraining_evaluation'] = evaluation
-                        if evaluation.get('retraining_needed'):
-                            st.warning(f"Retraining recommended: {evaluation.get('priority')} priority")
-                        else:
-                            st.success("No retraining needed currently")
-                    else:
-                        st.error(f"Evaluation failed: {evaluation.get('error')}")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-        
-        if st.button("🚀 Force Retrain", help="Force model retraining"):
-            with st.spinner("Starting forced retraining..."):
-                try:
-                    result = intelligent_retrainer.force_retraining("Manual trigger from UI")
-                    if result.get('success'):
-                        st.success("Retraining completed successfully!")
-                        improvement = result.get('improvements', {}).get('accuracy_change')
-                        if improvement:
-                            st.metric("Accuracy Change", f"{improvement:+.2%}")
-                    else:
-                        st.error(f"Retraining failed: {result.get('error')}")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-    
-    # Performance visualizations
-    st.subheader("📊 Performance Trends")
-    
-    # Tabs for different visualizations
-    tab1, tab2, tab3, tab4 = st.tabs(["Accuracy Trends", "Learning Progress", "Error Analysis", "Team Performance"])
-    
-    with tab1:
-        try:
-            fig = performance_visualizer.create_accuracy_trend_chart(days=30)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error creating accuracy chart: {str(e)}")
-    
-    with tab2:
-        try:
-            fig = performance_visualizer.create_learning_progress_chart()
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error creating learning progress chart: {str(e)}")
-    
-    with tab3:
-        try:
-            fig = performance_visualizer.create_error_analysis_chart(days=14)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error creating error analysis chart: {str(e)}")
-    
-    with tab4:
-        try:
-            fig = performance_visualizer.create_team_performance_chart(days=30)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error creating team performance chart: {str(e)}")
-    
-    # Show detailed analysis results if available
-    if 'analysis_results' in st.session_state:
-        st.subheader("🔍 Latest Analysis Results")
-        analysis = st.session_state['analysis_results']
-        
-        if 'actionable_insights' in analysis:
-            insights = analysis['actionable_insights']
-            if insights:
-                st.write("**Actionable Insights:**")
-                for insight in insights:
-                    priority_color = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(insight.get('priority'), "🔵")
-                    st.write(f"{priority_color} **{insight.get('issue')}**: {insight.get('description')}")
-                    st.write(f"   📋 Action: {insight.get('action')}")
-            else:
-                st.success("✅ No significant issues found")
-    
-    # Show retraining evaluation if available
-    if 'retraining_evaluation' in st.session_state:
-        st.subheader("🔄 Retraining Evaluation")
-        evaluation = st.session_state['retraining_evaluation']
-        
-        if evaluation.get('triggers'):
-            st.write("**Detected Triggers:**")
-            for trigger in evaluation['triggers']:
-                severity_color = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(trigger.get('severity'), "🔵")
-                st.write(f"{severity_color} {trigger.get('description')}")
-        
-        if evaluation.get('recommendations'):
-            st.write("**Recommendations:**")
-            for rec in evaluation['recommendations']:
-                st.write(f"• {rec}")
-
-def show_result_tracking_page(result_tracker, performance_visualizer, db_manager, sport_code):
-    st.header(f"📊 {sport_code} Result Tracking & Accuracy Monitoring")
-    st.markdown("Track how predictions compare to actual game results")
-    
-    # Result tracking controls
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        st.subheader("Data Controls")
-        
-        if st.button("🔄 Fetch Latest Results", help="Get actual game results from MLB API"):
-            with st.spinner("Fetching game results..."):
-                try:
-                    results = result_tracker.fetch_and_update_results()
-                    if results.get('success'):
-                        st.success(f"Updated {results.get('predictions_updated', 0)} predictions with actual results")
-                        st.info(f"Processed {results.get('games_processed', 0)} completed games")
-                        if results.get('insights_generated'):
-                            st.info(f"Generated {results['insights_generated']} new insights")
-                    else:
-                        st.error(f"Failed to fetch results: {results.get('error')}")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-        
-        days_back = st.selectbox("Days to analyze", [7, 14, 30, 60], index=1)
-        
-        if st.button("📈 Refresh Analysis"):
-            st.rerun()
-    
-    with col1:
-        # Recent accuracy metrics
-        try:
-            recent_accuracy = result_tracker.get_recent_accuracy(days=days_back)
-            
-            if 'error' not in recent_accuracy and not recent_accuracy.get('no_data'):
-                st.subheader(f"📊 Last {days_back} Days Performance")
-                
-                col1_inner, col2_inner, col3_inner, col4_inner = st.columns(4)
-                
-                with col1_inner:
-                    accuracy = recent_accuracy.get('average_accuracy')
-                    st.metric("Accuracy", f"{accuracy:.1%}" if accuracy else "N/A")
-                
-                with col2_inner:
-                    st.metric("Total Predictions", recent_accuracy.get('total_predictions', 0))
-                
-                with col3_inner:
-                    st.metric("Correct Predictions", recent_accuracy.get('total_correct', 0))
-                
-                with col4_inner:
-                    mae = recent_accuracy.get('average_mae')
-                    st.metric("Average MAE", f"{mae:.2f}" if mae else "N/A")
-            else:
-                st.warning("No recent accuracy data available")
-                
-        except Exception as e:
-            st.error(f"Error loading recent accuracy: {str(e)}")
-    
-    # Visualization tabs
-    st.subheader("📈 Performance Visualizations")
-    
-    tab1, tab2, tab3 = st.tabs(["Confidence Analysis", "Recent Trends", "Team Breakdown"])
-    
-    with tab1:
-        try:
-            fig = performance_visualizer.create_prediction_confidence_analysis(days=days_back)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.markdown("""
-            **Understanding Confidence Analysis:**
-            - **Calibration Plot**: Shows how well prediction confidence matches actual accuracy
-            - **Confidence Distribution**: Shows the range of confidence levels in predictions
-            - **Accuracy by Confidence**: Higher confidence predictions should be more accurate
-            """)
-        except Exception as e:
-            st.error(f"Error creating confidence analysis: {str(e)}")
-    
-    with tab2:
-        try:
-            fig = performance_visualizer.create_accuracy_trend_chart(days=days_back)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error creating trends chart: {str(e)}")
-    
-    with tab3:
-        try:
-            fig = performance_visualizer.create_team_performance_chart(days=days_back)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.markdown("""
-            **Team Performance Insights:**
-            - Teams on the left are harder to predict accurately
-            - Teams with high error rates may need special attention
-            - Look for systematic biases in predictions
-            """)
-        except Exception as e:
-            st.error(f"Error creating team performance chart: {str(e)}")
-    
-    # Recent predictions with results
-    st.subheader("🎯 Recent Predictions vs Results")
-    
-    try:
-        with db_manager._get_connection() as conn:
-            query = """
-                SELECT 
-                    game_date,
-                    home_team_id,
-                    away_team_id,
-                    predicted_winner,
-                    actual_winner,
-                    win_probability,
-                    win_prediction_correct,
-                    predicted_total,
-                    actual_total,
-                    total_absolute_error
-                FROM predictions 
-                WHERE sport = 'MLB' 
-                AND result_updated_at IS NOT NULL
-                AND game_date >= DATE('now', '-{} days')
-                ORDER BY game_date DESC, game_id
-                LIMIT 50
-            """.format(days_back)
-            
-            df = pd.read_sql_query(query, conn)
-        
-        if not df.empty:
-            # Add some formatting
-            df['win_correct'] = df['win_prediction_correct'].replace({1: '✅', 0: '❌'})
-            df['confidence'] = df['win_probability'].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
-            df['total_error'] = df['total_absolute_error'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
-            
-            # Display formatted table
-            display_df = df[['game_date', 'home_team_id', 'away_team_id', 'win_correct', 
-                           'confidence', 'predicted_total', 'actual_total', 'total_error']]
-            display_df.columns = ['Date', 'Home', 'Away', 'Win ✓', 'Confidence', 'Pred Total', 'Actual Total', 'Error']
-            
-            st.dataframe(display_df, use_container_width=True)
-            
-            # Summary stats
-            correct_pct = df['win_prediction_correct'].mean() if len(df) > 0 else 0
-            avg_error = df['total_absolute_error'].mean() if len(df) > 0 else 0
-            
-            st.info(f"**Summary**: {correct_pct:.1%} win accuracy, {avg_error:.2f} average total error across {len(df)} games")
-        else:
-            st.warning("No recent predictions with results found")
-            
-    except Exception as e:
-        st.error(f"Error loading recent predictions: {str(e)}")
 
 if __name__ == "__main__":
     main()
