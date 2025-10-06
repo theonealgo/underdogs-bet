@@ -223,53 +223,113 @@ def main():
         "WNBA 🏀": "WNBA"
     }
     
-    # Top navigation header
+    # Top navigation header with sport pages
     st.markdown('<div class="sport-nav">', unsafe_allow_html=True)
-    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+    col1, col2 = st.columns([2, 6])
     
     with col1:
-        st.markdown("### 🏆 SPORTS PREDICTIONS")
+        st.markdown("### 🏆 DRatings")
     
     with col2:
-        # Sport selection dropdown
-        sports = ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
+        # Sport page selection - each sport is its own page
+        sport_pages = ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
         
-        if 'selected_sport' not in st.session_state:
-            st.session_state.selected_sport = "MLB ⚾"
+        if 'selected_sport_page' not in st.session_state:
+            st.session_state.selected_sport_page = "MLB ⚾"
         
-        selected_sport = st.selectbox(
-            "Select Sport",
-            sports,
-            index=sports.index(st.session_state.selected_sport) if st.session_state.selected_sport in sports else 0,
-            key="sport_dropdown"
+        # Create tabs for sport selection
+        selected_page = st.radio(
+            "Sport",
+            sport_pages,
+            horizontal=True,
+            key="sport_page_selector",
+            label_visibility="collapsed"
         )
         
-        if selected_sport != st.session_state.selected_sport:
-            st.session_state.selected_sport = selected_sport
+        if selected_page != st.session_state.selected_sport_page:
+            st.session_state.selected_sport_page = selected_page
             st.rerun()
-    
-    with col3:
-        # Additional pages dropdown
-        page = st.selectbox(
-            "Page",
-            ["Predictions", "Model Performance", "Backtesting", "Data Pipeline"],
-            key="page_dropdown"
-        )
     
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Extract sport code using mapping
-    sport_code = sport_mapping.get(st.session_state.selected_sport, "MLB")
+    sport_code = sport_mapping.get(st.session_state.selected_sport_page, "MLB")
     
-    # Route to appropriate page
-    if page == "Predictions":
-        show_predictions_page(api, db_manager, sport_data_manager, sport_code)
-    elif page == "Model Performance":
-        show_model_performance_page(predictor, db_manager, sport_code)
-    elif page == "Backtesting":
-        show_backtesting_page(db_manager, predictor, sport_code)
-    elif page == "Data Pipeline":
-        show_data_pipeline_page(db_manager, sport_code)
+    # Show sport-specific page with all information
+    show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_code, st.session_state.selected_sport_page)
+
+def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_code, sport_name):
+    """Comprehensive sport page with all prediction information"""
+    
+    # Date navigation
+    if 'prediction_date' not in st.session_state:
+        st.session_state.prediction_date = datetime.now().date()
+    
+    col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+    
+    with col1:
+        if st.button("◀ Previous Day"):
+            st.session_state.prediction_date -= timedelta(days=1)
+            st.rerun()
+    
+    with col3:
+        selected_date = st.date_input(
+            "Date",
+            value=st.session_state.prediction_date,
+            key="date_picker_main",
+            label_visibility="collapsed"
+        )
+        if selected_date != st.session_state.prediction_date:
+            st.session_state.prediction_date = selected_date
+            st.rerun()
+    
+    with col5:
+        if st.button("Next Day ▶"):
+            st.session_state.prediction_date += timedelta(days=1)
+            st.rerun()
+    
+    # Section 1: Upcoming Games
+    st.markdown("## Upcoming Games")
+    prediction_date = datetime.combine(st.session_state.prediction_date, datetime.min.time())
+    
+    with st.spinner("Loading predictions..."):
+        try:
+            if sport_code == "MLB":
+                predictions = api.get_todays_predictions(date=prediction_date)
+            else:
+                date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
+                todays_games = sport_data_manager.get_todays_games(sport_code, date=date_str)
+                predictions = []
+                if not todays_games.empty:
+                    for _, game in todays_games.iterrows():
+                        predictions.append({
+                            'game_id': game.get('game_id', ''),
+                            'game_time': game.get('game_time', 'TBD'),
+                            'game_date': game.get('game_date', prediction_date),
+                            'home_team': game.get('home_team', ''),
+                            'away_team': game.get('away_team', ''),
+                            'home_win_probability': 0.5,
+                            'away_win_probability': 0.5,
+                            'predicted_home_score': None,
+                            'predicted_away_score': None
+                        })
+        except Exception as e:
+            st.error(f"Error loading predictions: {str(e)}")
+            predictions = []
+    
+    show_upcoming_games_section(predictions, sport_code)
+    
+    # Section 2: Games In Progress
+    st.markdown("## Games In Progress")
+    show_games_in_progress(db_manager, sport_code, st.session_state.prediction_date)
+    
+    # Section 3: Completed Games
+    st.markdown("## Completed Games")
+    show_completed_games_section(db_manager, sport_code, st.session_state.prediction_date)
+    
+    # Section 4: Season Prediction Results
+    st.markdown("## Season Prediction Results")
+    show_season_results(db_manager, sport_code)
 
 def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
     # Date navigation
@@ -879,6 +939,109 @@ def show_backtesting_page(db_manager, predictor, sport_code):
                     
             except Exception as e:
                 st.error(f"Error running backtest: {str(e)}")
+
+def show_upcoming_games_section(predictions, sport_code):
+    """Show upcoming games section for sport page"""
+    if not predictions:
+        st.info(f"No upcoming {sport_code} games found for this date.")
+        return
+    
+    # Reuse the existing display logic
+    show_upcoming_predictions(predictions, sport_code)
+
+def show_games_in_progress(db_manager, sport_code, game_date):
+    """Show games currently in progress"""
+    try:
+        with db_manager._get_connection() as conn:
+            query = """
+                SELECT g.*, p.win_probability as orig_win_pct,
+                       p.predicted_home_score, p.predicted_away_score
+                FROM games g
+                LEFT JOIN predictions p ON g.game_id = p.game_id
+                WHERE DATE(g.game_date) = DATE(?)
+                AND g.sport = ?
+                AND g.status = 'in_progress'
+                ORDER BY g.game_date
+            """
+            in_progress_df = pd.read_sql_query(
+                query, 
+                conn, 
+                params=[game_date.strftime('%Y-%m-%d'), sport_code]
+            )
+        
+        if in_progress_df.empty:
+            st.info(f"No {sport_code} games currently in progress.")
+            return
+        
+        # Display in-progress games
+        for _, game in in_progress_df.iterrows():
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.write(f"**{game['away_team']} @ {game['home_team']}**")
+            with col2:
+                st.write(f"Score: {game.get('away_score', 0)}-{game.get('home_score', 0)}")
+            with col3:
+                st.write(f"Period: {game.get('period', 'N/A')}")
+                
+    except Exception as e:
+        st.warning(f"Could not load in-progress games: {str(e)}")
+
+def show_completed_games_section(db_manager, sport_code, game_date):
+    """Show completed games section for sport page"""
+    try:
+        with db_manager._get_connection() as conn:
+            completed_query = """
+                SELECT p.*, g.home_score as actual_home_score, 
+                       g.away_score as actual_away_score, g.status
+                FROM predictions p
+                LEFT JOIN games g ON p.game_id = g.game_id
+                WHERE DATE(p.game_date) = DATE(?)
+                AND p.sport = ?
+                AND (g.status = 'completed' OR p.result_updated_at IS NOT NULL)
+                ORDER BY p.game_date DESC, p.created_at DESC
+                LIMIT 20
+            """
+            completed_df = pd.read_sql_query(
+                completed_query, 
+                conn, 
+                params=[game_date.strftime('%Y-%m-%d'), sport_code]
+            )
+    except Exception as e:
+        st.warning(f"Could not load completed games: {str(e)}")
+        completed_df = pd.DataFrame()
+    
+    if completed_df.empty:
+        st.info(f"No completed {sport_code} games found for this date.")
+        return
+    
+    # Reuse existing display logic
+    show_completed_predictions(completed_df, sport_code)
+
+def show_season_results(db_manager, sport_code):
+    """Show season prediction results"""
+    st.markdown("### Time Period")
+    
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        time_period = st.selectbox(
+            "Period",
+            ["Last 24 Hours", "Last 7 Days", "Last 30 Days", "Season"],
+            label_visibility="collapsed"
+        )
+    
+    # Calculate date range based on selection
+    end_date = datetime.now()
+    if time_period == "Last 24 Hours":
+        start_date = end_date - timedelta(hours=24)
+    elif time_period == "Last 7 Days":
+        start_date = end_date - timedelta(days=7)
+    elif time_period == "Last 30 Days":
+        start_date = end_date - timedelta(days=30)
+    else:  # Season
+        start_date = datetime(end_date.year, 1, 1)
+    
+    # Reuse existing season stats function
+    show_season_stats(db_manager, sport_code)
 
 if __name__ == "__main__":
     main()
