@@ -185,31 +185,35 @@ def main():
     
     # Top navigation header
     st.markdown('<div class="sport-nav">', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([2, 3, 1])
+    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
     
     with col1:
         st.markdown("### 🏆 SPORTS PREDICTIONS")
     
     with col2:
-        # Sport selection in horizontal layout
+        # Sport selection dropdown
         sports = ["MLB ⚾", "NBA 🏀", "NFL 🏈", "NHL 🏒", "NCAA Football 🏈", "NCAA Basketball 🏀", "WNBA 🏀"]
-        sport_cols = st.columns(len(sports))
         
         if 'selected_sport' not in st.session_state:
             st.session_state.selected_sport = "MLB ⚾"
         
-        for idx, sport in enumerate(sports):
-            with sport_cols[idx]:
-                if st.button(sport, key=f"sport_{idx}", use_container_width=True):
-                    st.session_state.selected_sport = sport
-                    st.rerun()
+        selected_sport = st.selectbox(
+            "Select Sport",
+            sports,
+            index=sports.index(st.session_state.selected_sport) if st.session_state.selected_sport in sports else 0,
+            key="sport_dropdown"
+        )
+        
+        if selected_sport != st.session_state.selected_sport:
+            st.session_state.selected_sport = selected_sport
+            st.rerun()
     
     with col3:
         # Additional pages dropdown
         page = st.selectbox(
-            "More",
+            "Page",
             ["Predictions", "Model Performance", "Backtesting", "Data Pipeline"],
-            label_visibility="collapsed"
+            key="page_dropdown"
         )
     
     st.markdown('</div>', unsafe_allow_html=True)
