@@ -310,7 +310,7 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                 WHERE DATE(p.game_date) = DATE(?)
                 AND p.sport = ?
                 AND (g.status = 'completed' OR p.result_updated_at IS NOT NULL)
-                ORDER BY p.game_time
+                ORDER BY p.game_date, p.created_at
             """
             completed_df = pd.read_sql_query(
                 completed_query, 
