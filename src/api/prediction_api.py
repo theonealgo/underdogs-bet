@@ -472,17 +472,25 @@ class PredictionAPI:
             return prediction
     
     def _get_odds_data(self, home_team: str, away_team: str, game_date: datetime) -> Dict:
-        """Get betting odds for the game"""
+        """Get betting odds for the game including moneyline, spreads, and totals"""
         try:
+            import pandas as pd
             # Try to get odds from database first
             odds = self.db_manager.get_odds_for_game(home_team, away_team, game_date)
             
             if not odds.empty:
                 odds_row = odds.iloc[0]
                 return {
-                    'home_odds': float(odds_row.get('home_odds', 0)),
-                    'away_odds': float(odds_row.get('away_odds', 0)),
-                    'total_odds': float(odds_row.get('total_odds', 0))
+                    'home_odds': float(odds_row.get('home_odds', 0)) if pd.notna(odds_row.get('home_odds')) else None,
+                    'away_odds': float(odds_row.get('away_odds', 0)) if pd.notna(odds_row.get('away_odds')) else None,
+                    'away_spread': float(odds_row.get('away_spread')) if pd.notna(odds_row.get('away_spread')) else None,
+                    'away_spread_odds': float(odds_row.get('away_spread_odds')) if pd.notna(odds_row.get('away_spread_odds')) else None,
+                    'home_spread': float(odds_row.get('home_spread')) if pd.notna(odds_row.get('home_spread')) else None,
+                    'home_spread_odds': float(odds_row.get('home_spread_odds')) if pd.notna(odds_row.get('home_spread_odds')) else None,
+                    'total_line': float(odds_row.get('total_line')) if pd.notna(odds_row.get('total_line')) else None,
+                    'over_odds': float(odds_row.get('over_odds')) if pd.notna(odds_row.get('over_odds')) else None,
+                    'under_odds': float(odds_row.get('under_odds')) if pd.notna(odds_row.get('under_odds')) else None,
+                    'total_odds': float(odds_row.get('total_odds', 0)) if pd.notna(odds_row.get('total_odds')) else None  # Legacy field
                 }
             
             # If no odds in database, log and return empty

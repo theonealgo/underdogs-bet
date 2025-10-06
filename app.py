@@ -351,25 +351,59 @@ def show_upcoming_predictions(predictions, sport_code):
             away_score = pred.get('predicted_away_score', 0)
             total_runs = home_score + away_score if home_score and away_score else 0
             
-            # Calculate bet value (simplified - based on confidence)
-            confidence = abs(win_prob_home - 50)
-            if confidence > 15:
-                bet_value = "🔥🔥"
-            elif confidence > 8:
-                bet_value = "🔥"
+            # Get odds data if available
+            away_odds = pred.get('away_odds')
+            home_odds = pred.get('home_odds')
+            away_spread = pred.get('away_spread')
+            away_spread_odds = pred.get('away_spread_odds')
+            home_spread = pred.get('home_spread')
+            home_spread_odds = pred.get('home_spread_odds')
+            total_line = pred.get('total_line')
+            over_odds = pred.get('over_odds')
+            under_odds = pred.get('under_odds')
+            
+            # Format moneyline odds
+            away_ml = format_american_odds(away_odds) if away_odds else "N/A"
+            home_ml = format_american_odds(home_odds) if home_odds else "N/A"
+            
+            # Format spread
+            if away_spread is not None and away_spread_odds:
+                away_spread_display = f"{away_spread:+.1f} ({format_american_odds(away_spread_odds)})"
             else:
-                bet_value = "→"
+                away_spread_display = "N/A"
+            
+            if home_spread is not None and home_spread_odds:
+                home_spread_display = f"{home_spread:+.1f} ({format_american_odds(home_spread_odds)})"
+            else:
+                home_spread_display = "N/A"
+            
+            # Format totals
+            if total_line and over_odds and under_odds:
+                totals_display = f"O{total_line} ({format_american_odds(over_odds)}) / U{total_line} ({format_american_odds(under_odds)})"
+            else:
+                totals_display = "N/A"
+            
+            # Calculate bet value based on odds comparison
+            bet_value = calculate_bet_value(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
+            
+            # Determine recommended bet
+            recommended = determine_recommendation(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
             
             display_data.append({
                 'Time': pred.get('game_time', 'TBD'),
                 'Away Team': pred.get('away_team', ''),
                 'Away Win %': f"{win_prob_away:.1f}%",
+                'Away ML': away_ml,
+                'Away Spread': away_spread_display,
                 'Home Team': pred.get('home_team', ''),
                 'Home Win %': f"{win_prob_home:.1f}%",
-                'Predicted Score': f"{away_score:.0f} - {home_score:.0f}" if home_score and away_score else "N/A",
+                'Home ML': home_ml,
+                'Home Spread': home_spread_display,
+                'Predicted Score': f"{away_score:.0f}-{home_score:.0f}" if home_score and away_score else "N/A",
                 'Total': f"{total_runs:.1f}" if total_runs else "N/A",
+                'O/U': totals_display,
                 'Bet Value': bet_value,
-                'Winner': pred.get('predicted_winner', 'TBD')
+                'Pick': recommended
             })
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
@@ -385,18 +419,89 @@ def show_upcoming_predictions(predictions, sport_code):
             hide_index=True,
             column_config={
                 "Time": st.column_config.TextColumn("Time", width="small"),
-                "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
-                "Away Win %": st.column_config.TextColumn("Win %", width="small"),
-                "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
-                "Home Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Away Team": st.column_config.TextColumn("Away", width="medium"),
+                "Away Win %": st.column_config.TextColumn("Win%", width="small"),
+                "Away ML": st.column_config.TextColumn("ML", width="small"),
+                "Away Spread": st.column_config.TextColumn("Spread", width="medium"),
+                "Home Team": st.column_config.TextColumn("Home", width="medium"),
+                "Home Win %": st.column_config.TextColumn("Win%", width="small"),
+                "Home ML": st.column_config.TextColumn("ML", width="small"),
+                "Home Spread": st.column_config.TextColumn("Spread", width="medium"),
                 "Predicted Score": st.column_config.TextColumn("Score", width="small"),
                 "Total": st.column_config.TextColumn("Total", width="small"),
+                "O/U": st.column_config.TextColumn("Best O/U", width="medium"),
                 "Bet Value": st.column_config.TextColumn("Value", width="small"),
-                "Winner": st.column_config.TextColumn("Predicted Winner", width="medium")
+                "Pick": st.column_config.TextColumn("Recommended", width="medium")
             }
         )
     
     st.markdown('</div>', unsafe_allow_html=True)
+
+def format_american_odds(odds):
+    """Format odds in American format (+150, -120, etc.)"""
+    if odds is None:
+        return "N/A"
+    if odds > 0:
+        return f"+{int(odds)}"
+    return str(int(odds))
+
+def calculate_bet_value(away_prob, home_prob, away_odds, home_odds):
+    """Calculate bet value indicator"""
+    if not away_odds or not home_odds:
+        # Fallback to confidence-based calculation
+        confidence = abs(home_prob - 0.5)
+        if confidence > 0.15:
+            return "🔥🔥"
+        elif confidence > 0.08:
+            return "🔥"
+        else:
+            return "→"
+    
+    # Calculate edge over market
+    away_market_prob = american_to_prob(away_odds)
+    home_market_prob = american_to_prob(home_odds)
+    
+    away_edge = away_prob - away_market_prob
+    home_edge = home_prob - home_market_prob
+    
+    max_edge = max(away_edge, home_edge)
+    
+    if max_edge > 0.10:  # 10%+ edge
+        return "🔥🔥🔥"
+    elif max_edge > 0.05:  # 5-10% edge
+        return "🔥🔥"
+    elif max_edge > 0.02:  # 2-5% edge
+        return "🔥"
+    else:
+        return "→"
+
+def american_to_prob(odds):
+    """Convert American odds to probability"""
+    if odds > 0:
+        return 100 / (odds + 100)
+    else:
+        return abs(odds) / (abs(odds) + 100)
+
+def determine_recommendation(away_prob, home_prob, away_odds, home_odds):
+    """Determine recommended bet based on edge"""
+    if not away_odds or not home_odds:
+        # Just pick the higher probability
+        if away_prob > home_prob + 0.05:
+            return f"Away"
+        elif home_prob > away_prob + 0.05:
+            return f"Home"
+        else:
+            return "Pass"
+    
+    away_edge = away_prob - american_to_prob(away_odds)
+    home_edge = home_prob - american_to_prob(home_odds)
+    
+    if away_edge > 0.02 and away_edge > home_edge:
+        return f"Away ({format_american_odds(away_odds)})"
+    elif home_edge > 0.02 and home_edge > away_edge:
+        return f"Home ({format_american_odds(home_odds)})"
+    else:
+        return "Pass"
 
 def show_completed_predictions(completed_df, sport_code):
     if completed_df.empty:

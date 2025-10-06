@@ -20,7 +20,7 @@ class OddsCollector:
             self.logger.warning("ODDS_API_KEY not found - odds collection disabled")
     
     def get_mlb_odds(self) -> pd.DataFrame:
-        """Get current MLB odds"""
+        """Get current MLB odds including moneyline, spreads, and totals"""
         if not self.api_key:
             self.logger.warning("No API key - returning empty odds data")
             return pd.DataFrame()
@@ -30,7 +30,7 @@ class OddsCollector:
             params = {
                 'apiKey': self.api_key,
                 'regions': 'us',
-                'markets': 'h2h',  # moneyline only
+                'markets': 'h2h,spreads,totals',  # Get all three markets
                 'oddsFormat': 'american',
                 'dateFormat': 'iso'
             }
@@ -51,32 +51,72 @@ class OddsCollector:
                 away_team = game['away_team']
                 home_team = game['home_team']
                 
-                # Get best odds from all bookmakers
-                best_away_odds = None
-                best_home_odds = None
+                # Get best odds from all bookmakers for all markets
+                best_away_ml = None
+                best_home_ml = None
+                best_away_spread = None
+                best_away_spread_odds = None
+                best_home_spread = None
+                best_home_spread_odds = None
+                best_over_line = None
+                best_over_odds = None
+                best_under_line = None
+                best_under_odds = None
                 bookmaker_count = 0
                 
                 for bookmaker in game['bookmakers']:
                     bookmaker_count += 1
                     for market in bookmaker['markets']:
+                        # Moneyline (h2h)
                         if market['key'] == 'h2h':
                             for outcome in market['outcomes']:
                                 if outcome['name'] == away_team:
-                                    if best_away_odds is None or outcome['price'] > best_away_odds:
-                                        best_away_odds = outcome['price']
+                                    if best_away_ml is None or outcome['price'] > best_away_ml:
+                                        best_away_ml = outcome['price']
                                 elif outcome['name'] == home_team:
-                                    if best_home_odds is None or outcome['price'] > best_home_odds:
-                                        best_home_odds = outcome['price']
+                                    if best_home_ml is None or outcome['price'] > best_home_ml:
+                                        best_home_ml = outcome['price']
+                        
+                        # Spreads
+                        elif market['key'] == 'spreads':
+                            for outcome in market['outcomes']:
+                                if outcome['name'] == away_team:
+                                    if best_away_spread_odds is None or outcome['price'] > best_away_spread_odds:
+                                        best_away_spread = outcome.get('point')
+                                        best_away_spread_odds = outcome['price']
+                                elif outcome['name'] == home_team:
+                                    if best_home_spread_odds is None or outcome['price'] > best_home_spread_odds:
+                                        best_home_spread = outcome.get('point')
+                                        best_home_spread_odds = outcome['price']
+                        
+                        # Totals (over/under)
+                        elif market['key'] == 'totals':
+                            for outcome in market['outcomes']:
+                                if outcome['name'] == 'Over':
+                                    if best_over_odds is None or outcome['price'] > best_over_odds:
+                                        best_over_line = outcome.get('point')
+                                        best_over_odds = outcome['price']
+                                elif outcome['name'] == 'Under':
+                                    if best_under_odds is None or outcome['price'] > best_under_odds:
+                                        best_under_line = outcome.get('point')
+                                        best_under_odds = outcome['price']
                 
-                if best_away_odds is not None and best_home_odds is not None:
+                if best_away_ml is not None and best_home_ml is not None:
                     parsed_odds.append({
                         'game_date': game_date,
                         'away_team': away_team,
                         'home_team': home_team,
-                        'away_odds': best_away_odds,
-                        'home_odds': best_home_odds,
-                        'away_implied_prob': self._american_to_probability(best_away_odds),
-                        'home_implied_prob': self._american_to_probability(best_home_odds),
+                        'away_odds': best_away_ml,
+                        'home_odds': best_home_ml,
+                        'away_implied_prob': self._american_to_probability(best_away_ml),
+                        'home_implied_prob': self._american_to_probability(best_home_ml),
+                        'away_spread': best_away_spread,
+                        'away_spread_odds': best_away_spread_odds,
+                        'home_spread': best_home_spread,
+                        'home_spread_odds': best_home_spread_odds,
+                        'total_line': best_over_line or best_under_line,
+                        'over_odds': best_over_odds,
+                        'under_odds': best_under_odds,
                         'bookmaker_count': bookmaker_count,
                         'sport': 'MLB',
                         'collected_at': datetime.now().isoformat()
@@ -118,7 +158,7 @@ class OddsCollector:
             params = {
                 'apiKey': self.api_key,
                 'regions': 'us',
-                'markets': 'h2h',
+                'markets': 'h2h,spreads,totals',  # Get all three markets
                 'oddsFormat': 'american',
                 'dateFormat': 'iso'
             }
@@ -138,8 +178,16 @@ class OddsCollector:
                 away_team = game['away_team']
                 home_team = game['home_team']
                 
-                best_away_odds = None
-                best_home_odds = None
+                best_away_ml = None
+                best_home_ml = None
+                best_away_spread = None
+                best_away_spread_odds = None
+                best_home_spread = None
+                best_home_spread_odds = None
+                best_over_line = None
+                best_over_odds = None
+                best_under_line = None
+                best_under_odds = None
                 bookmaker_count = 0
                 
                 for bookmaker in game['bookmakers']:
@@ -148,21 +196,48 @@ class OddsCollector:
                         if market['key'] == 'h2h':
                             for outcome in market['outcomes']:
                                 if outcome['name'] == away_team:
-                                    if best_away_odds is None or outcome['price'] > best_away_odds:
-                                        best_away_odds = outcome['price']
+                                    if best_away_ml is None or outcome['price'] > best_away_ml:
+                                        best_away_ml = outcome['price']
                                 elif outcome['name'] == home_team:
-                                    if best_home_odds is None or outcome['price'] > best_home_odds:
-                                        best_home_odds = outcome['price']
+                                    if best_home_ml is None or outcome['price'] > best_home_ml:
+                                        best_home_ml = outcome['price']
+                        elif market['key'] == 'spreads':
+                            for outcome in market['outcomes']:
+                                if outcome['name'] == away_team:
+                                    if best_away_spread_odds is None or outcome['price'] > best_away_spread_odds:
+                                        best_away_spread = outcome.get('point')
+                                        best_away_spread_odds = outcome['price']
+                                elif outcome['name'] == home_team:
+                                    if best_home_spread_odds is None or outcome['price'] > best_home_spread_odds:
+                                        best_home_spread = outcome.get('point')
+                                        best_home_spread_odds = outcome['price']
+                        elif market['key'] == 'totals':
+                            for outcome in market['outcomes']:
+                                if outcome['name'] == 'Over':
+                                    if best_over_odds is None or outcome['price'] > best_over_odds:
+                                        best_over_line = outcome.get('point')
+                                        best_over_odds = outcome['price']
+                                elif outcome['name'] == 'Under':
+                                    if best_under_odds is None or outcome['price'] > best_under_odds:
+                                        best_under_line = outcome.get('point')
+                                        best_under_odds = outcome['price']
                 
-                if best_away_odds is not None and best_home_odds is not None:
+                if best_away_ml is not None and best_home_ml is not None:
                     parsed_odds.append({
                         'game_date': game_date,
                         'away_team': away_team,
                         'home_team': home_team,
-                        'away_odds': best_away_odds,
-                        'home_odds': best_home_odds,
-                        'away_implied_prob': self._american_to_probability(best_away_odds),
-                        'home_implied_prob': self._american_to_probability(best_home_odds),
+                        'away_odds': best_away_ml,
+                        'home_odds': best_home_ml,
+                        'away_implied_prob': self._american_to_probability(best_away_ml),
+                        'home_implied_prob': self._american_to_probability(best_home_ml),
+                        'away_spread': best_away_spread,
+                        'away_spread_odds': best_away_spread_odds,
+                        'home_spread': best_home_spread,
+                        'home_spread_odds': best_home_spread_odds,
+                        'total_line': best_over_line or best_under_line,
+                        'over_odds': best_over_odds,
+                        'under_odds': best_under_odds,
                         'bookmaker_count': bookmaker_count,
                         'sport': sport_key,
                         'collected_at': datetime.now().isoformat()
