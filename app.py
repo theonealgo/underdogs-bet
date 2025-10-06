@@ -668,7 +668,7 @@ def show_season_stats(db_manager, sport_code):
                     COUNT(*) as total_predictions,
                     SUM(CASE WHEN win_prediction_correct = 1 THEN 1 ELSE 0 END) as correct_predictions,
                     ROUND(AVG(CASE WHEN win_prediction_correct = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as accuracy,
-                    AVG(total_runs_error) as avg_total_error
+                    AVG(total_absolute_error) as avg_total_error
                 FROM predictions
                 WHERE sport = ?
                 AND result_updated_at IS NOT NULL
@@ -955,7 +955,7 @@ def show_games_in_progress(db_manager, sport_code, game_date):
         with db_manager._get_connection() as conn:
             query = """
                 SELECT g.*, p.win_probability as orig_win_pct,
-                       p.predicted_home_score, p.predicted_away_score
+                       p.predicted_total
                 FROM games g
                 LEFT JOIN predictions p ON g.game_id = p.game_id
                 WHERE DATE(g.game_date) = DATE(?)
