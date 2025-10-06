@@ -152,6 +152,46 @@ def apply_custom_css():
         margin-bottom: 15px;
     }
     
+    /* Compact dataframe styling */
+    [data-testid="stDataFrame"] {
+        font-size: 13px;
+    }
+    
+    [data-testid="stDataFrame"] th {
+        padding: 6px 4px !important;
+        font-size: 12px !important;
+    }
+    
+    [data-testid="stDataFrame"] td {
+        padding: 6px 4px !important;
+        font-size: 13px !important;
+    }
+    
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .sport-nav {
+            padding: 10px;
+        }
+        
+        [data-testid="stDataFrame"] {
+            font-size: 11px;
+        }
+        
+        [data-testid="stDataFrame"] th {
+            padding: 4px 2px !important;
+            font-size: 10px !important;
+        }
+        
+        [data-testid="stDataFrame"] td {
+            padding: 4px 2px !important;
+            font-size: 11px !important;
+        }
+        
+        .pred-table {
+            padding: 10px;
+        }
+    }
+    
     /* Hide streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -416,26 +456,26 @@ def show_upcoming_predictions(predictions, sport_code):
     if display_data:
         df = pd.DataFrame(display_data)
         
-        # Style the dataframe
+        # Style the dataframe - compact mobile-friendly view
         st.dataframe(
             df,
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
             column_config={
-                "Time": st.column_config.TextColumn("Time", width="small"),
-                "Away Team": st.column_config.TextColumn("Away", width="medium"),
-                "Away Win %": st.column_config.TextColumn("Win%", width="small"),
+                "Time": st.column_config.TextColumn("⏰", width="small"),
+                "Away Team": st.column_config.TextColumn("Away", width="small"),
+                "Away Win %": st.column_config.TextColumn("W%", width="small"),
                 "Away ML": st.column_config.TextColumn("ML", width="small"),
-                "Away Spread": st.column_config.TextColumn("Spread", width="medium"),
-                "Home Team": st.column_config.TextColumn("Home", width="medium"),
-                "Home Win %": st.column_config.TextColumn("Win%", width="small"),
+                "Away Spread": st.column_config.TextColumn("Sprd", width="small"),
+                "Home Team": st.column_config.TextColumn("Home", width="small"),
+                "Home Win %": st.column_config.TextColumn("W%", width="small"),
                 "Home ML": st.column_config.TextColumn("ML", width="small"),
-                "Home Spread": st.column_config.TextColumn("Spread", width="medium"),
+                "Home Spread": st.column_config.TextColumn("Sprd", width="small"),
                 "Predicted Score": st.column_config.TextColumn("Score", width="small"),
-                "Total": st.column_config.TextColumn("Total", width="small"),
-                "O/U": st.column_config.TextColumn("Best O/U", width="medium"),
-                "Bet Value": st.column_config.TextColumn("Value", width="small"),
-                "Pick": st.column_config.TextColumn("Recommended", width="medium")
+                "Total": st.column_config.TextColumn("Tot", width="small"),
+                "O/U": st.column_config.TextColumn("O/U", width="small"),
+                "Bet Value": st.column_config.TextColumn("Val", width="small"),
+                "Pick": st.column_config.TextColumn("Pick", width="small")
             }
         )
     
