@@ -208,8 +208,8 @@ class NFLDataCollector(BaseDataCollector):
                             (season_schedule['gameday'] <= end_date)
                         ].copy()
                         
-                        if not filtered_games.empty:
-                            for _, game in filtered_games.iterrows():
+                        if not filtered_games.empty:  # type: ignore
+                            for _, game in filtered_games.iterrows():  # type: ignore
                                 schedule_data.append(self._parse_schedule_game(game, season))
                 
                 except Exception as e:
@@ -233,14 +233,14 @@ class NFLDataCollector(BaseDataCollector):
         try:
             # Determine game status
             status = 'scheduled'
-            if not pd.isna(game.get('result')):
+            if not pd.isna(game.get('result')):  # type: ignore
                 status = 'final'
             else:
                 # Only set as 'final' if we have actual results, not just past dates
                 game_date = game.get('gameday')
                 if game_date and isinstance(game_date, date) and game_date < date.today():
                     # Check if we have scores to confirm it's actually final
-                    if not pd.isna(game.get('home_score')) and not pd.isna(game.get('away_score')):
+                    if not pd.isna(game.get('home_score')) and not pd.isna(game.get('away_score')):  # type: ignore
                         status = 'final'
             
             # Get team information
@@ -345,7 +345,7 @@ class NFLDataCollector(BaseDataCollector):
                             ].copy()
                             
                             if len(game_match) > 0:
-                                game_row = game_match.iloc[0]
+                                game_row = game_match.iloc[0]  # type: ignore
                                 
                                 # Extract scores if available
                                 if not pd.isna(game_row.get('home_score')):
@@ -372,9 +372,8 @@ class NFLDataCollector(BaseDataCollector):
     
     def _get_games_from_db(self, game_date: date) -> pd.DataFrame:
         """Get games from database for a specific date"""
+        import sqlite3
         try:
-            import sqlite3
-            import pandas as pd
             conn = sqlite3.connect('sports_predictions.db')
             query = """
                 SELECT * FROM games 
@@ -473,8 +472,8 @@ class NFLDataCollector(BaseDataCollector):
                             wins = 0
                             losses = 0
                             
-                            for _, game in team_schedule.iterrows():
-                                if not pd.isna(game.get('result')):
+                            for _, game in team_schedule.iterrows():  # type: ignore
+                                if not pd.isna(game.get('result')):  # type: ignore
                                     is_home = game['home_team'] == team_abbrev
                                     home_score = game.get('home_score')
                                     away_score = game.get('away_score')
@@ -698,9 +697,9 @@ class NFLDataCollector(BaseDataCollector):
             team_games = games_df[
                 (games_df['home_team_id'] == team_id) | 
                 (games_df['away_team_id'] == team_id)
-            ]
-            if not team_games.empty:
-                team_games = team_games.sort_values(['game_date'], ascending=False).head(games)
+            ]  # type: ignore
+            if not team_games.empty:  # type: ignore
+                team_games = team_games.sort_values(by=['game_date'], ascending=False).head(games)  # type: ignore
             
             if team_games.empty:
                 return {
@@ -777,10 +776,10 @@ class NFLDataCollector(BaseDataCollector):
                             ((season_schedule['home_team'] == team2_id) & (season_schedule['away_team'] == team1_id))
                         ].copy()
                         
-                        for _, game in team_matchups.iterrows():
+                        for _, game in team_matchups.iterrows():  # type: ignore
                             game_result = game.get('result')
                             home_score = game.get('home_score')
-                            if not pd.isna(game_result) and not pd.isna(home_score):
+                            if not pd.isna(game_result) and not pd.isna(home_score):  # type: ignore
                                 # Determine which team is which
                                 if game['home_team'] == team1_id:
                                     team1_score = int(game['home_score'])
