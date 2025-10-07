@@ -25,10 +25,29 @@ class WNBADataCollector:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
     
-    def get_todays_games(self) -> pd.DataFrame:
-        """Get today's WNBA games."""
+    def get_todays_games(self, game_date: Optional[str] = None) -> pd.DataFrame:
+        """
+        Get today's WNBA games (or for a specific date).
+        
+        Args:
+            game_date: Optional date string in YYYY-MM-DD format or date object
+        
+        Returns:
+            DataFrame with WNBA games
+        """
         try:
-            today = datetime.now().strftime('%Y%m%d')
+            if game_date is None:
+                # Use US timezone (UTC - 5 hours)
+                from datetime import timedelta
+                us_now = datetime.now() - timedelta(hours=5)
+                today = us_now.strftime('%Y%m%d')
+            elif isinstance(game_date, str):
+                # Convert YYYY-MM-DD to YYYYMMDD
+                today = game_date.replace('-', '')
+            else:
+                # Assume it's a date object
+                today = game_date.strftime('%Y%m%d')
+            
             url = f"{self.base_url}/scoreboard?dates={today}"
             
             response = self.session.get(url)

@@ -15,7 +15,7 @@ except ImportError:
     except ImportError:
         NhlApi = None
 
-from interfaces.base_collector import BaseDataCollector
+from src.interfaces.base_collector import BaseDataCollector
 
 
 class NHLDataCollector(BaseDataCollector):
@@ -389,6 +389,25 @@ class NHLDataCollector(BaseDataCollector):
         
         # Default: assume regulation loss if we can't determine otherwise
         return False
+    
+    def get_todays_games(self, game_date: Optional[date] = None) -> pd.DataFrame:
+        """
+        Get today's NHL games (or for a specific date).
+        
+        Args:
+            game_date: Optional date to get games for. If None, uses current UTC date - 5 hours (US time)
+        
+        Returns:
+            DataFrame with NHL games
+        """
+        if game_date is None:
+            # Use US timezone (UTC - 5 hours) to match game scheduling
+            us_now = datetime.now() - timedelta(hours=5)
+            game_date = us_now.date()
+        elif isinstance(game_date, str):
+            game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
+        
+        return self.get_games(game_date)
     
     def get_games(self, game_date: date) -> pd.DataFrame:
         """
