@@ -716,12 +716,12 @@ class DatabaseManager:
             predictions_df = predictions_df.replace({np.nan: None})
             
             with sqlite3.connect(self.db_path) as conn:
-                # Use INSERT OR REPLACE for predictions (no explicit UNIQUE constraint but good practice)
+                # Use INSERT OR IGNORE for predictions to avoid duplicate errors
                 cursor = conn.cursor()
                 
                 for _, row in predictions_df.iterrows():
                     cursor.execute("""
-                        INSERT INTO predictions 
+                        INSERT OR IGNORE INTO predictions 
                         (sport, league, game_id, game_date, home_team_id, away_team_id,
                          predicted_winner, win_probability, predicted_total, total_confidence,
                          model_version, key_factors)
