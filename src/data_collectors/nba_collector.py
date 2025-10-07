@@ -12,7 +12,7 @@ from nba_api.stats.endpoints import (
 from nba_api.live.nba.endpoints import scoreboard as live_scoreboard
 from nba_api.stats.static import teams
 
-from interfaces.base_collector import BaseDataCollector
+from src.interfaces.base_collector import BaseDataCollector
 
 
 class NBADataCollector(BaseDataCollector):
@@ -189,6 +189,10 @@ class NBADataCollector(BaseDataCollector):
         except Exception as e:
             self.logger.error(f"Error getting NBA schedule: {str(e)}")
             return self._create_empty_schedule_df()
+    
+    def get_todays_games(self) -> pd.DataFrame:
+        """Get today's NBA games"""
+        return self.get_games(datetime.now().date())
     
     def get_games(self, game_date: date) -> pd.DataFrame:
         """

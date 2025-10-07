@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 import nfl_data_py as nfl
 
-from interfaces.base_collector import BaseDataCollector
+from src.interfaces.base_collector import BaseDataCollector
 
 
 class NFLDataCollector(BaseDataCollector):
@@ -272,6 +272,10 @@ class NFLDataCollector(BaseDataCollector):
         except Exception as e:
             self.logger.warning(f"Error parsing schedule game: {str(e)}")
             return {}
+    
+    def get_todays_games(self) -> pd.DataFrame:
+        """Get today's NFL games"""
+        return self.get_games(datetime.now().date())
     
     def get_games(self, game_date: date) -> pd.DataFrame:
         """
