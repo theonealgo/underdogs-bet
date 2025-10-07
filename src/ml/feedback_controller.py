@@ -135,15 +135,21 @@ class FeedbackController:
         try:
             self.logger.info(f"Triggering incremental retraining for {sport}...")
             
-            # Get training data from sliding window
+            # Get training data from sliding window - use predictions with actual results
             cutoff_date = datetime.now() - timedelta(days=window_days)
             
             with self.db_manager._get_connection() as conn:
+                # Get completed predictions with actual results to use as training data
                 query = """
-                    SELECT * FROM statcast_data
-                    WHERE sport = ?
-                    AND game_date >= ?
-                    ORDER BY game_date DESC
+                    SELECT p.*, g.home_score, g.away_score
+                    FROM predictions p
+                    LEFT JOIN games g ON p.game_id = g.game_id
+                    WHERE p.sport = ?
+                    AND p.game_date >= ?
+                    AND p.result_updated_at IS NOT NULL
+                    AND g.home_score IS NOT NULL
+                    AND g.away_score IS NOT NULL
+                    ORDER BY p.game_date DESC
                 """
                 training_data = pd.read_sql_query(
                     query, 
@@ -152,9 +158,9 @@ class FeedbackController:
                 )
             
             if len(training_data) < min_games:
-                self.logger.warning(f"Insufficient training data: {len(training_data)} games "
+                self.logger.warning(f"Insufficient training data for {sport}: {len(training_data)} games "
                                   f"(need {min_games})")
-                return {'success': False, 'error': 'Insufficient training data'}
+                return {'success': False, 'error': f'Insufficient training data ({len(training_data)} games, need {min_games})'}
             
             # Calculate sample weights - more recent games get higher weight
             training_data['days_ago'] = (
@@ -162,8 +168,9 @@ class FeedbackController:
             ).dt.days
             
             # Exponential decay: recent games weighted 3x more than oldest
-            max_days = training_data['days_ago'].max()
-            training_data['sample_weight'] = np.exp(-training_data['days_ago'] / (max_days / 2))
+            # Guard against division by zero when all games are on same date
+            max_days = max(training_data['days_ago'].max(), 1)
+            training_data['sample_weight'] = np.exp(-training_data['days_ago'] / max(max_days / 2, 1))
             
             # Get prediction errors to further weight training
             with self.db_manager._get_connection() as conn:
