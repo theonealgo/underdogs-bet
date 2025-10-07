@@ -292,6 +292,20 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
     
     # Section 1: Upcoming Games
     st.markdown("## Upcoming Games")
+    
+    # Debug section for user to paste real game data
+    with st.expander("🔧 Debug: Paste Real Game Data Here", expanded=False):
+        st.write(f"If you see wrong teams or no games for **{sport_code}**, paste the actual game data from ESPN/official source below:")
+        debug_data = st.text_area(
+            f"Paste {sport_code} game data here",
+            height=150,
+            key=f"debug_{sport_code}",
+            placeholder="Paste game matchups, times, and team names here..."
+        )
+        if debug_data:
+            st.code(debug_data)
+            st.info("Thanks! This helps debug the data collector issues.")
+    
     prediction_date = datetime.combine(st.session_state.prediction_date, datetime.min.time())
     
     with st.spinner("Loading predictions..."):
@@ -326,12 +340,13 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         
                         # Create basic predictions for each game
                         for _, game in todays_games.iterrows():
-                            game_id = game.get('game_id', f"{game.get('away_team_id', '')}_{game.get('home_team_id', '')}_{date_str}")
-                            home_team_id = game.get('home_team_id', '')
-                            away_team_id = game.get('away_team_id', '')
-                            home_team_name = game.get('home_team_name', home_team_id)
-                            away_team_name = game.get('away_team_name', away_team_id)
-                            game_time = game.get('game_time', 'TBD')
+                            # Access pandas Series values properly (not .get())
+                            game_id = game['game_id'] if 'game_id' in game else f"{game.get('away_team_id', '')}_{game.get('home_team_id', '')}_{date_str}"
+                            home_team_id = game['home_team_id'] if 'home_team_id' in game else ''
+                            away_team_id = game['away_team_id'] if 'away_team_id' in game else ''
+                            home_team_name = game['home_team_name'] if 'home_team_name' in game else home_team_id
+                            away_team_name = game['away_team_name'] if 'away_team_name' in game else away_team_id
+                            game_time = game['game_time'] if 'game_time' in game else 'TBD'
                             
                             predictions.append({
                                 'game_id': game_id,
@@ -350,10 +365,10 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         # Store predictions in database
                         pred_data = []
                         for _, game in todays_games.iterrows():
-                            game_id = game.get('game_id', '')
-                            home_team_id = game.get('home_team_id', '')
-                            away_team_id = game.get('away_team_id', '')
-                            home_team_name = game.get('home_team_name', home_team_id)
+                            game_id = game['game_id'] if 'game_id' in game else ''
+                            home_team_id = game['home_team_id'] if 'home_team_id' in game else ''
+                            away_team_id = game['away_team_id'] if 'away_team_id' in game else ''
+                            home_team_name = game['home_team_name'] if 'home_team_name' in game else home_team_id
                             
                             pred_data.append({
                                 'sport': sport_code,
@@ -379,11 +394,11 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                     game_name_map = {}
                     if not games_for_lookup.empty:
                         for _, game in games_for_lookup.iterrows():
-                            game_id = game.get('game_id', '')
+                            game_id = game['game_id'] if 'game_id' in game else ''
                             if game_id:
                                 game_name_map[game_id] = {
-                                    'home_team_name': game.get('home_team_name', game.get('home_team_id', '')),
-                                    'away_team_name': game.get('away_team_name', game.get('away_team_id', ''))
+                                    'home_team_name': game['home_team_name'] if 'home_team_name' in game else (game['home_team_id'] if 'home_team_id' in game else ''),
+                                    'away_team_name': game['away_team_name'] if 'away_team_name' in game else (game['away_team_id'] if 'away_team_id' in game else '')
                                 }
                     
                     for _, pred in predictions_df.iterrows():
@@ -491,11 +506,11 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                 if not todays_games.empty:
                     for _, game in todays_games.iterrows():
                         predictions.append({
-                            'game_id': game.get('game_id', ''),
-                            'game_time': game.get('game_time', 'TBD'),
-                            'game_date': game.get('game_date', prediction_date),
-                            'home_team': game.get('home_team', ''),
-                            'away_team': game.get('away_team', ''),
+                            'game_id': game['game_id'] if 'game_id' in game else '',
+                            'game_time': game['game_time'] if 'game_time' in game else 'TBD',
+                            'game_date': game['game_date'] if 'game_date' in game else prediction_date,
+                            'home_team': game['home_team_name'] if 'home_team_name' in game else (game['home_team_id'] if 'home_team_id' in game else ''),
+                            'away_team': game['away_team_name'] if 'away_team_name' in game else (game['away_team_id'] if 'away_team_id' in game else ''),
                             'home_win_probability': 0.5,  # Neutral until ML model is trained
                             'away_win_probability': 0.5,
                             'predicted_home_score': None,

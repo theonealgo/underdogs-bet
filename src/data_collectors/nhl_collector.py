@@ -190,7 +190,8 @@ class NHLDataCollector(BaseDataCollector):
                     try:
                         daily_games = None
                         if self.nhl_api is not None:
-                            daily_games = self.nhl_api.schedule.get_schedule(start_date=date_str, end_date=date_str)
+                            # nhlpy uses 'date' parameter, not 'start_date' and 'end_date'
+                            daily_games = self.nhl_api.schedule.get_schedule(date=date_str)
                         else:
                             raise Exception("NHL API wrapper not available")
                         
