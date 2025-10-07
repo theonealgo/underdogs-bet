@@ -415,7 +415,8 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                             away_team_name = away_team_id
                         
                         predicted_winner = str(pred.get('predicted_winner', home_team_name))
-                        win_prob = float(pred.get('win_probability', 0.5)) if pred.get('win_probability') is not None else 0.5
+                        win_prob_value = pred.get('win_probability')
+                        win_prob = float(win_prob_value) if win_prob_value is not None else 0.5
                         
                         # Determine home win probability based on who is predicted to win
                         if predicted_winner == away_team_name or predicted_winner == away_team_id:
@@ -644,7 +645,7 @@ def show_upcoming_predictions(predictions, sport_code):
         # Style the dataframe - compact mobile-friendly view
         st.dataframe(
             df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "Time": st.column_config.TextColumn("⏰", width="small"),
@@ -863,7 +864,7 @@ def show_season_stats(db_manager, sport_code):
                         yaxis_title="Accuracy (%)",
                         yaxis_range=[0, 100]
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No season data available yet. Predictions will appear here once games are completed.")
                 
@@ -949,7 +950,7 @@ def show_model_performance_page(predictor, db_manager, sport_code):
                     orientation='h',
                     title="Top 10 Most Important Features"
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
         else:
             st.warning("No model metrics available. Train the model first.")
             
@@ -1068,7 +1069,7 @@ def show_backtesting_page(db_manager, predictor, sport_code):
                             y='cumulative_accuracy',
                             title="Accuracy Over Time"
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     
                     if st.checkbox("Show Detailed Results"):
                         if 'predictions' in results:
