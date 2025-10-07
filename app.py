@@ -720,15 +720,9 @@ def show_upcoming_predictions(predictions, sport_code):
             display_data.append({
                 'Away Team': pred.get('away_team', ''),
                 'Away Win %': f"{win_prob_away:.1f}%",
-                'Away ML': away_ml,
-                'Away Spread': away_spread_display,
                 'Home Team': pred.get('home_team', ''),
                 'Home Win %': f"{win_prob_home:.1f}%",
-                'Home ML': home_ml,
-                'Home Spread': home_spread_display,
-                'Predicted Score': f"{away_score:.0f}-{home_score:.0f}" if home_score and away_score else "N/A",
-                'Total': f"{total_runs:.1f}" if total_runs else "N/A",
-                'O/U': totals_display
+                'Predicted Score': f"{away_score:.0f}-{home_score:.0f}" if home_score and away_score else "N/A"
             })
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
@@ -737,23 +731,17 @@ def show_upcoming_predictions(predictions, sport_code):
     if display_data:
         df = pd.DataFrame(display_data)
         
-        # Style the dataframe - compact mobile-friendly view
+        # Style the dataframe - simple view
         st.dataframe(
             df,
             width='stretch',
             hide_index=True,
             column_config={
-                "Away Team": st.column_config.TextColumn("Away", width="small"),
-                "Away Win %": st.column_config.TextColumn("W%", width="small"),
-                "Away ML": st.column_config.TextColumn("ML", width="small"),
-                "Away Spread": st.column_config.TextColumn("Sprd", width="small"),
-                "Home Team": st.column_config.TextColumn("Home", width="small"),
-                "Home Win %": st.column_config.TextColumn("W%", width="small"),
-                "Home ML": st.column_config.TextColumn("ML", width="small"),
-                "Home Spread": st.column_config.TextColumn("Sprd", width="small"),
-                "Predicted Score": st.column_config.TextColumn("Score", width="small"),
-                "Total": st.column_config.TextColumn("Tot", width="small"),
-                "O/U": st.column_config.TextColumn("O/U", width="small")
+                "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
+                "Away Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
+                "Home Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Predicted Score": st.column_config.TextColumn("Predicted Score", width="medium")
             }
         )
     
