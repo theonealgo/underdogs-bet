@@ -445,9 +445,9 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'game_id': game_id,
                                 'game_time': game.get('game_time', 'TBD'),
                                 'game_date': prediction_date,
-                                'home_team': home_team_name,
-                                'away_team': away_team_name,
-                                'predicted_winner': home_team_name,
+                                'home_team': home_team_id,  # Use abbreviation
+                                'away_team': away_team_id,  # Use abbreviation
+                                'predicted_winner': home_team_id,
                                 'home_win_probability': 0.5,
                                 'away_win_probability': 0.5,
                                 'predicted_total': None,
@@ -462,7 +462,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'game_date': date_str,
                                 'home_team_id': home_team_id,
                                 'away_team_id': away_team_id,
-                                'predicted_winner': home_team_name,
+                                'predicted_winner': home_team_id,  # Use abbreviation
                                 'win_probability': 0.5,
                                 'predicted_total': None,
                                 'total_confidence': 0.5,
@@ -608,8 +608,8 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                             'game_id': game['game_id'] if 'game_id' in game else '',
                             'game_time': game['game_time'] if 'game_time' in game else 'TBD',
                             'game_date': game['game_date'] if 'game_date' in game else prediction_date,
-                            'home_team': game['home_team_name'] if 'home_team_name' in game else (game['home_team_id'] if 'home_team_id' in game else ''),
-                            'away_team': game['away_team_name'] if 'away_team_name' in game else (game['away_team_id'] if 'away_team_id' in game else ''),
+                            'home_team': game['home_team_id'] if 'home_team_id' in game else '',  # Use abbreviation
+                            'away_team': game['away_team_id'] if 'away_team_id' in game else '',  # Use abbreviation
                             'home_win_probability': 0.5,  # Neutral until ML model is trained
                             'away_win_probability': 0.5,
                             'predicted_home_score': None,

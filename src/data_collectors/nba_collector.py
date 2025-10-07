@@ -317,14 +317,21 @@ class NBADataCollector(BaseDataCollector):
             elif game.get('gameStatus') == 2:  # In progress
                 status = 'in_progress'
             
+            # Convert team IDs to abbreviations
+            home_id_str = str(home_team.get('teamId', ''))
+            away_id_str = str(away_team.get('teamId', ''))
+            
+            home_abbrev = self._team_id_map.get(home_id_str, {}).get('abbreviation', home_id_str)
+            away_abbrev = self._team_id_map.get(away_id_str, {}).get('abbreviation', away_id_str)
+            
             games_list.append({
                 'sport': self.sport,
                 'league': self.league,
                 'game_id': str(game.get('gameId', '')),
                 'game_date': game_date,
-                'home_team_id': str(home_team.get('teamId', '')),
+                'home_team_id': home_abbrev,  # Use abbreviation
                 'home_team_name': home_team.get('teamName', ''),
-                'away_team_id': str(away_team.get('teamId', '')),
+                'away_team_id': away_abbrev,  # Use abbreviation
                 'away_team_name': away_team.get('teamName', ''),
                 'season': int(game.get('seasonYear', datetime.now().year)),
                 'status': status,
@@ -347,26 +354,30 @@ class NBADataCollector(BaseDataCollector):
             status_text = game.get('GAME_STATUS_TEXT', '')
             status = 'final' if status_text and status_text.lower() in ['final', 'final/ot'] else 'scheduled'
             
-            # Get team names with fallback to ID mapping
-            home_team_id = str(game['HOME_TEAM_ID'])
-            away_team_id = str(game['VISITOR_TEAM_ID'])
+            # Get team IDs and convert to abbreviations
+            home_team_id_num = str(game['HOME_TEAM_ID'])
+            away_team_id_num = str(game['VISITOR_TEAM_ID'])
+            
+            # Convert numeric IDs to abbreviations
+            home_team_id = self._team_id_map.get(home_team_id_num, {}).get('abbreviation', home_team_id_num)
+            away_team_id = self._team_id_map.get(away_team_id_num, {}).get('abbreviation', away_team_id_num)
             
             home_team_name = game.get('HOME_TEAM_NAME', '')
-            if not home_team_name and home_team_id in self._team_id_map:
-                home_team_name = self._team_id_map[home_team_id]['full_name']
+            if not home_team_name and home_team_id_num in self._team_id_map:
+                home_team_name = self._team_id_map[home_team_id_num]['full_name']
                 
             away_team_name = game.get('VISITOR_TEAM_NAME', '')
-            if not away_team_name and away_team_id in self._team_id_map:
-                away_team_name = self._team_id_map[away_team_id]['full_name']
+            if not away_team_name and away_team_id_num in self._team_id_map:
+                away_team_name = self._team_id_map[away_team_id_num]['full_name']
 
             games_list.append({
                 'sport': self.sport,
                 'league': self.league,
                 'game_id': str(game['GAME_ID']),
                 'game_date': game_date,
-                'home_team_id': home_team_id,
+                'home_team_id': home_team_id,  # Use abbreviation
                 'home_team_name': home_team_name,
-                'away_team_id': away_team_id,
+                'away_team_id': away_team_id,  # Use abbreviation
                 'away_team_name': away_team_name,
                 'season': self._normalize_season_id(game.get('SEASON', datetime.now().year)),
                 'status': status,
