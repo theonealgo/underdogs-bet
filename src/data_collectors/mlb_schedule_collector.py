@@ -126,11 +126,13 @@ class MLBScheduleCollector:
             if not game_pk:
                 return None
             
-            # Game date and time
+            # Game date and time (convert to US Eastern for proper date)
             game_date = game.get('gameDate', '')
             if game_date:
                 game_datetime = datetime.fromisoformat(game_date.replace('Z', '+00:00'))
-                game_date = game_datetime.strftime('%Y-%m-%d')
+                # Convert to US Eastern time (UTC - 5) for proper game date
+                us_eastern = game_datetime - timedelta(hours=5)
+                game_date = us_eastern.strftime('%Y-%m-%d')
             else:
                 game_date = datetime.now().strftime('%Y-%m-%d')
             
