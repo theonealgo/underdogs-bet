@@ -476,6 +476,69 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
             st.error(f"Error loading predictions: {str(e)}")
             predictions = []
     
+    # Join odds data with predictions
+    if predictions:
+        try:
+            from src.utils.team_resolver import TeamResolver
+            team_resolver = TeamResolver()
+            
+            date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
+            with db_manager._get_connection() as conn:
+                odds_query = """
+                    SELECT * FROM odds_data
+                    WHERE DATE(game_date) = ?
+                    AND sport = ?
+                """
+                odds_df = pd.read_sql_query(odds_query, conn, params=[date_str, sport_code])
+            
+            # Join odds data with predictions using multiple matching strategies
+            for pred in predictions:
+                home_team = pred.get('home_team', '')
+                away_team = pred.get('away_team', '')
+                
+                # Strategy 1: Exact match on team IDs
+                matching_odds = odds_df[
+                    (odds_df['home_team'] == home_team) & (odds_df['away_team'] == away_team)
+                ]
+                
+                # Strategy 2: If no match, try resolving odds team names to IDs and match
+                if matching_odds.empty:
+                    for _, odds_row in odds_df.iterrows():
+                        odds_away_id = team_resolver.resolve(sport_code, str(odds_row['away_team']))
+                        odds_home_id = team_resolver.resolve(sport_code, str(odds_row['home_team']))
+                        
+                        if (odds_away_id == away_team or odds_row['away_team'] == away_team) and \
+                           (odds_home_id == home_team or odds_row['home_team'] == home_team):
+                            matching_odds = pd.DataFrame([odds_row])
+                            break
+                
+                # Strategy 3: Partial string matching as last resort
+                if matching_odds.empty:
+                    for _, odds_row in odds_df.iterrows():
+                        odds_away = str(odds_row['away_team']).lower()
+                        odds_home = str(odds_row['home_team']).lower()
+                        pred_away = str(away_team).lower()
+                        pred_home = str(home_team).lower()
+                        
+                        if (pred_away in odds_away or odds_away in pred_away) and \
+                           (pred_home in odds_home or odds_home in pred_home):
+                            matching_odds = pd.DataFrame([odds_row])
+                            break
+                
+                if not matching_odds.empty:
+                    odds_row = matching_odds.iloc[0]
+                    pred['away_odds'] = odds_row['away_odds']
+                    pred['home_odds'] = odds_row['home_odds']
+                    pred['away_spread'] = odds_row['away_spread']
+                    pred['away_spread_odds'] = odds_row['away_spread_odds']
+                    pred['home_spread'] = odds_row['home_spread']
+                    pred['home_spread_odds'] = odds_row['home_spread_odds']
+                    pred['total_line'] = odds_row['total_line']
+                    pred['over_odds'] = odds_row['over_odds']
+                    pred['under_odds'] = odds_row['under_odds']
+        except Exception as e:
+            logger.warning(f"Could not join odds data: {str(e)}")
+    
     show_upcoming_games_section(predictions, sport_code)
     
     # Section 2: Games In Progress

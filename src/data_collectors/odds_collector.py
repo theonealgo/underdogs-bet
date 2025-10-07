@@ -7,6 +7,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from utils.team_resolver import TeamResolver
 
 class OddsCollector:
     """Collects real betting odds from The Odds API"""
@@ -15,6 +18,7 @@ class OddsCollector:
         self.api_key = os.getenv('ODDS_API_KEY')
         self.base_url = "https://api.the-odds-api.com/v4"
         self.logger = logging.getLogger(__name__)
+        self.team_resolver = TeamResolver()
         
         if not self.api_key:
             self.logger.warning("ODDS_API_KEY not found - odds collection disabled")
@@ -102,10 +106,21 @@ class OddsCollector:
                                         best_under_odds = outcome['price']
                 
                 if best_away_ml is not None and best_home_ml is not None:
+                    # Try to resolve team names to team IDs
+                    away_team_id = self.team_resolver.resolve('MLB', away_team)
+                    home_team_id = self.team_resolver.resolve('MLB', home_team)
+                    
+                    # Use resolved IDs if available, otherwise use raw team names as fallback
+                    away_team_final = away_team_id if away_team_id else away_team
+                    home_team_final = home_team_id if home_team_id else home_team
+                    
+                    if not away_team_id or not home_team_id:
+                        self.logger.info(f"Using raw team names for MLB: {away_team} vs {home_team}")
+                    
                     parsed_odds.append({
                         'game_date': game_date,
-                        'away_team': away_team,
-                        'home_team': home_team,
+                        'away_team': away_team_final,
+                        'home_team': home_team_final,
                         'away_odds': best_away_ml,
                         'home_odds': best_home_ml,
                         'away_implied_prob': self._american_to_probability(best_away_ml),
@@ -223,10 +238,21 @@ class OddsCollector:
                                         best_under_odds = outcome['price']
                 
                 if best_away_ml is not None and best_home_ml is not None:
+                    # Try to resolve team names to team IDs
+                    away_team_id = self.team_resolver.resolve(sport_key, away_team)
+                    home_team_id = self.team_resolver.resolve(sport_key, home_team)
+                    
+                    # Use resolved IDs if available, otherwise use raw team names as fallback
+                    away_team_final = away_team_id if away_team_id else away_team
+                    home_team_final = home_team_id if home_team_id else home_team
+                    
+                    if not away_team_id or not home_team_id:
+                        self.logger.info(f"Using raw team names for {sport_key}: {away_team} vs {home_team}")
+                    
                     parsed_odds.append({
                         'game_date': game_date,
-                        'away_team': away_team,
-                        'home_team': home_team,
+                        'away_team': away_team_final,
+                        'home_team': home_team_final,
                         'away_odds': best_away_ml,
                         'home_odds': best_home_ml,
                         'away_implied_prob': self._american_to_probability(best_away_ml),
