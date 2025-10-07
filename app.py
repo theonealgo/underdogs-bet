@@ -718,7 +718,6 @@ def show_upcoming_predictions(predictions, sport_code):
             recommended = determine_recommendation(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
             
             display_data.append({
-                'Time': pred.get('game_time', 'TBD'),
                 'Away Team': pred.get('away_team', ''),
                 'Away Win %': f"{win_prob_away:.1f}%",
                 'Away ML': away_ml,
@@ -729,9 +728,7 @@ def show_upcoming_predictions(predictions, sport_code):
                 'Home Spread': home_spread_display,
                 'Predicted Score': f"{away_score:.0f}-{home_score:.0f}" if home_score and away_score else "N/A",
                 'Total': f"{total_runs:.1f}" if total_runs else "N/A",
-                'O/U': totals_display,
-                'Bet Value': bet_value,
-                'Pick': recommended
+                'O/U': totals_display
             })
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
@@ -746,7 +743,6 @@ def show_upcoming_predictions(predictions, sport_code):
             width='stretch',
             hide_index=True,
             column_config={
-                "Time": st.column_config.TextColumn("⏰", width="small"),
                 "Away Team": st.column_config.TextColumn("Away", width="small"),
                 "Away Win %": st.column_config.TextColumn("W%", width="small"),
                 "Away ML": st.column_config.TextColumn("ML", width="small"),
@@ -757,9 +753,7 @@ def show_upcoming_predictions(predictions, sport_code):
                 "Home Spread": st.column_config.TextColumn("Sprd", width="small"),
                 "Predicted Score": st.column_config.TextColumn("Score", width="small"),
                 "Total": st.column_config.TextColumn("Tot", width="small"),
-                "O/U": st.column_config.TextColumn("O/U", width="small"),
-                "Bet Value": st.column_config.TextColumn("Val", width="small"),
-                "Pick": st.column_config.TextColumn("Pick", width="small")
+                "O/U": st.column_config.TextColumn("O/U", width="small")
             }
         )
     
