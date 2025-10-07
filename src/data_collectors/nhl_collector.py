@@ -190,8 +190,9 @@ class NHLDataCollector(BaseDataCollector):
                     try:
                         daily_games = None
                         if self.nhl_api is not None:
-                            # nhlpy uses 'date' parameter, not 'start_date' and 'end_date'
-                            daily_games = self.nhl_api.schedule.get_schedule(date=date_str)
+                            # API structure changed - nhlpy no longer has get_schedule method
+                            # Fall through to direct API call
+                            raise Exception("NHL API wrapper method not available")
                         else:
                             raise Exception("NHL API wrapper not available")
                         
@@ -439,9 +440,8 @@ class NHLDataCollector(BaseDataCollector):
                 
                 # If game is final, try to get more detailed scores from boxscore
                 if game['status'] == 'final':
+                    game_id = game['game_id']
                     try:
-                        game_id = game['game_id']
-                        
                         # Try to get boxscore for enhanced/detailed scores
                         url = f"{self.api_web_base}gamecenter/{game_id}/boxscore"
                         response = requests.get(url, timeout=10)
@@ -674,7 +674,7 @@ class NHLDataCollector(BaseDataCollector):
             team_games = games_df[
                 (games_df['home_team_id'] == team_id) | 
                 (games_df['away_team_id'] == team_id)
-            ].sort_values('game_date', ascending=False).head(games)
+            ].sort_values(by=['game_date'], ascending=False).head(games)  # type: ignore
             
             if team_games.empty:
                 return {
@@ -898,26 +898,29 @@ class NHLDataCollector(BaseDataCollector):
     
     def _create_empty_schedule_df(self) -> pd.DataFrame:
         """Create empty DataFrame with schedule columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'game_id', 'game_date', 
             'home_team_id', 'home_team_name', 'away_team_id', 'away_team_name',
             'season', 'status', 'source_keys'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
     
     def _create_empty_games_df(self) -> pd.DataFrame:
         """Create empty DataFrame with games columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'game_id', 'game_date',
             'home_team_id', 'home_team_name', 'away_team_id', 'away_team_name',
             'season', 'status', 'home_score', 'away_score', 'source_keys'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
     
     def _create_empty_stats_df(self) -> pd.DataFrame:
         """Create empty DataFrame with stats columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'team_id', 'team_name', 'season', 'date',
             'games_played', 'wins', 'losses', 'goals_per_game',
             'goals_against_per_game', 'power_play_pct', 'penalty_kill_pct',
             'shots_per_game', 'shots_against_per_game', 'save_pct',
             'points', 'points_pct', 'overtime_losses'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
