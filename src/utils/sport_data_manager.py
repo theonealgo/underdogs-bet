@@ -94,13 +94,19 @@ class SportDataManager:
                 return collector.get_todays_games(date=date)
             elif sport_code in self._collectors:
                 collector = self._collectors[sport_code]['collector']
-                # For now, other sports only support today's games
-                # TODO: Add date parameter support to other sport collectors
-                if date is None:
-                    return collector.get_todays_games()
+                # Pass the date to the collector (NBA and NFL support date filtering now)
+                if hasattr(collector, 'get_todays_games'):
+                    # Convert date string to date object if needed
+                    date_obj = None
+                    if date:
+                        if isinstance(date, str):
+                            date_obj = pd.to_datetime(date).date()
+                        else:
+                            date_obj = date
+                    return collector.get_todays_games(game_date=date_obj)
                 else:
-                    logger.warning(f"{sport_code} collector doesn't support date filtering yet. Showing today's games.")
-                    return collector.get_todays_games()
+                    logger.warning(f"{sport_code} collector doesn't have get_todays_games method")
+                    return pd.DataFrame()
             else:
                 logger.warning(f"No collector found for sport: {sport_code}")
                 return pd.DataFrame()

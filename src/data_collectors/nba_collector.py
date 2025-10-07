@@ -190,9 +190,24 @@ class NBADataCollector(BaseDataCollector):
             self.logger.error(f"Error getting NBA schedule: {str(e)}")
             return self._create_empty_schedule_df()
     
-    def get_todays_games(self) -> pd.DataFrame:
-        """Get today's NBA games"""
-        return self.get_games(datetime.now().date())
+    def get_todays_games(self, game_date: Optional[date] = None) -> pd.DataFrame:
+        """
+        Get today's NBA games (or for a specific date).
+        
+        Args:
+            game_date: Optional date to get games for. If None, uses current UTC date - 5 hours (US time)
+        
+        Returns:
+            DataFrame with NBA games
+        """
+        if game_date is None:
+            # Use US timezone (UTC - 5 hours) to match game scheduling
+            us_now = datetime.now() - timedelta(hours=5)
+            game_date = us_now.date()
+        elif isinstance(game_date, str):
+            game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
+        
+        return self.get_games(game_date)
     
     def get_games(self, game_date: date) -> pd.DataFrame:
         """
@@ -207,6 +222,14 @@ class NBADataCollector(BaseDataCollector):
         try:
             self.logger.info(f"Getting NBA games for {game_date}")
             
+            # First, check database for stored games
+            games_from_db = self._get_games_from_db(game_date)
+            if not games_from_db.empty:
+                self.logger.info(f"Found {len(games_from_db)} NBA games in database for {game_date}")
+                # Add team names from mapping
+                return self._enrich_with_team_names(games_from_db)
+            
+            # If not in database, fetch from API
             # Get today's games using live scoreboard first (for current games)
             if game_date == date.today():
                 try:
@@ -241,6 +264,44 @@ class NBADataCollector(BaseDataCollector):
         except Exception as e:
             self.logger.error(f"Error getting NBA games for {game_date}: {str(e)}")
             return self._create_empty_games_df()
+    
+    def _get_games_from_db(self, game_date: date) -> pd.DataFrame:
+        """Get games from database for a specific date"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect('sports_predictions.db')
+            query = """
+                SELECT * FROM games 
+                WHERE sport = 'NBA' AND DATE(game_date) = DATE(?)
+                ORDER BY game_id
+            """
+            games_df = pd.read_sql_query(query, conn, params=[game_date.strftime('%Y-%m-%d')])
+            conn.close()
+            return games_df
+        except Exception as e:
+            self.logger.warning(f"Error querying database: {str(e)}")
+            return pd.DataFrame()
+    
+    def _enrich_with_team_names(self, games_df: pd.DataFrame) -> pd.DataFrame:
+        """Add team names to games dataframe using team ID mapping"""
+        if games_df.empty:
+            return games_df
+        
+        games_list = []
+        for _, game in games_df.iterrows():
+            home_id = str(game['home_team_id'])
+            away_id = str(game['away_team_id'])
+            
+            # Get team names from mapping
+            home_name = self._team_id_map.get(home_id, {}).get('full_name', home_id)
+            away_name = self._team_id_map.get(away_id, {}).get('full_name', away_id)
+            
+            game_dict = game.to_dict()
+            game_dict['home_team_name'] = home_name
+            game_dict['away_team_name'] = away_name
+            games_list.append(game_dict)
+        
+        return pd.DataFrame(games_list)
     
     def _parse_live_games(self, games_data: List[Dict], game_date: date) -> pd.DataFrame:
         """Parse live scoreboard games data"""
