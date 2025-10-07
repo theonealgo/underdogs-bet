@@ -6,14 +6,12 @@ import logging
 import json
 import requests
 
-# Try to import nhl_api, fallback to None if not available
+# Try to import nhlpy (nhl-api-py package), fallback to None if not available
 try:
-    from nhl_api import NhlApi
+    from nhlpy import NHLClient
+    NhlApi = NHLClient  # Alias for compatibility
 except ImportError:
-    try:
-        from nhl_api_py import NhlApi
-    except ImportError:
-        NhlApi = None
+    NhlApi = None
 
 from src.interfaces.base_collector import BaseDataCollector
 
@@ -50,30 +48,30 @@ class NHLDataCollector(BaseDataCollector):
             # Get teams using the API wrapper (if available)
             teams_data = None
             if self.nhl_api is not None:
-                teams_data = self.nhl_api.stats.team_stats_leaders(season="20242025", game_type=2)
+                try:
+                    # Try new API structure (nhlpy/NHLClient)
+                    teams_data = self.nhl_api.teams.teams()
+                    if teams_data:
+                        # Convert to expected format
+                        self._teams_cache = []
+                        for team in teams_data:
+                            team_id = str(team.get('id', ''))
+                            if team_id:
+                                self._team_id_map[team_id] = {
+                                    'abbreviation': team.get('triCode', team.get('abbrev', '')),
+                                    'full_name': team.get('fullName', team.get('name', '')),
+                                    'logo': ''
+                                }
+                        self.logger.info(f"Initialized {len(self._team_id_map)} NHL teams via nhlpy")
+                        return
+                except AttributeError:
+                    # If new API structure doesn't work, fallback
+                    self.logger.info("NHL API wrapper method not available, using fallback")
             else:
                 self.logger.info("NHL API wrapper not available, using fallback team initialization")
             
-            if teams_data and 'data' in teams_data:
-                self._teams_cache = teams_data['data']
-                
-                # Create mappings for easier lookups
-                for team in self._teams_cache:
-                    team_id = str(team.get('teamId', ''))
-                    team_abbrev = team.get('teamAbbrevs', {}).get('default', '')
-                    team_name = team.get('teamFullName', '')
-                    
-                    if team_id:
-                        self._team_id_map[team_id] = {
-                            'abbreviation': team_abbrev,
-                            'full_name': team_name,
-                            'logo': team.get('teamLogo', '')
-                        }
-                
-                self.logger.info(f"Initialized {len(self._teams_cache)} NHL teams")
-            else:
-                # Fallback: create basic team mapping
-                self._initialize_basic_teams()
+            # Fallback: create basic team mapping
+            self._initialize_basic_teams()
                 
         except Exception as e:
             self.logger.warning(f"Error initializing NHL teams via API: {str(e)}")

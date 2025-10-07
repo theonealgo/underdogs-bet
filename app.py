@@ -228,7 +228,7 @@ def main():
     col1, col2 = st.columns([2, 6])
     
     with col1:
-        st.markdown("### 🏆 DRatings")
+        st.markdown("### 🏆 Sports Predictions & Analysis")
     
     with col2:
         # Sport page selection - each sport is its own page
@@ -387,20 +387,20 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 }
                     
                     for _, pred in predictions_df.iterrows():
-                        game_id = pred.get('game_id', '')
-                        home_team_id = pred.get('home_team_id', '')
-                        away_team_id = pred.get('away_team_id', '')
+                        game_id = str(pred.get('game_id', ''))
+                        home_team_id = str(pred.get('home_team_id', ''))
+                        away_team_id = str(pred.get('away_team_id', ''))
                         
                         # Get team names from the game mapping, or fall back to IDs
                         if game_id in game_name_map:
-                            home_team_name = game_name_map[game_id]['home_team_name']
-                            away_team_name = game_name_map[game_id]['away_team_name']
+                            home_team_name = str(game_name_map[game_id]['home_team_name'])
+                            away_team_name = str(game_name_map[game_id]['away_team_name'])
                         else:
                             home_team_name = home_team_id
                             away_team_name = away_team_id
                         
-                        predicted_winner = pred.get('predicted_winner', home_team_name)
-                        win_prob = pred.get('win_probability', 0.5)
+                        predicted_winner = str(pred.get('predicted_winner', home_team_name))
+                        win_prob = float(pred.get('win_probability', 0.5)) if pred.get('win_probability') is not None else 0.5
                         
                         # Determine home win probability based on who is predicted to win
                         if predicted_winner == away_team_name or predicted_winner == away_team_id:
