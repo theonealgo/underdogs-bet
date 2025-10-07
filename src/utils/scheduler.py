@@ -28,7 +28,7 @@ class DataScheduler:
         self.db_manager = db_manager
         self.baseball_scraper = BaseballSavantScraper()
         # Note: OddsShark dependency removed
-        self.predictor = MLBPredictor()
+        self.predictor = MLBPredictor(db_manager=db_manager)
         
         # Initialize learning system components
         self.result_tracker = ResultTracker(db_manager)

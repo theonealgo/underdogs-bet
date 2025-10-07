@@ -31,7 +31,7 @@ class MLBPredictor:
         self.trained_feature_names = None
         
         # Pythagorean blending parameters
-        self.pythagorean_weight = 0.3  # Weight for Pythagorean prior (tunable via CV)
+        self.pythagorean_weight = 1.0  # Weight for Pythagorean prior - use 1.0 until models are retrained with proper features
         
         # Model parameters
         self.winner_params = {
@@ -386,11 +386,11 @@ class MLBPredictor:
             if total_pythag > 0:
                 pythag_prior = home_pythag / total_pythag
                 
-                # Apply home field advantage adjustment (~53% in MLB)
-                home_field_adjustment = 0.53
-                adjusted_prior = pythag_prior * home_field_adjustment + (1 - pythag_prior) * (1 - home_field_adjustment)
+                # Apply home field advantage boost (~3% in MLB)
+                # Home teams win ~54% of games, so add 4% to base prediction
+                adjusted_prior = min(0.95, pythag_prior + 0.04)
                 
-                return max(0.1, min(0.9, adjusted_prior))  # Bound between 10-90%
+                return max(0.05, min(0.95, adjusted_prior))  # Bound between 5-95%
             
             return None
             

@@ -218,29 +218,36 @@ class FeatureEngineer:
             self.logger.error(f"Error adding team metrics features: {str(e)}")
             return df
     
+    def _safe_get_metric(self, metrics_df: pd.DataFrame, column: str, default_value):
+        """Safely get a metric value, handling None/NaN"""
+        if metrics_df.empty or column not in metrics_df.columns:
+            return default_value
+        value = metrics_df[column].iloc[0]
+        return value if value is not None and not pd.isna(value) else default_value
+    
     def _add_pythagorean_features(self, df: pd.DataFrame, idx: int, home_metrics: pd.DataFrame, 
                                  away_metrics: pd.DataFrame, home_prefix: str, away_prefix: str) -> pd.DataFrame:
         """Add Pythagorean win percentage features"""
         try:
             # Season Pythagorean win percentages
-            home_pythag = home_metrics['pythag_win_pct'].iloc[0] if not home_metrics.empty and 'pythag_win_pct' in home_metrics.columns else 0.5
-            away_pythag = away_metrics['pythag_win_pct'].iloc[0] if not away_metrics.empty and 'pythag_win_pct' in away_metrics.columns else 0.5
+            home_pythag = self._safe_get_metric(home_metrics, 'pythag_win_pct', 0.5)
+            away_pythag = self._safe_get_metric(away_metrics, 'pythag_win_pct', 0.5)
             
             df.loc[idx, f'{home_prefix}_pythag_win_pct'] = home_pythag
             df.loc[idx, f'{away_prefix}_pythag_win_pct'] = away_pythag
             df.loc[idx, 'pythag_matchup_diff'] = home_pythag - away_pythag
             
             # 14-day rolling Pythagorean
-            home_pythag_14 = home_metrics['pythag_win_pct_14'].iloc[0] if not home_metrics.empty and 'pythag_win_pct_14' in home_metrics.columns else home_pythag
-            away_pythag_14 = away_metrics['pythag_win_pct_14'].iloc[0] if not away_metrics.empty and 'pythag_win_pct_14' in away_metrics.columns else away_pythag
+            home_pythag_14 = self._safe_get_metric(home_metrics, 'pythag_win_pct_14', home_pythag)
+            away_pythag_14 = self._safe_get_metric(away_metrics, 'pythag_win_pct_14', away_pythag)
             
             df.loc[idx, f'{home_prefix}_pythag_14'] = home_pythag_14
             df.loc[idx, f'{away_prefix}_pythag_14'] = away_pythag_14
             df.loc[idx, 'pythag_14_diff'] = home_pythag_14 - away_pythag_14
             
             # 30-day rolling Pythagorean
-            home_pythag_30 = home_metrics['pythag_win_pct_30'].iloc[0] if not home_metrics.empty and 'pythag_win_pct_30' in home_metrics.columns else home_pythag
-            away_pythag_30 = away_metrics['pythag_win_pct_30'].iloc[0] if not away_metrics.empty and 'pythag_win_pct_30' in away_metrics.columns else away_pythag
+            home_pythag_30 = self._safe_get_metric(home_metrics, 'pythag_win_pct_30', home_pythag)
+            away_pythag_30 = self._safe_get_metric(away_metrics, 'pythag_win_pct_30', away_pythag)
             
             df.loc[idx, f'{home_prefix}_pythag_30'] = home_pythag_30
             df.loc[idx, f'{away_prefix}_pythag_30'] = away_pythag_30
@@ -257,24 +264,24 @@ class FeatureEngineer:
         """Add run differential features (highest correlation R² = 0.887)"""
         try:
             # Season run differentials
-            home_run_diff = home_metrics['run_differential'].iloc[0] if not home_metrics.empty and 'run_differential' in home_metrics.columns else 0
-            away_run_diff = away_metrics['run_differential'].iloc[0] if not away_metrics.empty and 'run_differential' in away_metrics.columns else 0
+            home_run_diff = self._safe_get_metric(home_metrics, 'run_differential', 0)
+            away_run_diff = self._safe_get_metric(away_metrics, 'run_differential', 0)
             
             df.loc[idx, 'home_run_diff'] = home_run_diff
             df.loc[idx, 'away_run_diff'] = away_run_diff
             df.loc[idx, 'run_diff_matchup'] = home_run_diff - away_run_diff
             
             # 14-day run differentials
-            home_run_diff_14 = home_metrics['run_diff_14'].iloc[0] if not home_metrics.empty and 'run_diff_14' in home_metrics.columns else home_run_diff
-            away_run_diff_14 = away_metrics['run_diff_14'].iloc[0] if not away_metrics.empty and 'run_diff_14' in away_metrics.columns else away_run_diff
+            home_run_diff_14 = self._safe_get_metric(home_metrics, 'run_diff_14', home_run_diff)
+            away_run_diff_14 = self._safe_get_metric(away_metrics, 'run_diff_14', away_run_diff)
             
             df.loc[idx, 'home_run_diff_14'] = home_run_diff_14
             df.loc[idx, 'away_run_diff_14'] = away_run_diff_14
             df.loc[idx, 'run_diff_14_matchup'] = home_run_diff_14 - away_run_diff_14
             
             # 30-day run differentials  
-            home_run_diff_30 = home_metrics['run_diff_30'].iloc[0] if not home_metrics.empty and 'run_diff_30' in home_metrics.columns else home_run_diff
-            away_run_diff_30 = away_metrics['run_diff_30'].iloc[0] if not away_metrics.empty and 'run_diff_30' in away_metrics.columns else away_run_diff
+            home_run_diff_30 = self._safe_get_metric(home_metrics, 'run_diff_30', home_run_diff)
+            away_run_diff_30 = self._safe_get_metric(away_metrics, 'run_diff_30', away_run_diff)
             
             df.loc[idx, 'home_run_diff_30'] = home_run_diff_30
             df.loc[idx, 'away_run_diff_30'] = away_run_diff_30
@@ -291,36 +298,36 @@ class FeatureEngineer:
         """Add top pitching statistics (11 of top 19 correlations)"""
         try:
             # ERA (R² = 0.790)
-            home_era = home_metrics['era'].iloc[0] if not home_metrics.empty and 'era' in home_metrics.columns else 4.5
-            away_era = away_metrics['era'].iloc[0] if not away_metrics.empty and 'era' in away_metrics.columns else 4.5
+            home_era = self._safe_get_metric(home_metrics, 'era', 4.5)
+            away_era = self._safe_get_metric(away_metrics, 'era', 4.5)
             df.loc[idx, 'home_era'] = home_era
             df.loc[idx, 'away_era'] = away_era
-            df.loc[idx, 'era_matchup_diff'] = away_era - home_era  # Lower ERA is better, so home advantage when away ERA > home ERA
+            df.loc[idx, 'era_matchup_diff'] = away_era - home_era
             
             # FIP (R² = 0.770)
-            home_fip = home_metrics['fip'].iloc[0] if not home_metrics.empty and 'fip' in home_metrics.columns else 4.5
-            away_fip = away_metrics['fip'].iloc[0] if not away_metrics.empty and 'fip' in away_metrics.columns else 4.5
+            home_fip = self._safe_get_metric(home_metrics, 'fip', 4.5)
+            away_fip = self._safe_get_metric(away_metrics, 'fip', 4.5)
             df.loc[idx, 'home_fip'] = home_fip
             df.loc[idx, 'away_fip'] = away_fip
             df.loc[idx, 'fip_matchup_diff'] = away_fip - home_fip
             
             # WHIP (R² = 0.691)
-            home_whip = home_metrics['whip'].iloc[0] if not home_metrics.empty and 'whip' in home_metrics.columns else 1.3
-            away_whip = away_metrics['whip'].iloc[0] if not away_metrics.empty and 'whip' in away_metrics.columns else 1.3
+            home_whip = self._safe_get_metric(home_metrics, 'whip', 1.3)
+            away_whip = self._safe_get_metric(away_metrics, 'whip', 1.3)
             df.loc[idx, 'home_whip'] = home_whip
             df.loc[idx, 'away_whip'] = away_whip
             df.loc[idx, 'whip_matchup_diff'] = away_whip - home_whip
             
             # H/9 (R² = 0.676)
-            home_h9 = home_metrics['h_per_9'].iloc[0] if not home_metrics.empty and 'h_per_9' in home_metrics.columns else 9.0
-            away_h9 = away_metrics['h_per_9'].iloc[0] if not away_metrics.empty and 'h_per_9' in away_metrics.columns else 9.0
+            home_h9 = self._safe_get_metric(home_metrics, 'h_per_9', 9.0)
+            away_h9 = self._safe_get_metric(away_metrics, 'h_per_9', 9.0)
             df.loc[idx, 'home_h_per_9'] = home_h9
             df.loc[idx, 'away_h_per_9'] = away_h9
             df.loc[idx, 'h9_matchup_diff'] = away_h9 - home_h9
             
             # BAA - Batting Average Against (R² = 0.663)
-            home_baa = home_metrics['batting_avg_against'].iloc[0] if not home_metrics.empty and 'batting_avg_against' in home_metrics.columns else 0.250
-            away_baa = away_metrics['batting_avg_against'].iloc[0] if not away_metrics.empty and 'batting_avg_against' in away_metrics.columns else 0.250
+            home_baa = self._safe_get_metric(home_metrics, 'batting_avg_against', 0.250)
+            away_baa = self._safe_get_metric(away_metrics, 'batting_avg_against', 0.250)
             df.loc[idx, 'home_baa'] = home_baa
             df.loc[idx, 'away_baa'] = away_baa
             df.loc[idx, 'baa_matchup_diff'] = away_baa - home_baa
@@ -336,22 +343,22 @@ class FeatureEngineer:
         """Add top hitting statistics"""
         try:
             # OBP (On-base percentage)
-            home_obp = home_metrics['obp'].iloc[0] if not home_metrics.empty and 'obp' in home_metrics.columns else 0.320
-            away_obp = away_metrics['obp'].iloc[0] if not away_metrics.empty and 'obp' in away_metrics.columns else 0.320
+            home_obp = self._safe_get_metric(home_metrics, 'obp', 0.320)
+            away_obp = self._safe_get_metric(away_metrics, 'obp', 0.320)
             df.loc[idx, 'home_obp'] = home_obp
             df.loc[idx, 'away_obp'] = away_obp
             df.loc[idx, 'obp_matchup_diff'] = home_obp - away_obp
             
             # SLG (Slugging percentage)
-            home_slg = home_metrics['slg'].iloc[0] if not home_metrics.empty and 'slg' in home_metrics.columns else 0.400
-            away_slg = away_metrics['slg'].iloc[0] if not away_metrics.empty and 'slg' in away_metrics.columns else 0.400
+            home_slg = self._safe_get_metric(home_metrics, 'slg', 0.400)
+            away_slg = self._safe_get_metric(away_metrics, 'slg', 0.400)
             df.loc[idx, 'home_slg'] = home_slg
             df.loc[idx, 'away_slg'] = away_slg
             df.loc[idx, 'slg_matchup_diff'] = home_slg - away_slg
             
             # OPS (On-base Plus Slugging)
-            home_ops = home_metrics['ops'].iloc[0] if not home_metrics.empty and 'ops' in home_metrics.columns else 0.720
-            away_ops = away_metrics['ops'].iloc[0] if not away_metrics.empty and 'ops' in away_metrics.columns else 0.720
+            home_ops = self._safe_get_metric(home_metrics, 'ops', 0.720)
+            away_ops = self._safe_get_metric(away_metrics, 'ops', 0.720)
             df.loc[idx, 'home_ops'] = home_ops
             df.loc[idx, 'away_ops'] = away_ops
             df.loc[idx, 'ops_matchup_diff'] = home_ops - away_ops
