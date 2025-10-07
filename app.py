@@ -326,18 +326,20 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         
                         # Create basic predictions for each game
                         for _, game in todays_games.iterrows():
-                            game_id = game.get('game_id', f"{game.get('away_team', '')}_{game.get('home_team', '')}_{date_str}")
-                            home_team = game.get('home_team', '')
-                            away_team = game.get('away_team', '')
+                            game_id = game.get('game_id', f"{game.get('away_team_id', '')}_{game.get('home_team_id', '')}_{date_str}")
+                            home_team_id = game.get('home_team_id', '')
+                            away_team_id = game.get('away_team_id', '')
+                            home_team_name = game.get('home_team_name', home_team_id)
+                            away_team_name = game.get('away_team_name', away_team_id)
                             game_time = game.get('game_time', 'TBD')
                             
                             predictions.append({
                                 'game_id': game_id,
                                 'game_time': game_time,
                                 'game_date': prediction_date,
-                                'home_team': home_team,
-                                'away_team': away_team,
-                                'predicted_winner': 'TBD',
+                                'home_team': home_team_name,
+                                'away_team': away_team_name,
+                                'predicted_winner': home_team_name,
                                 'home_win_probability': 0.5,
                                 'away_win_probability': 0.5,
                                 'predicted_total': None,
@@ -347,17 +349,22 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         
                         # Store predictions in database
                         pred_data = []
-                        for pred in predictions:
+                        for _, game in todays_games.iterrows():
+                            game_id = game.get('game_id', '')
+                            home_team_id = game.get('home_team_id', '')
+                            away_team_id = game.get('away_team_id', '')
+                            home_team_name = game.get('home_team_name', home_team_id)
+                            
                             pred_data.append({
                                 'sport': sport_code,
                                 'league': sport_code,
-                                'game_id': pred['game_id'],
+                                'game_id': game_id,
                                 'game_date': date_str,
-                                'home_team_id': pred['home_team'],
-                                'away_team_id': pred['away_team'],
-                                'predicted_winner': pred['predicted_winner'],
-                                'win_probability': pred['home_win_probability'],
-                                'predicted_total': pred['predicted_total'],
+                                'home_team_id': home_team_id,
+                                'away_team_id': away_team_id,
+                                'predicted_winner': home_team_name,
+                                'win_probability': 0.5,
+                                'predicted_total': None,
                                 'total_confidence': 0.5,
                                 'model_version': 'basic_v1',
                                 'key_factors': '[]'
@@ -366,27 +373,51 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         if pred_data:
                             db_manager.store_predictions(pd.DataFrame(pred_data))
                 else:
-                    # Use existing predictions from database
+                    # Use existing predictions from database - need to get team names
+                    # Fetch all games for this date once to build a mapping
+                    games_for_lookup = sport_data_manager.get_todays_games(sport_code, date=date_str)
+                    game_name_map = {}
+                    if not games_for_lookup.empty:
+                        for _, game in games_for_lookup.iterrows():
+                            game_id = game.get('game_id', '')
+                            if game_id:
+                                game_name_map[game_id] = {
+                                    'home_team_name': game.get('home_team_name', game.get('home_team_id', '')),
+                                    'away_team_name': game.get('away_team_name', game.get('away_team_id', ''))
+                                }
+                    
                     for _, pred in predictions_df.iterrows():
-                        predicted_winner = pred['predicted_winner'] if 'predicted_winner' in pred else ''
-                        away_team = pred['away_team_id'] if 'away_team_id' in pred else ''
-                        win_prob = pred['win_probability'] if 'win_probability' in pred else 0.5
+                        game_id = pred.get('game_id', '')
+                        home_team_id = pred.get('home_team_id', '')
+                        away_team_id = pred.get('away_team_id', '')
                         
-                        if predicted_winner == away_team:
+                        # Get team names from the game mapping, or fall back to IDs
+                        if game_id in game_name_map:
+                            home_team_name = game_name_map[game_id]['home_team_name']
+                            away_team_name = game_name_map[game_id]['away_team_name']
+                        else:
+                            home_team_name = home_team_id
+                            away_team_name = away_team_id
+                        
+                        predicted_winner = pred.get('predicted_winner', home_team_name)
+                        win_prob = pred.get('win_probability', 0.5)
+                        
+                        # Determine home win probability based on who is predicted to win
+                        if predicted_winner == away_team_name or predicted_winner == away_team_id:
                             home_win_prob = 1 - win_prob
                         else:
                             home_win_prob = win_prob
                         
                         predictions.append({
-                            'game_id': pred['game_id'] if 'game_id' in pred else '',
+                            'game_id': game_id,
                             'game_time': 'TBD',
-                            'game_date': pred['game_date'] if 'game_date' in pred else prediction_date,
-                            'home_team': pred['home_team_id'] if 'home_team_id' in pred else '',
-                            'away_team': pred['away_team_id'] if 'away_team_id' in pred else '',
+                            'game_date': pred.get('game_date', prediction_date),
+                            'home_team': home_team_name,
+                            'away_team': away_team_name,
                             'predicted_winner': predicted_winner,
                             'home_win_probability': home_win_prob,
                             'away_win_probability': 1 - home_win_prob,
-                            'predicted_total': pred['predicted_total'] if 'predicted_total' in pred else None,
+                            'predicted_total': pred.get('predicted_total'),
                             'predicted_home_score': None,
                             'predicted_away_score': None
                         })
