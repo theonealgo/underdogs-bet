@@ -299,19 +299,33 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
             if sport_code == "MLB":
                 predictions = api.get_todays_predictions(date=prediction_date)
             else:
+                # Load predictions from database for all sports
                 date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
-                todays_games = sport_data_manager.get_todays_games(sport_code, date=date_str)
+                with db_manager._get_connection() as conn:
+                    pred_query = """
+                        SELECT p.*, g.home_team_id, g.away_team_id
+                        FROM predictions p
+                        LEFT JOIN games g ON p.game_id = g.game_id
+                        WHERE DATE(p.game_date) = ?
+                        AND p.sport = ?
+                        ORDER BY p.game_date
+                    """
+                    predictions_df = pd.read_sql_query(pred_query, conn, params=[date_str, sport_code])
+                
                 predictions = []
-                if not todays_games.empty:
-                    for _, game in todays_games.iterrows():
+                if not predictions_df.empty:
+                    for _, pred in predictions_df.iterrows():
+                        home_win_prob = 1 - pred.get('win_probability', 0.5) if pred.get('predicted_winner') == pred.get('away_team_id') else pred.get('win_probability', 0.5)
                         predictions.append({
-                            'game_id': game.get('game_id', ''),
-                            'game_time': game.get('game_time', 'TBD'),
-                            'game_date': game.get('game_date', prediction_date),
-                            'home_team': game.get('home_team_name', game.get('home_team_id', '')),
-                            'away_team': game.get('away_team_name', game.get('away_team_id', '')),
-                            'home_win_probability': 0.5,
-                            'away_win_probability': 0.5,
+                            'game_id': pred.get('game_id', ''),
+                            'game_time': 'TBD',
+                            'game_date': pred.get('game_date', prediction_date),
+                            'home_team': pred.get('home_team_id', ''),
+                            'away_team': pred.get('away_team_id', ''),
+                            'predicted_winner': pred.get('predicted_winner', ''),
+                            'home_win_probability': home_win_prob,
+                            'away_win_probability': 1 - home_win_prob,
+                            'predicted_total': pred.get('predicted_total'),
                             'predicted_home_score': None,
                             'predicted_away_score': None
                         })
@@ -672,7 +686,8 @@ def show_season_stats(db_manager, sport_code):
                     COUNT(*) as total_predictions,
                     SUM(CASE WHEN win_prediction_correct = 1 THEN 1 ELSE 0 END) as correct_predictions,
                     ROUND(AVG(CASE WHEN win_prediction_correct = 1 THEN 1.0 ELSE 0.0 END) * 100, 2) as accuracy,
-                    AVG(total_absolute_error) as avg_total_error
+                    AVG(total_absolute_error) as avg_total_error,
+                    AVG(win_probability) as avg_confidence
                 FROM predictions
                 WHERE sport = ?
                 AND result_updated_at IS NOT NULL
@@ -682,21 +697,35 @@ def show_season_stats(db_manager, sport_code):
             season_stats = pd.read_sql_query(season_query, conn, params=[sport_code])
             
             if not season_stats.empty and season_stats['total_predictions'].iloc[0] > 0:
-                col1, col2, col3, col4 = st.columns(4)
+                total_preds = int(season_stats['total_predictions'].iloc[0])
+                correct_preds = int(season_stats['correct_predictions'].iloc[0])
+                accuracy = season_stats['accuracy'].iloc[0]
+                
+                # Calculate ROI (assuming $100 bets at -110 odds for all predictions)
+                # Win: +$90.91 (bet $110 to win $100)
+                # Loss: -$110
+                units_won = correct_preds * 0.9091  # Win $90.91 per correct prediction
+                units_lost = (total_preds - correct_preds) * 1.0  # Lose $100 per incorrect
+                net_profit = units_won - units_lost
+                roi = (net_profit / total_preds) * 100 if total_preds > 0 else 0
+                
+                col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
-                    st.metric("Total Predictions", int(season_stats['total_predictions'].iloc[0]))
+                    st.metric("Total Predictions", total_preds)
                 
                 with col2:
-                    st.metric("Correct", int(season_stats['correct_predictions'].iloc[0]))
+                    st.metric("Correct", correct_preds)
                 
                 with col3:
-                    st.metric("Accuracy", f"{season_stats['accuracy'].iloc[0]:.1f}%")
+                    st.metric("Accuracy", f"{accuracy:.1f}%")
                 
                 with col4:
-                    avg_error = season_stats['avg_total_error'].iloc[0]
-                    if pd.notna(avg_error):
-                        st.metric("Avg Total Error", f"{avg_error:.2f}")
+                    roi_delta = "positive" if roi > 0 else "negative"
+                    st.metric("ROI", f"{roi:.1f}%", delta_color="normal")
+                
+                with col5:
+                    st.metric("Net Profit", f"${net_profit:.2f}", delta_color="normal" if net_profit > 0 else "inverse")
                 
                 # Weekly performance chart
                 weekly_query = """
