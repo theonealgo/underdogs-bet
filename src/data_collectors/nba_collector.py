@@ -370,8 +370,8 @@ class NBADataCollector(BaseDataCollector):
                 'away_team_name': away_team_name,
                 'season': self._normalize_season_id(game.get('SEASON', datetime.now().year)),
                 'status': status,
-                'home_score': int(game.get('PTS_HOME', 0)) if status == 'final' and game.get('PTS_HOME') is not None else None,
-                'away_score': int(game.get('PTS_VISITOR', 0)) if status == 'final' and game.get('PTS_VISITOR') is not None else None,
+                'home_score': int(game.get('PTS_HOME', 0) or 0) if status == 'final' and game.get('PTS_HOME') is not None else None,
+                'away_score': int(game.get('PTS_VISITOR', 0) or 0) if status == 'final' and game.get('PTS_VISITOR') is not None else None,
                 'source_keys': json.dumps({
                     'nba_game_id': str(game['GAME_ID']),
                     'game_status_text': game.get('GAME_STATUS_TEXT', '')
@@ -465,8 +465,8 @@ class NBADataCollector(BaseDataCollector):
         
         # Get stats for each team using their game logs
         for team in self._teams_cache or []:
+            team_id = team.get('id', 'unknown')
             try:
-                team_id = team['id']
                 team_name = team['full_name']
                 
                 # Get recent game logs for this team
@@ -709,26 +709,29 @@ class NBADataCollector(BaseDataCollector):
     
     def _create_empty_schedule_df(self) -> pd.DataFrame:
         """Create empty DataFrame with schedule columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'game_id', 'game_date', 
             'home_team_id', 'home_team_name', 'away_team_id', 'away_team_name',
             'season', 'status', 'source_keys'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
     
     def _create_empty_games_df(self) -> pd.DataFrame:
         """Create empty DataFrame with games columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'game_id', 'game_date',
             'home_team_id', 'home_team_name', 'away_team_id', 'away_team_name',
             'season', 'status', 'home_score', 'away_score', 'source_keys'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
     
     def _create_empty_stats_df(self) -> pd.DataFrame:
         """Create empty DataFrame with stats columns"""
-        return pd.DataFrame(columns=[
+        cols = [
             'sport', 'league', 'team_id', 'team_name', 'season', 'date',
             'games_played', 'wins', 'losses', 'points_per_game',
             'rebounds_per_game', 'assists_per_game', 'field_goal_pct',
             'three_point_pct', 'free_throw_pct', 'steals_per_game',
             'blocks_per_game', 'turnovers_per_game', 'plus_minus'
-        ])
+        ]
+        return pd.DataFrame(columns=cols)  # type: ignore
