@@ -977,7 +977,7 @@ def show_games_in_progress(db_manager, sport_code, game_date):
         for _, game in in_progress_df.iterrows():
             col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                st.write(f"**{game['away_team']} @ {game['home_team']}**")
+                st.write(f"**{game['away_team_id']} @ {game['home_team_id']}**")
             with col2:
                 st.write(f"Score: {game.get('away_score', 0)}-{game.get('home_score', 0)}")
             with col3:
