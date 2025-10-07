@@ -315,17 +315,26 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                 predictions = []
                 if not predictions_df.empty:
                     for _, pred in predictions_df.iterrows():
-                        home_win_prob = 1 - pred.get('win_probability', 0.5) if pred.get('predicted_winner') == pred.get('away_team_id') else pred.get('win_probability', 0.5)
+                        # Calculate home win probability based on who is predicted to win
+                        predicted_winner = pred['predicted_winner'] if 'predicted_winner' in pred else ''
+                        away_team = pred['away_team_id'] if 'away_team_id' in pred else ''
+                        win_prob = pred['win_probability'] if 'win_probability' in pred else 0.5
+                        
+                        if predicted_winner == away_team:
+                            home_win_prob = 1 - win_prob
+                        else:
+                            home_win_prob = win_prob
+                        
                         predictions.append({
-                            'game_id': pred.get('game_id', ''),
+                            'game_id': pred['game_id'] if 'game_id' in pred else '',
                             'game_time': 'TBD',
-                            'game_date': pred.get('game_date', prediction_date),
-                            'home_team': pred.get('home_team_id', ''),
-                            'away_team': pred.get('away_team_id', ''),
-                            'predicted_winner': pred.get('predicted_winner', ''),
+                            'game_date': pred['game_date'] if 'game_date' in pred else prediction_date,
+                            'home_team': pred['home_team_id'] if 'home_team_id' in pred else '',
+                            'away_team': pred['away_team_id'] if 'away_team_id' in pred else '',
+                            'predicted_winner': predicted_winner,
                             'home_win_probability': home_win_prob,
                             'away_win_probability': 1 - home_win_prob,
-                            'predicted_total': pred.get('predicted_total'),
+                            'predicted_total': pred['predicted_total'] if 'predicted_total' in pred else None,
                             'predicted_home_score': None,
                             'predicted_away_score': None
                         })
