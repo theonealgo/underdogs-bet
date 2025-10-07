@@ -261,9 +261,11 @@ def main():
 def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_code, sport_name):
     """Comprehensive sport page with all prediction information"""
     
-    # Date navigation
+    # Date navigation - use UTC-5 (EST/CDT) to match US timezones
     if 'prediction_date' not in st.session_state:
-        st.session_state.prediction_date = datetime.now().date()
+        # Default to US Eastern timezone (UTC-5) for game scheduling
+        us_now = datetime.now() - timedelta(hours=5)
+        st.session_state.prediction_date = us_now.date()
     
     col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
     
@@ -332,9 +334,11 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
     show_season_results(db_manager, sport_code)
 
 def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
-    # Date navigation
+    # Date navigation - use UTC-5 (EST/CDT) to match US timezones
     if 'prediction_date' not in st.session_state:
-        st.session_state.prediction_date = datetime.now().date()
+        # Default to US Eastern timezone (UTC-5) for game scheduling
+        us_now = datetime.now() - timedelta(hours=5)
+        st.session_state.prediction_date = us_now.date()
     
     col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
     
