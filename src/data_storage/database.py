@@ -651,30 +651,6 @@ class DatabaseManager:
         """Alias for save_odds to maintain compatibility"""
         return self.save_odds(odds_df, sport)
     
-    def get_odds_for_game(self, game_date, sport: str, away_team: str, home_team: str) -> Optional[Dict]:
-        """Get odds for a specific game"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("""
-                    SELECT away_odds, home_odds, away_implied_prob, home_implied_prob
-                    FROM odds_data 
-                    WHERE game_date = ? AND sport = ? AND away_team = ? AND home_team = ?
-                    ORDER BY collected_at DESC LIMIT 1
-                """, (game_date, sport, away_team, home_team))
-                
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'away_odds': row[0],
-                        'home_odds': row[1], 
-                        'away_implied_prob': row[2],
-                        'home_implied_prob': row[3]
-                    }
-                return None
-        except Exception as e:
-            self.logger.error(f"Error getting odds: {str(e)}")
-            return None
-    
     def store_predictions(self, predictions: List[Dict]) -> bool:
         """
         Store model predictions in database (sport-aware)
@@ -751,7 +727,7 @@ class DatabaseManager:
             return False
     
     def get_historical_games(self, start_date: datetime, end_date: datetime, 
-                           sport: str = None, league: str = None) -> pd.DataFrame:
+                           sport: Optional[str] = None, league: Optional[str] = None) -> pd.DataFrame:
         """
         Get historical game data for analysis (sport-aware)
         
@@ -767,7 +743,7 @@ class DatabaseManager:
         try:
             # Build query with optional sport/league filters
             where_conditions = ["g.game_date BETWEEN ? AND ?"]
-            params = [start_date.date(), end_date.date()]
+            params: List = [start_date.date(), end_date.date()]
             
             if sport:
                 where_conditions.append("g.sport = ?")
