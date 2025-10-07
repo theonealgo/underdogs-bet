@@ -975,13 +975,14 @@ def show_games_in_progress(db_manager, sport_code, game_date):
         
         # Display in-progress games
         for _, game in in_progress_df.iterrows():
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col1:
-                st.write(f"**{game['away_team_id']} @ {game['home_team_id']}**")
-            with col2:
-                st.write(f"Score: {game.get('away_score', 0)}-{game.get('home_score', 0)}")
-            with col3:
-                st.write(f"Period: {game.get('period', 'N/A')}")
+            away_score = game.get('away_score')
+            home_score = game.get('home_score')
+            
+            # Only show score if we have it
+            if away_score is not None and home_score is not None:
+                st.write(f"**{game['away_team_id']} {away_score} @ {game['home_team_id']} {home_score}** - In Progress")
+            else:
+                st.write(f"**{game['away_team_id']} @ {game['home_team_id']}** - In Progress")
                 
     except Exception as e:
         st.warning(f"Could not load in-progress games: {str(e)}")
