@@ -62,8 +62,12 @@ class NHLDataCollector(BaseDataCollector):
                                     'full_name': team.get('fullName', team.get('name', '')),
                                     'logo': ''
                                 }
-                        self.logger.info(f"Initialized {len(self._team_id_map)} NHL teams via nhlpy")
-                        return
+                        # Only return if we actually got teams
+                        if len(self._team_id_map) > 0:
+                            self.logger.info(f"Initialized {len(self._team_id_map)} NHL teams via nhlpy")
+                            return
+                        else:
+                            self.logger.warning("NHL API returned empty team list, using fallback")
                 except AttributeError:
                     # If new API structure doesn't work, fallback
                     self.logger.info("NHL API wrapper method not available, using fallback")
@@ -295,14 +299,21 @@ class NHLDataCollector(BaseDataCollector):
                 home_score = home_team.get('score')
                 away_score = away_team.get('score')
 
+            # Convert team IDs to abbreviations
+            home_id_str = str(home_team.get('id', ''))
+            away_id_str = str(away_team.get('id', ''))
+            
+            home_abbrev = self._team_id_map.get(home_id_str, {}).get('abbreviation', home_id_str)
+            away_abbrev = self._team_id_map.get(away_id_str, {}).get('abbreviation', away_id_str)
+            
             return {
                 'sport': self.sport,
                 'league': self.league,
                 'game_id': str(game.get('id', '')),
                 'game_date': game_date,
-                'home_team_id': str(home_team.get('id', '')),
+                'home_team_id': home_abbrev,  # Use abbreviation
                 'home_team_name': home_team_name,
-                'away_team_id': str(away_team.get('id', '')),
+                'away_team_id': away_abbrev,  # Use abbreviation
                 'away_team_name': away_team_name,
                 'season': season_year,
                 'status': status,

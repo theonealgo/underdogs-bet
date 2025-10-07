@@ -144,15 +144,13 @@ class WNBADataCollector:
                         home_away = competitor.get('homeAway')
                         
                         if home_away == 'home':
-                            game_info['home_team_id'] = team.get('id')
-                            game_info['home_team'] = team.get('displayName')
-                            game_info['home_abbreviation'] = team.get('abbreviation')
+                            game_info['home_team_id'] = team.get('abbreviation', team.get('id'))  # Use abbreviation
+                            game_info['home_team_name'] = team.get('displayName')
                             if 'score' in competitor:
                                 game_info['home_score'] = competitor['score']
                         else:
-                            game_info['away_team_id'] = team.get('id')
-                            game_info['away_team'] = team.get('displayName')
-                            game_info['away_abbreviation'] = team.get('abbreviation')
+                            game_info['away_team_id'] = team.get('abbreviation', team.get('id'))  # Use abbreviation
+                            game_info['away_team_name'] = team.get('displayName')
                             if 'score' in competitor:
                                 game_info['away_score'] = competitor['score']
             
