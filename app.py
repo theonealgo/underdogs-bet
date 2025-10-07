@@ -362,15 +362,20 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                         # Check if we have a prediction for this game
                         if game_id in pred_map:
                             pred = pred_map[game_id]
-                            predicted_winner = str(pred.get('predicted_winner', home_team_id))
+                            predicted_winner = str(pred.get('predicted_winner', 'No Pick'))
                             win_prob_value = pred.get('win_probability')
                             win_prob = float(win_prob_value) if win_prob_value is not None else 0.5
                             
-                            # Determine home win probability based on who is predicted to win
-                            if predicted_winner == away_team_id:
-                                home_win_prob = 1 - win_prob
+                            # If probabilities are equal, no clear pick
+                            if abs(win_prob - 0.5) < 0.01:  # Within 1% of 50/50
+                                predicted_winner = 'No Pick'
+                                home_win_prob = 0.5
                             else:
-                                home_win_prob = win_prob
+                                # Determine home win probability based on who is predicted to win
+                                if predicted_winner == away_team_id:
+                                    home_win_prob = 1 - win_prob
+                                else:
+                                    home_win_prob = win_prob
                             
                             predictions.append({
                                 'game_id': game_id,
@@ -386,14 +391,14 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'predicted_away_score': None
                             })
                         else:
-                            # No prediction exists for this game - create a default one
+                            # No prediction exists for this game - create a default one with no pick
                             predictions.append({
                                 'game_id': game_id,
                                 'game_time': game_time,
                                 'game_date': game.get('game_date', prediction_date),
                                 'home_team': home_team_id,
                                 'away_team': away_team_id,
-                                'predicted_winner': home_team_id,
+                                'predicted_winner': 'No Pick',  # No trained model
                                 'home_win_probability': 0.5,
                                 'away_win_probability': 0.5,
                                 'predicted_total': None,
@@ -409,7 +414,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'game_date': date_str,
                                 'home_team_id': home_team_id,
                                 'away_team_id': away_team_id,
-                                'predicted_winner': home_team_id,
+                                'predicted_winner': None,  # Store as NULL when no pick
                                 'win_probability': 0.5,
                                 'predicted_total': None,
                                 'total_confidence': 0.5,
@@ -447,7 +452,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'game_date': prediction_date,
                                 'home_team': home_team_id,  # Use abbreviation
                                 'away_team': away_team_id,  # Use abbreviation
-                                'predicted_winner': home_team_id,
+                                'predicted_winner': 'No Pick',  # No trained model
                                 'home_win_probability': 0.5,
                                 'away_win_probability': 0.5,
                                 'predicted_total': None,
@@ -462,7 +467,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'game_date': date_str,
                                 'home_team_id': home_team_id,
                                 'away_team_id': away_team_id,
-                                'predicted_winner': home_team_id,  # Use abbreviation
+                                'predicted_winner': None,  # Store as NULL when no pick
                                 'win_probability': 0.5,
                                 'predicted_total': None,
                                 'total_confidence': 0.5,
@@ -614,7 +619,7 @@ def show_predictions_page(api, db_manager, sport_data_manager, sport_code):
                             'away_win_probability': 0.5,
                             'predicted_home_score': None,
                             'predicted_away_score': None,
-                            'predicted_winner': 'TBD - ML model training in progress'
+                            'predicted_winner': 'No Pick'  # No trained model available
                         })
         except Exception as e:
             st.error(f"Error loading predictions: {str(e)}")
