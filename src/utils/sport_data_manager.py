@@ -50,7 +50,7 @@ class SportDataManager:
             
             # NCAA Football collector
             from src.data_collectors.ncaaf_collector import NCAAFDataCollector
-            self._collectors['NCAA'] = {
+            self._collectors['NCAAF'] = {
                 'collector': NCAAFDataCollector()
             }
             
