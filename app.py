@@ -303,11 +303,27 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
             f"Paste {sport_code} game data here",
             height=150,
             key=f"debug_{sport_code}",
-            placeholder="Paste game matchups, times, and team names here..."
+            placeholder="Paste game matchups (e.g., 'Montreal @ Toronto', 'SEA @ DET')..."
         )
         if debug_data:
             st.code(debug_data)
-            st.info("Thanks! This helps debug the data collector issues.")
+            
+            # Parse the pasted data and create games
+            from src.utils.game_data_parser import parse_pasted_games
+            parsed_games = parse_pasted_games(debug_data, sport_code, st.session_state.prediction_date)
+            
+            if parsed_games:
+                st.success(f"✅ Parsed {len(parsed_games)} games from pasted data!")
+                # Store parsed games in database
+                try:
+                    games_df = pd.DataFrame(parsed_games)
+                    db_manager.store_games(games_df)
+                    st.info("Games saved to database. Refresh the page to see them.")
+                    st.button("🔄 Refresh", on_click=lambda: st.rerun())
+                except Exception as e:
+                    st.warning(f"Could not store games: {str(e)}")
+            else:
+                st.warning("No games found in pasted data. Make sure to use format like 'Team1 @ Team2'.")
     
     prediction_date = datetime.combine(st.session_state.prediction_date, datetime.min.time())
     
