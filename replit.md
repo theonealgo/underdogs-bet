@@ -97,4 +97,13 @@ Preferred communication style: Simple, everyday language.
 - Updated `SportDataManager` to automatically choose between Excel and API sources
 - Added `schedules/` directory with README for user-provided Excel schedules
 
+**NHL Prediction System (Oct 2025)**
+- Created NHL predictor with XGBoost models for winner and totals prediction
+- Trained models on 268 historical NHL games (Oct-Nov 2024)
+- Implemented feature engineering using team stats (win%, goals for/against, recent form)
+- Fixed data corruption issue: Convert numpy floats to Python floats before database storage to prevent BLOB corruption
+- Updated UI to display "Total: X.X" for NHL games (shows total goals) vs "X-X" for MLB games (shows individual scores)
+- Fixed display logic to handle zero scores correctly (uses `is not None` checks instead of truthy checks)
+- NHL predictions now show realistic probabilities (54-94% range) instead of flat 50% defaults
+
 The system is designed with modularity in mind, allowing for easy integration of additional sports leagues and data sources while maintaining the same architectural patterns.

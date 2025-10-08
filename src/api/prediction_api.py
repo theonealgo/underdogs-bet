@@ -23,12 +23,13 @@ class PredictionAPI:
         self.baseball_scraper = BaseballSavantScraper()
         # Note: OddsShark dependency removed
     
-    def get_todays_predictions(self, date: datetime = None) -> List[Dict]:
+    def get_todays_predictions(self, date: datetime = None, sport: str = 'MLB') -> List[Dict]:
         """
         Get predictions for today's games
         
         Args:
             date: Date to get predictions for (defaults to today)
+            sport: Sport code to filter games (defaults to 'MLB')
             
         Returns:
             List of prediction dictionaries
@@ -37,10 +38,10 @@ class PredictionAPI:
             if date is None:
                 date = datetime.now()
             
-            self.logger.info(f"Getting predictions for {date.date()}")
+            self.logger.info(f"Getting {sport} predictions for {date.date()}")
             
             # Get today's games from database
-            todays_games = self._get_todays_games(date)
+            todays_games = self._get_todays_games(date, sport)
             
             # If no games found, try to fetch from MLB API
             if todays_games.empty:
@@ -356,25 +357,26 @@ class PredictionAPI:
             self.logger.error(f"Error retraining models: {str(e)}")
             return {'error': str(e)}
     
-    def _get_todays_games(self, date: datetime) -> pd.DataFrame:
+    def _get_todays_games(self, date: datetime, sport: str = 'MLB') -> pd.DataFrame:
         """
         Get today's games from the database
         
         Args:
             date: Date to get games for
+            sport: Sport code to filter by (defaults to 'MLB')
             
         Returns:
             DataFrame with today's games
         """
         try:
-            # Get games from the games table for the specific date
+            # Get games from the games table for the specific date and sport
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 query = """
                     SELECT * FROM games 
-                    WHERE sport = 'MLB' AND date(game_date) = ?
+                    WHERE sport = ? AND date(game_date) = ?
                     ORDER BY game_id
                 """
-                todays_games = pd.read_sql_query(query, conn, params=[date.strftime('%Y-%m-%d')])
+                todays_games = pd.read_sql_query(query, conn, params=[sport, date.strftime('%Y-%m-%d')])
                 
                 if not todays_games.empty:
                     self.logger.info(f"Found {len(todays_games)} games in database for {date.date()}")

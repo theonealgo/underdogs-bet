@@ -332,7 +332,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
     with st.spinner("Loading predictions..."):
         try:
             if sport_code == "MLB":
-                predictions = api.get_todays_predictions(date=prediction_date)
+                predictions = api.get_todays_predictions(date=prediction_date, sport=sport_code)
             else:
                 # For non-MLB sports, use database-first approach
                 date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
@@ -458,8 +458,8 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                                     'home_team_id': home_team_id,
                                     'away_team_id': away_team_id,
                                     'predicted_winner': predicted_winner,
-                                    'win_probability': home_win_prob,
-                                    'predicted_total': predicted_total,
+                                    'win_probability': float(home_win_prob),  # Convert numpy float to Python float
+                                    'predicted_total': float(predicted_total) if predicted_total is not None else None,
                                     'model_version': '1.0',
                                     'key_factors': '[]'
                                 })
@@ -753,9 +753,10 @@ def show_upcoming_predictions(predictions, sport_code):
             win_prob_home = pred.get('home_win_probability', 0.5) * 100
             win_prob_away = pred.get('away_win_probability', 0.5) * 100
             
-            home_score = pred.get('predicted_home_score', 0)
-            away_score = pred.get('predicted_away_score', 0)
-            total_runs = home_score + away_score if home_score and away_score else 0
+            home_score = pred.get('predicted_home_score')
+            away_score = pred.get('predicted_away_score')
+            predicted_total = pred.get('predicted_total')
+            total_runs = home_score + away_score if home_score is not None and away_score is not None else 0
             
             # Get odds data if available
             away_odds = pred.get('away_odds')
@@ -795,12 +796,22 @@ def show_upcoming_predictions(predictions, sport_code):
             # Determine recommended bet
             recommended = determine_recommendation(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
             
+            # Determine predicted score display
+            if home_score is not None and away_score is not None:
+                # Individual scores available (MLB, etc.) - includes zero scores
+                score_display = f"{away_score:.0f}-{home_score:.0f}"
+            elif predicted_total is not None:
+                # Total available (NHL, etc.)
+                score_display = f"Total: {predicted_total:.1f}"
+            else:
+                score_display = "N/A"
+            
             display_data.append({
                 'Away Team': pred.get('away_team', ''),
                 'Away Win %': f"{win_prob_away:.1f}%",
                 'Home Team': pred.get('home_team', ''),
                 'Home Win %': f"{win_prob_home:.1f}%",
-                'Predicted Score': f"{away_score:.0f}-{home_score:.0f}" if home_score and away_score else "N/A"
+                'Predicted Score': score_display
             })
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
