@@ -91,14 +91,17 @@ class NHLPredictor:
         except Exception as e:
             self.logger.error(f"Error saving NHL models: {e}")
     
-    def create_features(self, games_df: pd.DataFrame) -> pd.DataFrame:
+    def create_features(self, games_df: pd.DataFrame, historical_games: pd.DataFrame = None) -> pd.DataFrame:
         """Create features for NHL games"""
         features_list = []
         
+        # Use historical_games if provided, otherwise use games_df
+        history_df = historical_games if historical_games is not None and not historical_games.empty else games_df
+        
         for idx, game in games_df.iterrows():
-            # Get team stats from recent games
-            home_stats = self._get_team_stats(game['home_team_id'], game['game_date'], games_df)
-            away_stats = self._get_team_stats(game['away_team_id'], game['game_date'], games_df)
+            # Get team stats from recent games using historical data
+            home_stats = self._get_team_stats(game['home_team_id'], game['game_date'], history_df)
+            away_stats = self._get_team_stats(game['away_team_id'], game['game_date'], history_df)
             
             features = {
                 # Home team features
@@ -131,10 +134,18 @@ class NHLPredictor:
     
     def _get_team_stats(self, team_id: str, current_date, games_df: pd.DataFrame) -> Dict:
         """Calculate team statistics from recent games"""
+        # Convert current_date to date object if it's a string
+        if isinstance(current_date, str):
+            current_date = pd.to_datetime(current_date).date()
+        
+        # Ensure game_date column is datetime for comparison
+        games_df = games_df.copy()
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'])
+        
         # Get team's games before current date
         team_games = games_df[
             ((games_df['home_team_id'] == team_id) | (games_df['away_team_id'] == team_id)) &
-            (games_df['game_date'] < current_date) &
+            (games_df['game_date'].dt.date < current_date) &
             (games_df['status'] == 'final')
         ].sort_values('game_date', ascending=False).head(10)  # Last 10 games
         
@@ -245,8 +256,8 @@ class NHLPredictor:
                 'status': 'scheduled'
             }])
             
-            # Create features
-            features_df = self.create_features(game_df)
+            # Create features using historical games for team stats
+            features_df = self.create_features(game_df, historical_games)
             
             if self.feature_names is None:
                 self.logger.error("No feature names available")

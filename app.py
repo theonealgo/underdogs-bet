@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 from src.data_storage.database import DatabaseManager
 from src.models.prediction_models import MLBPredictor
+from src.models.nhl_predictor import NHLPredictor
 from src.data_collectors.baseball_savant_scraper import BaseballSavantScraper
 from src.data_collectors.result_tracker import ResultTracker
 from src.models.performance_analyzer import PerformanceAnalyzer
@@ -29,6 +30,7 @@ from src.utils.sport_data_manager import SportDataManager
 def initialize_components():
     db_manager = DatabaseManager()
     predictor = MLBPredictor(db_manager=db_manager)
+    nhl_predictor = NHLPredictor(db_manager=db_manager)
     api = PredictionAPI(db_manager, predictor)
     sport_data_manager = SportDataManager()
     
@@ -37,7 +39,7 @@ def initialize_components():
     intelligent_retrainer = IntelligentRetrainer(db_manager, predictor)
     performance_visualizer = PerformanceVisualizer(db_manager)
     
-    return (db_manager, predictor, api, sport_data_manager, result_tracker, 
+    return (db_manager, predictor, nhl_predictor, api, sport_data_manager, result_tracker, 
             performance_analyzer, intelligent_retrainer, performance_visualizer)
 
 # Custom CSS for dratings.com-like styling
@@ -212,7 +214,7 @@ def main():
     apply_custom_css()
     
     # Initialize components
-    (db_manager, predictor, api, sport_data_manager, result_tracker, 
+    (db_manager, predictor, nhl_predictor, api, sport_data_manager, result_tracker, 
      performance_analyzer, intelligent_retrainer, performance_visualizer) = initialize_components()
     
     # Sport mapping (must match database sport codes and SportDataManager collector keys)
@@ -259,9 +261,9 @@ def main():
     sport_code = sport_mapping.get(st.session_state.selected_sport_page, "MLB")
     
     # Show sport-specific page with all information
-    show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_code, st.session_state.selected_sport_page)
+    show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_predictor, sport_code, st.session_state.selected_sport_page)
 
-def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_code, sport_name):
+def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_predictor, sport_code, sport_name):
     """Comprehensive sport page with all prediction information"""
     
     # Date navigation - use UTC-5 (EST/CDT) to match US timezones
@@ -407,36 +409,91 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, sport_c
                                 'predicted_away_score': None
                             })
                         else:
-                            # No prediction exists for this game - create a default one with no pick
-                            predictions.append({
-                                'game_id': game_id,
-                                'game_time': game_time,
-                                'game_date': game.get('game_date', prediction_date),
-                                'home_team': home_team_id,
-                                'away_team': away_team_id,
-                                'predicted_winner': 'No Pick',  # No trained model
-                                'home_win_probability': 0.5,
-                                'away_win_probability': 0.5,
-                                'predicted_total': None,
-                                'predicted_home_score': None,
-                                'predicted_away_score': None
-                            })
-                            
-                            # Also create a prediction record in the database
-                            pred_data.append({
-                                'sport': sport_code,
-                                'league': sport_code,
-                                'game_id': game_id,
-                                'game_date': date_str,
-                                'home_team_id': home_team_id,
-                                'away_team_id': away_team_id,
-                                'predicted_winner': None,  # Store as NULL when no pick
-                                'win_probability': 0.5,
-                                'predicted_total': None,
-                                'total_confidence': 0.5,
-                                'model_version': 'default_v1',
-                                'key_factors': '[]'
-                            })
+                            # No prediction exists for this game
+                            # For NHL, generate prediction using NHL predictor
+                            if sport_code == 'NHL' and nhl_predictor.is_trained:
+                                # Get historical games from database for feature creation
+                                with db_manager._get_connection() as conn:
+                                    historical_query = """
+                                        SELECT * FROM games 
+                                        WHERE sport = 'NHL' 
+                                        AND status = 'final'
+                                        AND game_date < ?
+                                        ORDER BY game_date DESC
+                                        LIMIT 500
+                                    """
+                                    historical_games = pd.read_sql_query(historical_query, conn, params=[date_str])
+                                
+                                nhl_pred = nhl_predictor.predict_game(
+                                    home_team_id,
+                                    away_team_id,
+                                    pd.to_datetime(date_str).date(),
+                                    historical_games
+                                )
+                                
+                                predicted_winner = nhl_pred['predicted_winner']
+                                home_win_prob = nhl_pred['home_win_probability']
+                                predicted_total = nhl_pred['predicted_total']
+                                
+                                predictions.append({
+                                    'game_id': game_id,
+                                    'game_time': game_time,
+                                    'game_date': game.get('game_date', prediction_date),
+                                    'home_team': home_team_id,
+                                    'away_team': away_team_id,
+                                    'predicted_winner': predicted_winner,
+                                    'home_win_probability': home_win_prob,
+                                    'away_win_probability': 1 - home_win_prob,
+                                    'predicted_total': predicted_total,
+                                    'predicted_home_score': None,
+                                    'predicted_away_score': None
+                                })
+                                
+                                # Store NHL prediction in database
+                                pred_data.append({
+                                    'sport': sport_code,
+                                    'league': sport_code,
+                                    'game_id': game_id,
+                                    'game_date': date_str,
+                                    'home_team_id': home_team_id,
+                                    'away_team_id': away_team_id,
+                                    'predicted_winner': predicted_winner,
+                                    'win_probability': home_win_prob,
+                                    'predicted_total': predicted_total,
+                                    'model_version': '1.0',
+                                    'key_factors': '[]'
+                                })
+                            else:
+                                # For other sports or if NHL model not trained, use default
+                                predictions.append({
+                                    'game_id': game_id,
+                                    'game_time': game_time,
+                                    'game_date': game.get('game_date', prediction_date),
+                                    'home_team': home_team_id,
+                                    'away_team': away_team_id,
+                                    'predicted_winner': 'No Pick',  # No trained model
+                                    'home_win_probability': 0.5,
+                                    'away_win_probability': 0.5,
+                                    'predicted_total': None,
+                                    'predicted_home_score': None,
+                                    'predicted_away_score': None
+                                })
+                                
+                                # Also create a prediction record in the database
+                                pred_data.append({
+                                    'sport': sport_code,
+                                    'league': sport_code,
+                                    'game_id': game_id,
+                                    'game_date': date_str,
+                                    'home_team_id': home_team_id,
+                                    'away_team_id': away_team_id,
+                                    'predicted_winner': None,  # Store as NULL when no pick
+                                    'win_probability': 0.5,
+                                    'predicted_total': None,
+                                    'total_confidence': 0.5,
+                                    'model_version': 'default_v1',
+                                    'key_factors': '[]'
+                                })
                     
                     # Store new predictions if any were created
                     if pred_data:
