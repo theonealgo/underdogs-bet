@@ -5,6 +5,8 @@ Sport-specific data management utility for multi-sport prediction system.
 import logging
 from typing import Dict, Any, Optional
 import pandas as pd
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +17,13 @@ class SportDataManager:
     regardless of the sport.
     """
     
-    def __init__(self):
+    def __init__(self, excel_schedules_dir: str = "schedules"):
         self._collectors = {}
+        self._excel_schedules_dir = excel_schedules_dir
         self._initialize_collectors()
+        
+        # Create schedules directory if it doesn't exist
+        Path(self._excel_schedules_dir).mkdir(parents=True, exist_ok=True)
     
     def _initialize_collectors(self):
         """Initialize all sport-specific data collectors."""
@@ -77,21 +83,41 @@ class SportDataManager:
             logger.warning("Odds collector not available")
             self._odds_collector = None
     
-    def get_todays_games(self, sport_code: str, date: Optional[str] = None) -> pd.DataFrame:
+    def get_todays_games(self, sport_code: str, date: Optional[str] = None, use_excel: Optional[bool] = None) -> pd.DataFrame:
         """
         Get games for the specified sport and date.
+        
+        Automatically chooses between API (for playoffs) and Excel (for regular season):
+        - First tries to load from Excel if available
+        - Falls back to API if Excel not found or use_excel=False
         
         Args:
             sport_code: Sport code (MLB, NBA, NFL, etc.)
             date: Date in YYYY-MM-DD format. If None, uses today.
+            use_excel: Force Excel (True) or API (False). If None, auto-detects.
         
         Returns:
             DataFrame with games for the specified date
         """
         try:
+            # Try Excel first if not explicitly disabled
+            if use_excel is not False:
+                excel_games = self._get_games_from_excel(sport_code, date)
+                if not excel_games.empty:
+                    logger.info(f"Loaded {len(excel_games)} {sport_code} games from Excel")
+                    return excel_games
+                elif use_excel is True:
+                    # User explicitly requested Excel but it's not available
+                    logger.warning(f"Excel schedule requested for {sport_code} but not found")
+                    return pd.DataFrame()
+            
+            # Fall back to API
             if sport_code == 'MLB':
                 collector = self._collectors['MLB']['schedule']
-                return collector.get_todays_games(date=date)
+                games = collector.get_todays_games(date=date)
+                if not games.empty:
+                    logger.info(f"Loaded {len(games)} {sport_code} games from API")
+                return games
             elif sport_code in self._collectors:
                 collector = self._collectors[sport_code]['collector']
                 # Pass the date to the collector (NBA and NFL support date filtering now)
@@ -103,7 +129,10 @@ class SportDataManager:
                             date_obj = pd.to_datetime(date).date()
                         else:
                             date_obj = date
-                    return collector.get_todays_games(game_date=date_obj)
+                    games = collector.get_todays_games(game_date=date_obj)
+                    if not games.empty:
+                        logger.info(f"Loaded {len(games)} {sport_code} games from API")
+                    return games
                 else:
                     logger.warning(f"{sport_code} collector doesn't have get_todays_games method")
                     return pd.DataFrame()
@@ -113,6 +142,69 @@ class SportDataManager:
                 
         except Exception as e:
             logger.error(f"Error fetching {sport_code} games: {e}")
+            return pd.DataFrame()
+    
+    def _get_games_from_excel(self, sport_code: str, date: Optional[str] = None) -> pd.DataFrame:
+        """
+        Load games from Excel schedule file.
+        
+        Looks for Excel files in schedules/ directory:
+        - schedules/MLB.xlsx, schedules/NBA.xlsx, etc.
+        - schedules/MLB_2025.xlsx for season-specific files
+        
+        Args:
+            sport_code: Sport code (MLB, NBA, etc.)
+            date: Date in YYYY-MM-DD format
+        
+        Returns:
+            DataFrame with games for the specified date
+        """
+        try:
+            # Get date for filtering
+            if date:
+                target_date = pd.to_datetime(date).date()
+            else:
+                target_date = pd.Timestamp.now().date()
+            
+            # Try different Excel file naming patterns
+            year = target_date.year
+            possible_files = [
+                f"{sport_code}.xlsx",
+                f"{sport_code}_{year}.xlsx",
+                f"{sport_code.lower()}.xlsx",
+                f"{sport_code.lower()}_{year}.xlsx"
+            ]
+            
+            excel_file = None
+            for filename in possible_files:
+                filepath = os.path.join(self._excel_schedules_dir, filename)
+                if os.path.exists(filepath):
+                    excel_file = filepath
+                    break
+            
+            if not excel_file:
+                return pd.DataFrame()
+            
+            # Load Excel schedule
+            from src.utils.excel_schedule_reader import ExcelScheduleReader
+            reader = ExcelScheduleReader(excel_file)
+            schedule_df = reader.read_schedule(sport_code)
+            
+            if schedule_df.empty:
+                return pd.DataFrame()
+            
+            # Filter to requested date
+            schedule_df['game_date'] = pd.to_datetime(schedule_df['game_date']).dt.date
+            games_for_date = schedule_df[schedule_df['game_date'] == target_date]
+            
+            # Ensure we return a DataFrame
+            if isinstance(games_for_date, pd.DataFrame):
+                return games_for_date
+            else:
+                return pd.DataFrame()
+            
+        except Exception as e:
+            logger.debug(f"Could not load Excel schedule for {sport_code}: {e}")
             return pd.DataFrame()
     
     def update_sport_data(self, sport_code: str, days: int = 7) -> Dict[str, Any]:

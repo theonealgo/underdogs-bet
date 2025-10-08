@@ -136,6 +136,17 @@ class MLBScheduleCollector:
             else:
                 game_date = datetime.now().strftime('%Y-%m-%d')
             
+            # Season year
+            season_year = game.get('season')
+            if season_year:
+                season_year = int(str(season_year)[:4])
+            else:
+                season_year = datetime.now().year
+            
+            # Detect playoff games (gameType: R=regular season, D=division series, L=league championship, W=world series, etc.)
+            game_type = game.get('gameType', 'R')
+            is_playoff = (game_type != 'R')  # Anything other than regular season is playoff
+            
             # Teams
             teams = game.get('teams', {})
             home_team = teams.get('home', {}).get('team', {})
@@ -169,10 +180,14 @@ class MLBScheduleCollector:
                 'away_team_id': away_team_id,
                 'home_team_name': home_team.get('name', home_team_id),
                 'away_team_name': away_team.get('name', away_team_id),
+                'season': season_year,
                 'status': detailed_state,
                 'status_code': status_code,
                 'home_score': home_score,
                 'away_score': away_score,
+                'is_playoff': is_playoff,
+                'game_type': game_type,
+                'series_description': game.get('seriesDescription', ''),
                 'venue': game.get('venue', {}).get('name', ''),
                 'game_time': game.get('gameDate', ''),
                 'inning': game.get('linescore', {}).get('currentInning', None),

@@ -190,18 +190,23 @@ class NHLDataCollector(BaseDataCollector):
                     # Get daily schedule using NHL API
                     date_str = current_date.strftime('%Y-%m-%d')
                     
-                    # Try using the API wrapper first (if available)
-                    try:
-                        daily_games = None
-                        if self.nhl_api is not None:
-                            # API structure changed - nhlpy no longer has get_schedule method
-                            # Fall through to direct API call
-                            raise Exception("NHL API wrapper method not available")
-                        else:
-                            raise Exception("NHL API wrapper not available")
+                    # Use direct API call
+                    url = f"{self.api_web_base}schedule/{date_str}"
+                    response = requests.get(url, timeout=10)
+                    
+                    if response.status_code == 200:
+                        daily_data = response.json()
                         
-                        if daily_games and 'gameWeek' in daily_games:
-                            for week in daily_games['gameWeek']:
+                        if 'gameWeek' in daily_data:
+                            for week in daily_data['gameWeek']:
+                                # Check if this day matches our requested date
+                                week_date_str = week.get('date')
+                                if week_date_str:
+                                    week_date = datetime.strptime(week_date_str, '%Y-%m-%d').date()
+                                    # Only process games that match the requested date
+                                    if week_date != current_date:
+                                        continue
+                                
                                 # Handle different API response structures
                                 if isinstance(week.get('games'), list):
                                     # Direct games list
@@ -209,40 +214,13 @@ class NHLDataCollector(BaseDataCollector):
                                         schedule_data.append(self._parse_schedule_game(game, current_date))
                                 else:
                                     # Nested structure with date groups
-                                    for game_date in week.get('games', []):
-                                        if isinstance(game_date, dict) and 'games' in game_date:
-                                            for game in game_date.get('games', []):
+                                    for day in week.get('games', []):
+                                        if isinstance(day, dict) and 'games' in day:
+                                            for game in day.get('games', []):
                                                 schedule_data.append(self._parse_schedule_game(game, current_date))
                                         else:
                                             # Direct game object
-                                            schedule_data.append(self._parse_schedule_game(game_date, current_date))
-                    
-                    except Exception as api_error:
-                        self.logger.warning(f"API wrapper failed for {date_str}, trying direct API: {str(api_error)}")
-                        
-                        # Fallback to direct API call
-                        url = f"{self.api_web_base}schedule/{date_str}"
-                        response = requests.get(url, timeout=10)
-                        
-                        if response.status_code == 200:
-                            daily_data = response.json()
-                            
-                            if 'gameWeek' in daily_data:
-                                for week in daily_data['gameWeek']:
-                                    # Handle different API response structures
-                                    if isinstance(week.get('games'), list):
-                                        # Direct games list
-                                        for game in week.get('games', []):
-                                            schedule_data.append(self._parse_schedule_game(game, current_date))
-                                    else:
-                                        # Nested structure with date groups
-                                        for day in week.get('games', []):
-                                            if isinstance(day, dict) and 'games' in day:
-                                                for game in day.get('games', []):
-                                                    schedule_data.append(self._parse_schedule_game(game, current_date))
-                                            else:
-                                                # Direct game object
-                                                schedule_data.append(self._parse_schedule_game(day, current_date))
+                                            schedule_data.append(self._parse_schedule_game(day, current_date))
                 
                 except Exception as e:
                     self.logger.warning(f"Error getting games for {current_date}: {str(e)}")
@@ -278,6 +256,10 @@ class NHLDataCollector(BaseDataCollector):
                 status = 'scheduled'
             elif game_state in ['PPD', 'SUSP']:
                 status = 'postponed'
+            
+            # Detect playoff games (gameType: 2=regular season, 3=playoffs)
+            game_type = game.get('gameType', 2)
+            is_playoff = (game_type == 3)
             
             # Get season year from game date
             season_year = self._get_season_year_from_date(game_date)
@@ -319,9 +301,11 @@ class NHLDataCollector(BaseDataCollector):
                 'status': status,
                 'home_score': home_score,
                 'away_score': away_score,
+                'is_playoff': is_playoff,
                 'source_keys': json.dumps({
                     'nhl_game_id': str(game.get('id', '')),
                     'game_state': game.get('gameState', ''),
+                    'game_type': game_type,
                     'season_string': self._get_nhl_season_string(season_year)
                 })
             }
