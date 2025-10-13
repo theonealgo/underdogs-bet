@@ -439,15 +439,16 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                             date_patterns.append(f'{d.day:02d}/{d.month:02d}/{d.year}')
                         
                         # Create query with multiple date patterns
-                        like_clauses = ' OR '.join(['game_date LIKE ?' for _ in date_patterns])
+                        games_like_clauses = ' OR '.join(['g.game_date LIKE ?' for _ in date_patterns])
+                        pred_like_clauses = ' OR '.join(['p.game_date LIKE ?' for _ in date_patterns])
                         pattern_params = [f'{p}%' for p in date_patterns]
                         
                         games_query = f"""
-                            SELECT game_id, sport, home_team_id, away_team_id, game_date, status
-                            FROM games
-                            WHERE ({like_clauses})
-                            AND sport = ?
-                            ORDER BY game_date
+                            SELECT g.game_id, g.sport, g.home_team_id, g.away_team_id, g.game_date, g.status
+                            FROM games g
+                            WHERE ({games_like_clauses})
+                            AND g.sport = ?
+                            ORDER BY g.game_date
                         """
                         games_df = pd.read_sql_query(games_query, conn, params=pattern_params + [sport_code])
                         
@@ -456,7 +457,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                             SELECT p.*, g.home_team_id, g.away_team_id
                             FROM predictions p
                             LEFT JOIN games g ON p.game_id = g.game_id
-                            WHERE ({like_clauses})
+                            WHERE ({pred_like_clauses})
                             AND p.sport = ?
                             ORDER BY p.game_date
                         """
