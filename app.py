@@ -272,6 +272,14 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
         us_now = datetime.now() - timedelta(hours=5)
         st.session_state.prediction_date = us_now.date()
     
+    # View mode selector
+    view_mode = st.radio(
+        "View Mode",
+        ["Single Day", "All Upcoming Games"],
+        horizontal=True,
+        key=f"view_mode_{sport_code}"
+    )
+    
     col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
     
     with col1:
@@ -297,6 +305,49 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
     
     # Section 1: Upcoming Games
     st.markdown("## Upcoming Games")
+    
+    # Excel/CSV Upload Section
+    with st.expander("📁 Upload Schedule (Excel/CSV)", expanded=False):
+        uploaded_file = st.file_uploader(
+            f"Upload {sport_code} schedule (Excel or CSV)", 
+            type=['xlsx', 'xls', 'csv'],
+            key=f"schedule_upload_{sport_code}"
+        )
+        
+        if uploaded_file:
+            try:
+                import tempfile
+                import os
+                
+                # Save uploaded file temporarily
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_path = tmp_file.name
+                
+                st.info(f"Processing {uploaded_file.name}...")
+                
+                # Run universal predictor
+                import subprocess
+                result = subprocess.run(
+                    ['python', 'universal_sports_predictor.py', sport_code, tmp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                
+                if result.returncode == 0:
+                    st.success(f"✅ Successfully loaded schedule and generated predictions!")
+                    st.info("Refresh the page to see predictions")
+                    if st.button("🔄 Refresh Now"):
+                        st.rerun()
+                else:
+                    st.error(f"Error: {result.stderr}")
+                
+                # Clean up temp file
+                os.unlink(tmp_path)
+                
+            except Exception as e:
+                st.error(f"Error processing file: {str(e)}")
     
     # Debug section for user to paste real game data
     with st.expander("🔧 Debug: Paste Real Game Data Here", expanded=False):
@@ -337,27 +388,52 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                 # For non-MLB sports, use database-first approach
                 date_str = st.session_state.prediction_date.strftime('%Y-%m-%d')
                 
-                # FIRST: Check if games exist in the database for this date
+                # FIRST: Check if games exist in the database
                 with db_manager._get_connection() as conn:
-                    games_query = """
-                        SELECT game_id, sport, home_team_id, away_team_id, game_date, status
-                        FROM games
-                        WHERE DATE(game_date) = ?
-                        AND sport = ?
-                        ORDER BY game_date
-                    """
-                    games_df = pd.read_sql_query(games_query, conn, params=[date_str, sport_code])
-                    
-                    # Also get predictions if they exist
-                    pred_query = """
-                        SELECT p.*, g.home_team_id, g.away_team_id
-                        FROM predictions p
-                        LEFT JOIN games g ON p.game_id = g.game_id
-                        WHERE DATE(p.game_date) = ?
-                        AND p.sport = ?
-                        ORDER BY p.game_date
-                    """
-                    predictions_df = pd.read_sql_query(pred_query, conn, params=[date_str, sport_code])
+                    if view_mode == "All Upcoming Games":
+                        # Show all future games
+                        games_query = """
+                            SELECT game_id, sport, home_team_id, away_team_id, game_date, status
+                            FROM games
+                            WHERE sport = ?
+                            AND (status = 'Scheduled' OR status IS NULL OR DATE(game_date) >= DATE('now'))
+                            ORDER BY game_date
+                            LIMIT 100
+                        """
+                        games_df = pd.read_sql_query(games_query, conn, params=[sport_code])
+                        
+                        # Get all predictions for these games
+                        pred_query = """
+                            SELECT p.*, g.home_team_id, g.away_team_id
+                            FROM predictions p
+                            LEFT JOIN games g ON p.game_id = g.game_id
+                            WHERE p.sport = ?
+                            AND (g.status = 'Scheduled' OR g.status IS NULL OR DATE(p.game_date) >= DATE('now'))
+                            ORDER BY p.game_date
+                            LIMIT 100
+                        """
+                        predictions_df = pd.read_sql_query(pred_query, conn, params=[sport_code])
+                    else:
+                        # Show only games for selected date
+                        games_query = """
+                            SELECT game_id, sport, home_team_id, away_team_id, game_date, status
+                            FROM games
+                            WHERE DATE(game_date) = ?
+                            AND sport = ?
+                            ORDER BY game_date
+                        """
+                        games_df = pd.read_sql_query(games_query, conn, params=[date_str, sport_code])
+                        
+                        # Also get predictions if they exist
+                        pred_query = """
+                            SELECT p.*, g.home_team_id, g.away_team_id
+                            FROM predictions p
+                            LEFT JOIN games g ON p.game_id = g.game_id
+                            WHERE DATE(p.game_date) = ?
+                            AND p.sport = ?
+                            ORDER BY p.game_date
+                        """
+                        predictions_df = pd.read_sql_query(pred_query, conn, params=[date_str, sport_code])
                 
                 predictions = []
                 
