@@ -191,12 +191,18 @@ def train_and_predict(sport: str, df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"Generating predictions for {len(df)} games...")
     predictions = predictor.predict_multiple_games(df)
     
-    # Merge predictions with original data
+    # Merge predictions with original data using index to avoid duplicate matchup explosion
     pred_df = pd.DataFrame(predictions)
-    result_df = df.merge(pred_df[['home_team', 'away_team', 'elo_home_prob', 
-                                    'glmnet_home_prob', 'xgboost_home_prob',
-                                    'blended_home_prob', 'predicted_winner', 'confidence']], 
-                          on=['home_team', 'away_team'], how='left')
+    pred_df.index = df.index  # Align indices
+    
+    # Add prediction columns directly to avoid merge issues with duplicate matchups
+    result_df = df.copy()
+    result_df['elo_home_prob'] = pred_df['elo_home_prob']
+    result_df['glmnet_home_prob'] = pred_df['glmnet_home_prob']
+    result_df['xgboost_home_prob'] = pred_df['xgboost_home_prob']
+    result_df['blended_home_prob'] = pred_df['blended_home_prob']
+    result_df['predicted_winner'] = pred_df['predicted_winner']
+    result_df['confidence'] = pred_df['confidence']
     
     # Evaluate on test set
     test_results = result_df[result_df.index.isin(test_df.index)].copy()
@@ -225,33 +231,41 @@ def save_to_database(df: pd.DataFrame, sport: str):
     try:
         db = DatabaseManager()
         
-        # Prepare games data
+        # Prepare games and predictions data together with consistent IDs
         games_data = []
-        for _, row in df.iterrows():
+        pred_data = []
+        
+        for idx, row in df.iterrows():
+            # Create consistent game_id using match_id or row index
+            match_id = row.get('match_id', idx)
+            game_id = f"{sport}_{match_id}"
+            
+            # Parse date - use today's date as fallback
+            game_date = row.get('date', '')
+            if not game_date or pd.isna(game_date) or game_date == '':
+                # Use today's date as fallback to avoid invalid dates
+                from datetime import datetime
+                game_date = datetime.now().strftime('%Y-%m-%d')
+            
+            # Store game data
             game = {
                 'sport': sport,
                 'league': sport,
-                'game_id': f"{sport}_{row.get('match_id', row.name)}",
-                'game_date': row.get('date', ''),
+                'game_id': game_id,
+                'game_date': game_date,
                 'home_team_id': row['home_team'],
                 'away_team_id': row['away_team'],
                 'status': 'Final' if row.get('result') in ['H', 'A', 'D'] else 'Scheduled'
             }
             games_data.append(game)
-        
-        games_df = pd.DataFrame(games_data)
-        db.store_games(games_df)
-        logger.info(f"Stored {len(games_df)} games in database")
-        
-        # Prepare predictions data
-        pred_data = []
-        for _, row in df.iterrows():
+            
+            # Store prediction data with same game_id
             if 'blended_home_prob' in row:
                 pred = {
                     'sport': sport,
                     'league': sport,
-                    'game_id': f"{sport}_{row.get('match_id', row.name)}",
-                    'game_date': row.get('date', ''),
+                    'game_id': game_id,  # Use same game_id as games table
+                    'game_date': game_date,
                     'home_team_id': row['home_team'],
                     'away_team_id': row['away_team'],
                     'predicted_winner': row['predicted_winner'],
@@ -260,10 +274,16 @@ def save_to_database(df: pd.DataFrame, sport: str):
                 }
                 pred_data.append(pred)
         
+        # Store games
+        if games_data:
+            games_df = pd.DataFrame(games_data)
+            db.store_games(games_df)
+            logger.info(f"Stored {len(games_df)} games in database")
+        
+        # Store predictions
         if pred_data:
-            pred_df = pd.DataFrame(pred_data)
-            db.store_predictions(pred_df)
-            logger.info(f"Stored {len(pred_df)} predictions in database")
+            db.store_predictions(pred_data)
+            logger.info(f"Stored {len(pred_data)} predictions in database")
         
     except Exception as e:
         logger.error(f"Error saving to database: {e}")

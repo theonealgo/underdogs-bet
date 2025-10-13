@@ -89,6 +89,17 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Updates (October 2025)
 
+**Universal Ensemble Prediction System (Oct 13, 2025)**
+- Created universal ensemble predictor using **Elo Ratings + GLMNet + XGBoost**
+- Blended ensemble with optimized weights: 30% Elo + 35% GLMNet + 35% XGBoost
+- Works with **all sports**: MLB, NFL, NBA, NHL, NCAA Football, NCAA Basketball, WNBA
+- CSV-based approach for easy data import (auto-detects columns)
+- Handles multiple result formats: scores ("24-20"), H/A, Home/Away
+- Model persistence: Trained models saved to `models/{sport}_ensemble.pkl`
+- NFL testing: 78% XGBoost accuracy, 61% GLMNet accuracy on 64-game training set
+- Database integration: Automatically stores games and predictions
+- Usage: `python universal_sports_predictor.py <SPORT> <csv_file>`
+
 **Dual-Source Scheduling System**
 - Fixed NHL collector to properly filter games by date (was returning full week instead of single day)
 - Fixed MLB collector to detect playoff games using gameType field
