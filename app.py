@@ -428,26 +428,33 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                         """
                         predictions_df = pd.read_sql_query(pred_query, conn, params=[sport_code])
                     else:
-                        # Show only games for selected date
+                        # Show only games for selected date - handle both date formats
+                        day = st.session_state.prediction_date.day
+                        month = st.session_state.prediction_date.month
+                        year = st.session_state.prediction_date.year
+                        
+                        # Match DD/MM/YYYY format (like "13/10/2025 00:20")
+                        date_pattern = f'{day:02d}/{month:02d}/{year}'
+                        
                         games_query = """
                             SELECT game_id, sport, home_team_id, away_team_id, game_date, status
                             FROM games
-                            WHERE DATE(game_date) = ?
+                            WHERE (game_date LIKE ? OR DATE(game_date) = ?)
                             AND sport = ?
                             ORDER BY game_date
                         """
-                        games_df = pd.read_sql_query(games_query, conn, params=[date_str, sport_code])
+                        games_df = pd.read_sql_query(games_query, conn, params=[f'{date_pattern}%', date_str, sport_code])
                         
                         # Also get predictions if they exist
                         pred_query = """
                             SELECT p.*, g.home_team_id, g.away_team_id
                             FROM predictions p
                             LEFT JOIN games g ON p.game_id = g.game_id
-                            WHERE DATE(p.game_date) = ?
+                            WHERE (p.game_date LIKE ? OR DATE(p.game_date) = ?)
                             AND p.sport = ?
                             ORDER BY p.game_date
                         """
-                        predictions_df = pd.read_sql_query(pred_query, conn, params=[date_str, sport_code])
+                        predictions_df = pd.read_sql_query(pred_query, conn, params=[f'{date_pattern}%', date_str, sport_code])
                 
                 predictions = []
                 
