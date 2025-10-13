@@ -198,7 +198,7 @@ def train_and_predict(sport: str, df: pd.DataFrame) -> pd.DataFrame:
     # Add prediction columns directly to avoid merge issues with duplicate matchups
     result_df = df.copy()
     result_df['elo_home_prob'] = pred_df['elo_home_prob']
-    result_df['glmnet_home_prob'] = pred_df['glmnet_home_prob']
+    result_df['logistic_home_prob'] = pred_df['logistic_home_prob']
     result_df['xgboost_home_prob'] = pred_df['xgboost_home_prob']
     result_df['blended_home_prob'] = pred_df['blended_home_prob']
     result_df['predicted_winner'] = pred_df['predicted_winner']
@@ -271,7 +271,7 @@ def save_to_database(df: pd.DataFrame, sport: str):
                     'predicted_winner': row['predicted_winner'],
                     'win_probability': float(row['blended_home_prob']),
                     'elo_home_prob': float(row.get('elo_home_prob', 0.5)),
-                    'logistic_home_prob': float(row.get('glmnet_home_prob', 0.5)),
+                    'logistic_home_prob': float(row.get('logistic_home_prob', 0.5)),
                     'xgboost_home_prob': float(row.get('xgboost_home_prob', 0.5)),
                     'model_version': 'ensemble_v1'
                 }

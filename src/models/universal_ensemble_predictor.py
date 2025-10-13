@@ -89,7 +89,7 @@ class UniversalSportsEnsemble:
         
         # Logistic Regression (simpler, more reliable)
         from sklearn.linear_model import LogisticRegression
-        self.glmnet_model = LogisticRegression(
+        self.logistic_model = LogisticRegression(
             penalty='l2',
             C=1.0,
             max_iter=1000,
@@ -112,7 +112,7 @@ class UniversalSportsEnsemble:
         # Ensemble weights
         self.ensemble_weights = {
             'elo': 0.3,
-            'glmnet': 0.35,
+            'logistic': 0.35,
             'xgboost': 0.35
         }
     
@@ -199,8 +199,8 @@ class UniversalSportsEnsemble:
             
             # Train Logistic Regression
             self.logger.info("Training Logistic Regression...")
-            self.glmnet_model.fit(X_scaled, y)
-            glmnet_score = self.glmnet_model.score(X_scaled, y)
+            self.logistic_model.fit(X_scaled, y)
+            logistic_score = self.logistic_model.score(X_scaled, y)
             
             # Train XGBoost
             self.logger.info("Training XGBoost...")
@@ -212,7 +212,7 @@ class UniversalSportsEnsemble:
             results = {
                 'sport': self.sport,
                 'games_trained': len(features_df),
-                'glmnet_accuracy': float(glmnet_score),
+                'logistic_accuracy': float(logistic_score),
                 'xgboost_accuracy': float(xgb_score),
                 'teams': len(self.elo_system.ratings)
             }
@@ -253,16 +253,16 @@ class UniversalSportsEnsemble:
         # ML predictions
         if self.is_trained:
             X_scaled = self.scaler.transform(X)
-            glmnet_prob = self.glmnet_model.predict_proba(X_scaled)[0][1]
+            logistic_prob = self.logistic_model.predict_proba(X_scaled)[0][1]
             xgb_prob = self.xgb_model.predict_proba(X_scaled)[0][1]
         else:
-            glmnet_prob = elo_prob
+            logistic_prob = elo_prob
             xgb_prob = elo_prob
         
         # Blended prediction
         blended_prob = (
             self.ensemble_weights['elo'] * elo_prob +
-            self.ensemble_weights['glmnet'] * glmnet_prob +
+            self.ensemble_weights['logistic'] * logistic_prob +
             self.ensemble_weights['xgboost'] * xgb_prob
         )
         
@@ -273,7 +273,7 @@ class UniversalSportsEnsemble:
             'home_team': home_team,
             'away_team': away_team,
             'elo_home_prob': float(elo_prob),
-            'glmnet_home_prob': float(glmnet_prob),
+            'logistic_home_prob': float(logistic_prob),
             'xgboost_home_prob': float(xgb_prob),
             'blended_home_prob': float(blended_prob),
             'predicted_winner': predicted_winner,
@@ -307,7 +307,7 @@ class UniversalSportsEnsemble:
             'sport': self.sport,
             'elo_ratings': self.elo_system.ratings,
             'k_factor': self.elo_system.k_factor,
-            'glmnet_model': self.glmnet_model,
+            'logistic_model': self.logistic_model,
             'xgb_model': self.xgb_model,
             'scaler': self.scaler,
             'ensemble_weights': self.ensemble_weights,
@@ -327,10 +327,21 @@ class UniversalSportsEnsemble:
         self.sport = model_data['sport']
         self.elo_system.ratings = model_data['elo_ratings']
         self.elo_system.k_factor = model_data['k_factor']
-        self.glmnet_model = model_data['glmnet_model']
+        
+        # Handle backward compatibility with old glmnet models
+        if 'logistic_model' in model_data:
+            self.logistic_model = model_data['logistic_model']
+        elif 'glmnet_model' in model_data:
+            self.logistic_model = model_data['glmnet_model']
+            
         self.xgb_model = model_data['xgb_model']
         self.scaler = model_data['scaler']
         self.ensemble_weights = model_data['ensemble_weights']
+        
+        # Update old ensemble weights if using glmnet key
+        if 'glmnet' in self.ensemble_weights:
+            self.ensemble_weights['logistic'] = self.ensemble_weights.pop('glmnet')
+            
         self.is_trained = model_data['is_trained']
         
         self.logger.info(f"Model loaded from {filepath}")
