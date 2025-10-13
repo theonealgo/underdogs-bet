@@ -39,16 +39,16 @@ def detect_columns(df: pd.DataFrame) -> dict:
     
     mapping = {}
     
-    # Detect home team
-    for pattern in ['home team', 'home_team', 'hometeam', 'home']:
-        if pattern in col_lower:
-            mapping['home_team'] = col_lower[pattern]
+    # Detect home team (partial match for flexibility)
+    for col_name_lower, col_name in col_lower.items():
+        if 'home' in col_name_lower and 'home_team' not in mapping:
+            mapping['home_team'] = col_name
             break
     
-    # Detect away team
-    for pattern in ['away team', 'away_team', 'awayteam', 'away', 'visitor', 'visiting team']:
-        if pattern in col_lower:
-            mapping['away_team'] = col_lower[pattern]
+    # Detect away team (partial match for flexibility)
+    for col_name_lower, col_name in col_lower.items():
+        if any(pattern in col_name_lower for pattern in ['away', 'visitor', 'visiting']) and 'away_team' not in mapping:
+            mapping['away_team'] = col_name
             break
     
     # Detect date
