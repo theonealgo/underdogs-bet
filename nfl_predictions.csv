@@ -1,4 +1,4 @@
-Match Number,Round Number,date,Location,home_team,away_team,result,sport,elo_home_prob,glmnet_home_prob,xgboost_home_prob,blended_home_prob,predicted_winner,confidence
+Match Number,Round Number,date,Location,home_team,away_team,result,sport,elo_home_prob,logistic_home_prob,xgboost_home_prob,blended_home_prob,predicted_winner,confidence
 1,1,05/09/2025 00:20,Lincoln Financial Field,Philadelphia Eagles,Dallas Cowboys,H,NFL,0.5714179345490324,0.9188922092567332,0.8415045738220215,0.7875642604027383,Philadelphia Eagles,0.5751285208054766
 2,1,06/09/2025 00:00,Arena Corinthians,Los Angeles Chargers,Kansas City Chiefs,H,NFL,0.524717028078183,0.6384457804109098,0.7488829493522644,0.6429801727812625,Los Angeles Chargers,0.28596034556252503
 3,1,07/09/2025 17:00,Mercedes-Benz Stadium,Atlanta Falcons,Tampa Bay Buccaneers,A,NFL,0.47445138186575897,0.4916747499898087,0.7315886616706848,0.5704776175815971,Atlanta Falcons,0.1409552351631942
