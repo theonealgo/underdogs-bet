@@ -81,19 +81,42 @@ def load_and_preprocess_csv(csv_path: str) -> pd.DataFrame:
     # Standardize result column
     # Result should be 'H' for home win, 'A' for away win, 'D' for draw
     if 'result' in df.columns:
-        # Convert various formats to H/A/D
-        df['result'] = df['result'].fillna('').astype(str).str.strip().str.upper()
+        df['result'] = df['result'].fillna('').astype(str).str.strip()
         
-        # Handle different result formats
-        df['result'] = df['result'].replace({
-            'HOME': 'H',
-            'AWAY': 'A', 
-            'DRAW': 'D',
-            'TIE': 'D',
-            '1': 'H',
-            '2': 'A',
-            '0': 'D'
-        })
+        # Parse score format (e.g., "24 - 20")
+        def parse_result(score_str):
+            if not score_str or score_str == '':
+                return ''
+            
+            # Check if it's a score format
+            if '-' in score_str:
+                try:
+                    parts = score_str.split('-')
+                    if len(parts) == 2:
+                        home_score = int(parts[0].strip())
+                        away_score = int(parts[1].strip())
+                        
+                        if home_score > away_score:
+                            return 'H'
+                        elif away_score > home_score:
+                            return 'A'
+                        else:
+                            return 'D'
+                except:
+                    pass
+            
+            # Handle text formats
+            score_upper = score_str.upper()
+            if score_upper in ['HOME', 'H', '1']:
+                return 'H'
+            elif score_upper in ['AWAY', 'A', '2']:
+                return 'A'
+            elif score_upper in ['DRAW', 'D', 'TIE', '0']:
+                return 'D'
+            
+            return ''
+        
+        df['result'] = df['result'].apply(parse_result)
         
         result_counts = df['result'].value_counts()
         logger.info(f"Result distribution:\n{result_counts}")
