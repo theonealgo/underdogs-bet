@@ -432,41 +432,40 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                         start_date = st.session_state.prediction_date
                         end_date = start_date + timedelta(days=7)
                         
-                        # Build patterns for both date formats
-                        games_date_patterns = []  # DD/MM/YYYY for games table
-                        pred_date_patterns = []   # YYYY-MM-DD for predictions table
+                        # Build date patterns for YYYY-MM-DD format (predictions table uses this)
+                        pred_date_patterns = []
                         
                         for i in range(8):  # Include start and next 7 days
                             d = start_date + timedelta(days=i)
-                            games_date_patterns.append(f'{d.day:02d}/{d.month:02d}/{d.year}')
                             pred_date_patterns.append(f'{d.year}-{d.month:02d}-{d.day:02d}')
                         
-                        # Create query with multiple date patterns for games table (DD/MM/YYYY)
-                        games_like_clauses = ' OR '.join(['g.game_date LIKE ?' for _ in games_date_patterns])
-                        games_pattern_params = [f'{p}%' for p in games_date_patterns]
-                        
-                        games_query = f"""
-                            SELECT g.game_id, g.sport, g.home_team_id, g.away_team_id, g.game_date, g.status
-                            FROM games g
-                            WHERE ({games_like_clauses})
-                            AND g.sport = ?
-                            ORDER BY g.game_date
-                        """
-                        games_df = pd.read_sql_query(games_query, conn, params=games_pattern_params + [sport_code])
-                        
-                        # Create query for predictions table (YYYY-MM-DD format)
+                        # Get predictions first (they have YYYY-MM-DD dates)
                         pred_like_clauses = ' OR '.join(['p.game_date LIKE ?' for _ in pred_date_patterns])
                         pred_pattern_params = [f'{p}%' for p in pred_date_patterns]
                         
                         pred_query = f"""
-                            SELECT p.*, g.home_team_id, g.away_team_id
+                            SELECT p.*
                             FROM predictions p
-                            LEFT JOIN games g ON p.game_id = g.game_id
                             WHERE ({pred_like_clauses})
                             AND p.sport = ?
                             ORDER BY p.game_date
                         """
                         predictions_df = pd.read_sql_query(pred_query, conn, params=pred_pattern_params + [sport_code])
+                        
+                        # Get corresponding games by game_id
+                        if not predictions_df.empty:
+                            game_ids = predictions_df['game_id'].tolist()
+                            placeholders = ','.join(['?' for _ in game_ids])
+                            games_query = f"""
+                                SELECT g.game_id, g.sport, g.home_team_id, g.away_team_id, g.game_date, g.status
+                                FROM games g
+                                WHERE g.game_id IN ({placeholders})
+                                AND g.sport = ?
+                                ORDER BY g.game_date
+                            """
+                            games_df = pd.read_sql_query(games_query, conn, params=game_ids + [sport_code])
+                        else:
+                            games_df = pd.DataFrame()
                 
                 predictions = []
                 
@@ -476,7 +475,8 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                     pred_map = {}
                     if not predictions_df.empty:
                         for _, pred in predictions_df.iterrows():
-                            pred_map[str(pred.get('game_id', ''))] = pred
+                            game_id_key = str(pred.get('game_id', ''))
+                            pred_map[game_id_key] = pred
                     
                     # Now iterate through ALL games and show them
                     pred_data = []
