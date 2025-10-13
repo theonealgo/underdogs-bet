@@ -275,7 +275,7 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
     # View mode selector
     view_mode = st.radio(
         "View Mode",
-        ["Single Day", "All Upcoming Games"],
+        ["7-Day View", "All Upcoming Games"],
         horizontal=True,
         key=f"view_mode_{sport_code}"
     )
@@ -428,33 +428,39 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                         """
                         predictions_df = pd.read_sql_query(pred_query, conn, params=[sport_code])
                     else:
-                        # Show only games for selected date - handle both date formats
-                        day = st.session_state.prediction_date.day
-                        month = st.session_state.prediction_date.month
-                        year = st.session_state.prediction_date.year
+                        # Show 7-day range starting from selected date
+                        start_date = st.session_state.prediction_date
+                        end_date = start_date + timedelta(days=7)
                         
-                        # Match DD/MM/YYYY format (like "13/10/2025 00:20")
-                        date_pattern = f'{day:02d}/{month:02d}/{year}'
+                        # Build patterns for DD/MM/YYYY format matching
+                        date_patterns = []
+                        for i in range(8):  # Include start and next 7 days
+                            d = start_date + timedelta(days=i)
+                            date_patterns.append(f'{d.day:02d}/{d.month:02d}/{d.year}')
                         
-                        games_query = """
+                        # Create query with multiple date patterns
+                        like_clauses = ' OR '.join(['game_date LIKE ?' for _ in date_patterns])
+                        pattern_params = [f'{p}%' for p in date_patterns]
+                        
+                        games_query = f"""
                             SELECT game_id, sport, home_team_id, away_team_id, game_date, status
                             FROM games
-                            WHERE (game_date LIKE ? OR DATE(game_date) = ?)
+                            WHERE ({like_clauses})
                             AND sport = ?
                             ORDER BY game_date
                         """
-                        games_df = pd.read_sql_query(games_query, conn, params=[f'{date_pattern}%', date_str, sport_code])
+                        games_df = pd.read_sql_query(games_query, conn, params=pattern_params + [sport_code])
                         
                         # Also get predictions if they exist
-                        pred_query = """
+                        pred_query = f"""
                             SELECT p.*, g.home_team_id, g.away_team_id
                             FROM predictions p
                             LEFT JOIN games g ON p.game_id = g.game_id
-                            WHERE (p.game_date LIKE ? OR DATE(p.game_date) = ?)
+                            WHERE ({like_clauses})
                             AND p.sport = ?
                             ORDER BY p.game_date
                         """
-                        predictions_df = pd.read_sql_query(pred_query, conn, params=[f'{date_pattern}%', date_str, sport_code])
+                        predictions_df = pd.read_sql_query(pred_query, conn, params=pattern_params + [sport_code])
                 
                 predictions = []
                 
@@ -851,51 +857,81 @@ def show_upcoming_predictions(predictions, sport_code):
     
     st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
     
-    # Display each game with model breakdown
-    for idx, pred in enumerate(predictions):
+    # Group predictions by date
+    from collections import defaultdict
+    games_by_date = defaultdict(list)
+    
+    for pred in predictions:
+        # Parse game date - handle both DD/MM/YYYY and other formats
+        game_date_str = str(pred.get('game_date', ''))
         try:
-            away_team = pred.get('away_team', 'Away')
-            home_team = pred.get('home_team', 'Home')
-            win_prob_home = pred.get('home_win_probability', 0.5) * 100
-            win_prob_away = pred.get('away_win_probability', 0.5) * 100
-            
-            # Get individual model predictions
-            elo_prob = pred.get('elo_home_prob', 0.5) * 100
-            log_prob = pred.get('logistic_home_prob', 0.5) * 100
-            xgb_prob = pred.get('xgboost_home_prob', 0.5) * 100
-            
-            # Create game card
-            with st.container():
-                st.markdown("---")
+            # Try DD/MM/YYYY format first
+            if '/' in game_date_str:
+                date_part = game_date_str.split(' ')[0]  # Remove time if present
+                day, month, year = date_part.split('/')
+                game_date = datetime(int(year), int(month), int(day)).date()
+            else:
+                # Try standard datetime parsing
+                game_date = pd.to_datetime(game_date_str).date()
+        except:
+            game_date = datetime.now().date()  # Fallback
+        
+        games_by_date[game_date].append(pred)
+    
+    # Sort dates
+    sorted_dates = sorted(games_by_date.keys())
+    
+    # Display games grouped by date
+    for game_date in sorted_dates:
+        # Display date header
+        date_formatted = game_date.strftime('%A, %B %d, %Y')
+        st.markdown(f"### 📅 {date_formatted}")
+        
+        # Display games for this date
+        for pred in games_by_date[game_date]:
+            try:
+                away_team = pred.get('away_team', 'Away')
+                home_team = pred.get('home_team', 'Home')
+                win_prob_home = pred.get('home_win_probability', 0.5) * 100
+                win_prob_away = pred.get('away_win_probability', 0.5) * 100
                 
-                # Game header
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    st.markdown(f"### {away_team} @ {home_team}")
+                # Get individual model predictions
+                elo_prob = pred.get('elo_home_prob', 0.5) * 100
+                log_prob = pred.get('logistic_home_prob', 0.5) * 100
+                xgb_prob = pred.get('xgboost_home_prob', 0.5) * 100
                 
-                # Win probabilities
-                col_away, col_home = st.columns(2)
-                with col_away:
-                    st.metric("Away Win %", f"{win_prob_away:.1f}%")
-                with col_home:
-                    st.metric("Home Win %", f"{win_prob_home:.1f}%")
-                
-                # Model Breakdown
-                st.markdown(f"**{home_team} Model Breakdown:**")
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Elo", f"{elo_prob:.1f}%")
-                with col2:
-                    st.metric("Logistic", f"{log_prob:.1f}%")
-                with col3:
-                    st.metric("XGBoost", f"{xgb_prob:.1f}%")
-                with col4:
-                    st.metric("Blended", f"{win_prob_home:.1f}%")
-                
-        except Exception as e:
-            st.warning(f"Error processing prediction: {str(e)}")
-            continue
+                # Create game card
+                with st.container():
+                    st.markdown("---")
+                    
+                    # Game header
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        st.markdown(f"### {away_team} @ {home_team}")
+                    
+                    # Win probabilities
+                    col_away, col_home = st.columns(2)
+                    with col_away:
+                        st.metric("Away Win %", f"{win_prob_away:.1f}%")
+                    with col_home:
+                        st.metric("Home Win %", f"{win_prob_home:.1f}%")
+                    
+                    # Model Breakdown
+                    st.markdown(f"**{home_team} Model Breakdown:**")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Elo", f"{elo_prob:.1f}%")
+                    with col2:
+                        st.metric("Logistic", f"{log_prob:.1f}%")
+                    with col3:
+                        st.metric("XGBoost", f"{xgb_prob:.1f}%")
+                    with col4:
+                        st.metric("Blended", f"{win_prob_home:.1f}%")
+                    
+            except Exception as e:
+                st.warning(f"Error processing prediction: {str(e)}")
+                continue
     
     st.markdown('</div>', unsafe_allow_html=True)
 

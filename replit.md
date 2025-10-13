@@ -117,4 +117,13 @@ Preferred communication style: Simple, everyday language.
 - Fixed display logic to handle zero scores correctly (uses `is not None` checks instead of truthy checks)
 - NHL predictions now show realistic probabilities (54-94% range) instead of flat 50% defaults
 
+**7-Day Prediction View (Oct 13, 2025)**
+- Changed default view from single day to **7-day range** to handle Excel schedule date offset issues
+- Excel schedules may have timezone/entry date offsets (e.g., game labeled "tomorrow" actually plays "today")
+- New view shows all games across 7-day window with clear date headers (e.g., "📅 Sunday, October 13, 2025")
+- Predictions grouped and sorted by date for easy navigation
+- Handles both DD/MM/YYYY (database format) and YYYY-MM-DD date formats seamlessly
+- Alternative "All Upcoming Games" view still available for viewing complete season schedule
+- Database column naming fixed: Uses `logistic_home_prob` (not `glmnet_home_prob`) to match ensemble system
+
 The system is designed with modularity in mind, allowing for easy integration of additional sports leagues and data sources while maintaining the same architectural patterns.
