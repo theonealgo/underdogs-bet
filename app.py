@@ -823,106 +823,52 @@ def show_upcoming_predictions(predictions, sport_code):
         return
     
     st.markdown(f'<div class="pred-table">', unsafe_allow_html=True)
-    st.markdown(f"### Upcoming Games for {st.session_state.prediction_date.strftime('%B %d, %Y')}")
     
-    # Create DataFrame for display
-    display_data = []
-    for pred in predictions:
+    # Display each game with model breakdown
+    for idx, pred in enumerate(predictions):
         try:
+            away_team = pred.get('away_team', 'Away')
+            home_team = pred.get('home_team', 'Home')
             win_prob_home = pred.get('home_win_probability', 0.5) * 100
             win_prob_away = pred.get('away_win_probability', 0.5) * 100
             
-            home_score = pred.get('predicted_home_score')
-            away_score = pred.get('predicted_away_score')
-            predicted_total = pred.get('predicted_total')
-            total_runs = home_score + away_score if home_score is not None and away_score is not None else 0
+            # Get individual model predictions
+            elo_prob = pred.get('elo_home_prob', 0.5) * 100
+            log_prob = pred.get('logistic_home_prob', 0.5) * 100
+            xgb_prob = pred.get('xgboost_home_prob', 0.5) * 100
             
-            # Get odds data if available
-            away_odds = pred.get('away_odds')
-            home_odds = pred.get('home_odds')
-            away_spread = pred.get('away_spread')
-            away_spread_odds = pred.get('away_spread_odds')
-            home_spread = pred.get('home_spread')
-            home_spread_odds = pred.get('home_spread_odds')
-            total_line = pred.get('total_line')
-            over_odds = pred.get('over_odds')
-            under_odds = pred.get('under_odds')
-            
-            # Format moneyline odds
-            away_ml = format_american_odds(away_odds) if away_odds else "N/A"
-            home_ml = format_american_odds(home_odds) if home_odds else "N/A"
-            
-            # Format spread
-            if away_spread is not None and away_spread_odds:
-                away_spread_display = f"{away_spread:+.1f} ({format_american_odds(away_spread_odds)})"
-            else:
-                away_spread_display = "N/A"
-            
-            if home_spread is not None and home_spread_odds:
-                home_spread_display = f"{home_spread:+.1f} ({format_american_odds(home_spread_odds)})"
-            else:
-                home_spread_display = "N/A"
-            
-            # Format totals
-            if total_line and over_odds and under_odds:
-                totals_display = f"O{total_line} ({format_american_odds(over_odds)}) / U{total_line} ({format_american_odds(under_odds)})"
-            else:
-                totals_display = "N/A"
-            
-            # Calculate bet value based on odds comparison
-            bet_value = calculate_bet_value(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
-            
-            # Determine recommended bet
-            recommended = determine_recommendation(win_prob_away/100, win_prob_home/100, away_odds, home_odds)
-            
-            # Determine predicted score display
-            if home_score is not None and away_score is not None:
-                # Individual scores available (MLB, etc.) - includes zero scores
-                score_display = f"{away_score:.0f}-{home_score:.0f}"
-            elif predicted_total is not None:
-                # Total available (NHL, etc.)
-                score_display = f"Total: {predicted_total:.1f}"
-            else:
-                score_display = "N/A"
-            
-            # Get individual model predictions if available
-            elo_prob = pred.get('elo_home_prob')
-            log_prob = pred.get('logistic_home_prob')
-            xgb_prob = pred.get('xgboost_home_prob')
-            
-            display_data.append({
-                'Away Team': pred.get('away_team', ''),
-                'Away Win %': f"{win_prob_away:.1f}%",
-                'Home Team': pred.get('home_team', ''),
-                'Home Win %': f"{win_prob_home:.1f}%",
-                'Predicted Score': score_display,
-                'Elo': f"{elo_prob*100:.1f}%" if elo_prob else "N/A",
-                'Logistic': f"{log_prob*100:.1f}%" if log_prob else "N/A",
-                'XGBoost': f"{xgb_prob*100:.1f}%" if xgb_prob else "N/A"
-            })
+            # Create game card
+            with st.container():
+                st.markdown("---")
+                
+                # Game header
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    st.markdown(f"### {away_team} @ {home_team}")
+                
+                # Win probabilities
+                col_away, col_home = st.columns(2)
+                with col_away:
+                    st.metric("Away Win %", f"{win_prob_away:.1f}%")
+                with col_home:
+                    st.metric("Home Win %", f"{win_prob_home:.1f}%")
+                
+                # Model Breakdown
+                st.markdown(f"**{home_team} Model Breakdown:**")
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Elo", f"{elo_prob:.1f}%")
+                with col2:
+                    st.metric("Logistic", f"{log_prob:.1f}%")
+                with col3:
+                    st.metric("XGBoost", f"{xgb_prob:.1f}%")
+                with col4:
+                    st.metric("Blended", f"{win_prob_home:.1f}%")
+                
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
             continue
-    
-    if display_data:
-        df = pd.DataFrame(display_data)
-        
-        # Style the dataframe - show all model predictions
-        st.dataframe(
-            df,
-            width='stretch',
-            hide_index=True,
-            column_config={
-                "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
-                "Away Win %": st.column_config.TextColumn("Blended %", width="small"),
-                "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
-                "Home Win %": st.column_config.TextColumn("Blended %", width="small"),
-                "Predicted Score": st.column_config.TextColumn("Predicted", width="small"),
-                "Elo": st.column_config.TextColumn("Elo", width="small"),
-                "Logistic": st.column_config.TextColumn("Logistic", width="small"),
-                "XGBoost": st.column_config.TextColumn("XGBoost", width="small")
-            }
-        )
     
     st.markdown('</div>', unsafe_allow_html=True)
 
