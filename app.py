@@ -308,6 +308,10 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
     
     # Excel/CSV Upload Section
     with st.expander("📁 Upload Schedule (Excel/CSV)", expanded=False):
+        st.warning("⚠️ Uploading a new schedule will REPLACE all existing games and predictions for this sport!")
+        
+        clear_old_data = st.checkbox(f"Clear old {sport_code} data before uploading", value=True, key=f"clear_old_{sport_code}")
+        
         uploaded_file = st.file_uploader(
             f"Upload {sport_code} schedule (Excel or CSV)", 
             type=['xlsx', 'xls', 'csv'],
@@ -318,6 +322,14 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
             try:
                 import tempfile
                 import os
+                
+                # Clear old data if checkbox is checked
+                if clear_old_data:
+                    with db_manager._get_connection() as conn:
+                        conn.execute("DELETE FROM predictions WHERE sport = ?", [sport_code])
+                        conn.execute("DELETE FROM games WHERE sport = ?", [sport_code])
+                        conn.commit()
+                    st.success(f"✅ Cleared old {sport_code} data")
                 
                 # Save uploaded file temporarily
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
@@ -337,11 +349,13 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                 
                 if result.returncode == 0:
                     st.success(f"✅ Successfully loaded schedule and generated predictions!")
-                    st.info("Refresh the page to see predictions")
+                    st.code(result.stdout[-500:] if len(result.stdout) > 500 else result.stdout)
+                    st.info("Click below to see your new predictions")
                     if st.button("🔄 Refresh Now"):
                         st.rerun()
                 else:
                     st.error(f"Error: {result.stderr}")
+                    st.code(result.stdout)
                 
                 # Clean up temp file
                 os.unlink(tmp_path)
@@ -525,7 +539,10 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                                     'away_win_probability': 1 - home_win_prob,
                                     'predicted_total': predicted_total,
                                     'predicted_home_score': None,
-                                    'predicted_away_score': None
+                                    'predicted_away_score': None,
+                                    'elo_home_prob': None,
+                                    'logistic_home_prob': None,
+                                    'xgboost_home_prob': None
                                 })
                                 
                                 # Store NHL prediction in database
@@ -555,7 +572,10 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                                     'away_win_probability': 0.5,
                                     'predicted_total': None,
                                     'predicted_home_score': None,
-                                    'predicted_away_score': None
+                                    'predicted_away_score': None,
+                                    'elo_home_prob': 0.5,
+                                    'logistic_home_prob': 0.5,
+                                    'xgboost_home_prob': 0.5
                                 })
                                 
                                 # Also create a prediction record in the database
