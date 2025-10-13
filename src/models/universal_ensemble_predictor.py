@@ -87,14 +87,14 @@ class UniversalSportsEnsemble:
         # Initialize models
         self.elo_system = UniversalEloRatingSystem(sport, k_factor=k_factor)
         
-        # GLMNet (Elastic Net Logistic Regression)
-        self.glmnet_model = LogisticRegressionCV(
-            cv=5,
-            penalty='elasticnet',
-            solver='saga',
-            l1_ratios=[0.1, 0.5, 0.9],
+        # Logistic Regression (simpler, more reliable)
+        from sklearn.linear_model import LogisticRegression
+        self.glmnet_model = LogisticRegression(
+            penalty='l2',
+            C=1.0,
             max_iter=1000,
-            random_state=42
+            random_state=42,
+            solver='lbfgs'
         )
         
         # XGBoost
@@ -138,12 +138,17 @@ class UniversalSportsEnsemble:
             away_elo = self.elo_system.get_rating(away_team)
             elo_diff = home_elo - away_elo
             
-            # Create features
+            # Create enhanced features
             features = {
                 'home_elo': home_elo,
                 'away_elo': away_elo,
                 'elo_diff': elo_diff,
-                'home_advantage': 1,
+                'elo_ratio': home_elo / away_elo if away_elo > 0 else 1.0,
+                'home_elo_squared': home_elo ** 2,
+                'away_elo_squared': away_elo ** 2,
+                'elo_diff_squared': elo_diff ** 2,
+                'home_advantage': 100,  # Stronger home advantage signal
+                'elo_product': home_elo * away_elo,
             }
             
             # Update Elo if training
@@ -182,15 +187,18 @@ class UniversalSportsEnsemble:
                 self.logger.warning("No training data with results")
                 return {'error': 'No training data'}
             
-            # Prepare training data
-            X = features_df[['home_elo', 'away_elo', 'elo_diff', 'home_advantage']].values
+            # Prepare training data with all features
+            feature_cols = ['home_elo', 'away_elo', 'elo_diff', 'elo_ratio', 
+                          'home_elo_squared', 'away_elo_squared', 'elo_diff_squared',
+                          'home_advantage', 'elo_product']
+            X = features_df[feature_cols].values
             y = features_df['target'].values
             
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
             
-            # Train GLMNet
-            self.logger.info("Training GLMNet...")
+            # Train Logistic Regression
+            self.logger.info("Training Logistic Regression...")
             self.glmnet_model.fit(X_scaled, y)
             glmnet_score = self.glmnet_model.score(X_scaled, y)
             
@@ -234,7 +242,10 @@ class UniversalSportsEnsemble:
         }])
         
         features_df = self.create_features(game_df, is_training=False)
-        X = features_df[['home_elo', 'away_elo', 'elo_diff', 'home_advantage']].values
+        feature_cols = ['home_elo', 'away_elo', 'elo_diff', 'elo_ratio', 
+                      'home_elo_squared', 'away_elo_squared', 'elo_diff_squared',
+                      'home_advantage', 'elo_product']
+        X = features_df[feature_cols].values
         
         # Elo prediction
         elo_prob = self.elo_system.predict_game(home_team, away_team)

@@ -705,8 +705,8 @@ class DatabaseManager:
                         INSERT OR IGNORE INTO predictions 
                         (sport, league, game_id, game_date, home_team_id, away_team_id,
                          predicted_winner, win_probability, predicted_total, total_confidence,
-                         model_version, key_factors)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         model_version, key_factors, elo_home_prob, logistic_home_prob, xgboost_home_prob)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         row.get('sport'),
                         row.get('league'),
@@ -719,7 +719,10 @@ class DatabaseManager:
                         row.get('predicted_total'),
                         row.get('total_confidence'),
                         row.get('model_version'),
-                        row.get('key_factors')
+                        row.get('key_factors'),
+                        row.get('elo_home_prob'),
+                        row.get('logistic_home_prob'),
+                        row.get('xgboost_home_prob')
                     ))
                 
                 conn.commit()

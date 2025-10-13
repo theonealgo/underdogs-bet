@@ -406,7 +406,10 @@ def show_sport_page(api, db_manager, sport_data_manager, result_tracker, nhl_pre
                                 'away_win_probability': 1 - home_win_prob,
                                 'predicted_total': pred.get('predicted_total'),
                                 'predicted_home_score': None,
-                                'predicted_away_score': None
+                                'predicted_away_score': None,
+                                'elo_home_prob': pred.get('elo_home_prob'),
+                                'logistic_home_prob': pred.get('logistic_home_prob'),
+                                'xgboost_home_prob': pred.get('xgboost_home_prob')
                             })
                         else:
                             # No prediction exists for this game
@@ -806,12 +809,20 @@ def show_upcoming_predictions(predictions, sport_code):
             else:
                 score_display = "N/A"
             
+            # Get individual model predictions if available
+            elo_prob = pred.get('elo_home_prob')
+            log_prob = pred.get('logistic_home_prob')
+            xgb_prob = pred.get('xgboost_home_prob')
+            
             display_data.append({
                 'Away Team': pred.get('away_team', ''),
                 'Away Win %': f"{win_prob_away:.1f}%",
                 'Home Team': pred.get('home_team', ''),
                 'Home Win %': f"{win_prob_home:.1f}%",
-                'Predicted Score': score_display
+                'Predicted Score': score_display,
+                'Elo': f"{elo_prob*100:.1f}%" if elo_prob else "N/A",
+                'Logistic': f"{log_prob*100:.1f}%" if log_prob else "N/A",
+                'XGBoost': f"{xgb_prob*100:.1f}%" if xgb_prob else "N/A"
             })
         except Exception as e:
             st.warning(f"Error processing prediction: {str(e)}")
@@ -820,17 +831,20 @@ def show_upcoming_predictions(predictions, sport_code):
     if display_data:
         df = pd.DataFrame(display_data)
         
-        # Style the dataframe - simple view
+        # Style the dataframe - show all model predictions
         st.dataframe(
             df,
             width='stretch',
             hide_index=True,
             column_config={
                 "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
-                "Away Win %": st.column_config.TextColumn("Win %", width="small"),
+                "Away Win %": st.column_config.TextColumn("Blended %", width="small"),
                 "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
-                "Home Win %": st.column_config.TextColumn("Win %", width="small"),
-                "Predicted Score": st.column_config.TextColumn("Predicted Score", width="medium")
+                "Home Win %": st.column_config.TextColumn("Blended %", width="small"),
+                "Predicted Score": st.column_config.TextColumn("Predicted", width="small"),
+                "Elo": st.column_config.TextColumn("Elo", width="small"),
+                "Logistic": st.column_config.TextColumn("Logistic", width="small"),
+                "XGBoost": st.column_config.TextColumn("XGBoost", width="small")
             }
         )
     

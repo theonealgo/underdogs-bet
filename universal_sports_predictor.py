@@ -270,6 +270,9 @@ def save_to_database(df: pd.DataFrame, sport: str):
                     'away_team_id': row['away_team'],
                     'predicted_winner': row['predicted_winner'],
                     'win_probability': float(row['blended_home_prob']),
+                    'elo_home_prob': float(row.get('elo_home_prob', 0.5)),
+                    'logistic_home_prob': float(row.get('glmnet_home_prob', 0.5)),
+                    'xgboost_home_prob': float(row.get('xgboost_home_prob', 0.5)),
                     'model_version': 'ensemble_v1'
                 }
                 pred_data.append(pred)
