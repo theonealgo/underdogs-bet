@@ -41,8 +41,8 @@ class AuthManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                (username, email, self._hash_password(password))
+                "INSERT INTO users (username, email, password_hash, subscription_status) VALUES (?, ?, ?, ?)",
+                (username, email, self._hash_password(password), 'premium')
             )
             conn.commit()
             conn.close()
