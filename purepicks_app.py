@@ -188,17 +188,43 @@ if free_pick:
     </div>
     """, unsafe_allow_html=True)
     
-    # Model Breakdown (showing HOME team probabilities)
-    st.markdown("#### 🔬 Model Breakdown (Home Team Win Probability)")
+    # Model Breakdown - Hide model names
+    st.markdown("#### 🔬 Our Analysis")
+    col1, col2, col3, col4 = st.columns(4)
     
-    st.markdown(f"""
-    **{free_pick['home']}** (Home) vs **{free_pick['away']}** (Away)
+    with col1:
+        st.markdown(f"""
+        <div class="model-stat">
+            <p style="margin: 0; color: #666;">Model A</p>
+            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['elo_home']:.1f}%</h3>
+        </div>
+        """, unsafe_allow_html=True)
     
-    - **Elo Rating:** {free_pick['elo_home']:.1f}% {free_pick['home']} | {100-free_pick['elo_home']:.1f}% {free_pick['away']}
-    - **Logistic Regression:** {free_pick['logistic_home']:.1f}% {free_pick['home']} | {100-free_pick['logistic_home']:.1f}% {free_pick['away']}
-    - **XGBoost:** {free_pick['xgboost_home']:.1f}% {free_pick['home']} | {100-free_pick['xgboost_home']:.1f}% {free_pick['away']}
-    - **🔮 Blended (30% Elo + 35% Logistic + 35% XGBoost):** {free_pick['blended_home']:.1f}% {free_pick['home']} | {100-free_pick['blended_home']:.1f}% {free_pick['away']}
-    """)
+    with col2:
+        st.markdown(f"""
+        <div class="model-stat">
+            <p style="margin: 0; color: #666;">Model B</p>
+            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['logistic_home']:.1f}%</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class="model-stat">
+            <p style="margin: 0; color: #666;">Model C</p>
+            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['xgboost_home']:.1f}%</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class="model-stat" style="background: #667eea;">
+            <p style="margin: 0; color: white;">Combined</p>
+            <h3 style="margin: 0.5rem 0; color: white;">{free_pick['blended_home']:.1f}%</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.caption(f"Win probabilities for {free_pick['home']} (Home)")
 else:
     st.info("No picks available for today. Check back soon!")
 

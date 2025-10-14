@@ -14,7 +14,7 @@ st.set_page_config(page_title="Dashboard - PurePicks.COM", page_icon="📊", lay
 # Require authentication (premium check removed - all users have access)
 user_data = require_auth()
 
-# Custom CSS for dashboard
+# Custom CSS for clean professional look
 st.markdown("""
 <style>
     .dashboard-header {
@@ -30,14 +30,21 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         margin-bottom: 1rem;
-        border-left: 4px solid #667eea;
+        border-left: 5px solid #667eea;
     }
-    .prediction-confidence {
-        background: #f8f9fa;
-        padding: 0.5rem 1rem;
+    .pick-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    .prob-bar {
+        background: #f0f0f0;
+        padding: 0.5rem;
         border-radius: 5px;
-        display: inline-block;
-        margin: 0.25rem;
+        margin: 0.3rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -77,8 +84,7 @@ try:
             SELECT 
                 p.game_id, p.game_date,
                 g.home_team_id, g.away_team_id,
-                p.elo_home_prob, p.logistic_home_prob, p.xgboost_home_prob,
-                p.win_probability, p.predicted_winner
+                p.elo_home_prob, p.logistic_home_prob, p.xgboost_home_prob
             FROM predictions p
             JOIN games g ON p.game_id = g.game_id
             WHERE p.sport = ?
@@ -108,53 +114,45 @@ try:
                 
                 # Show games for this date
                 for _, game in date_games.iterrows():
-                    # Get home probabilities (these are already HOME team win probabilities from database)
+                    # Get probabilities
                     elo_home = float(game['elo_home_prob']) if pd.notna(game['elo_home_prob']) else 0.5
                     log_home = float(game['logistic_home_prob']) if pd.notna(game['logistic_home_prob']) else 0.5
                     xgb_home = float(game['xgboost_home_prob']) if pd.notna(game['xgboost_home_prob']) else 0.5
                     
-                    # Blended HOME team win probability (30% Elo + 35% Logistic + 35% XGBoost)
-                    blended_home_prob = (0.30 * elo_home + 0.35 * log_home + 0.35 * xgb_home)
+                    # Blended probability (30% Elo + 35% Logistic + 35% XGBoost)
+                    blended_home = (0.30 * elo_home + 0.35 * log_home + 0.35 * xgb_home)
                     
                     # Determine pick
-                    if blended_home_prob > 0.5:
+                    if blended_home > 0.5:
                         pick_team = game['home_team_id']
-                        pick_prob = blended_home_prob * 100
+                        pick_prob = blended_home * 100
                     else:
                         pick_team = game['away_team_id']
-                        pick_prob = (1 - blended_home_prob) * 100
+                        pick_prob = (1 - blended_home) * 100
                     
-                    # Display game card with proper styling
-                    st.markdown(f"""
-                    <div style="background: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1.5rem; border-left: 5px solid #667eea;">
-                        <h4 style="margin: 0 0 1rem 0;">🏈 {game['away_team_id']} @ {game['home_team_id']}</h4>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns([1, 1])
+                    # Clean display
+                    col1, col2 = st.columns([2, 1])
                     
                     with col1:
-                        st.markdown(f"### 🎯 **Pick: {pick_team}**")
-                        st.markdown(f"**Confidence: {pick_prob:.1f}%**")
-                        
-                        st.markdown("#### Model Probabilities (Home Team):")
+                        st.markdown(f"### {game['away_team_id']} @ {game['home_team_id']}")
                         st.markdown(f"""
-                        - **Elo Rating:** {elo_home*100:.1f}% {game['home_team_id']} | {(1-elo_home)*100:.1f}% {game['away_team_id']}
-                        - **Logistic Regression:** {log_home*100:.1f}% {game['home_team_id']} | {(1-log_home)*100:.1f}% {game['away_team_id']}
-                        - **XGBoost:** {xgb_home*100:.1f}% {game['home_team_id']} | {(1-xgb_home)*100:.1f}% {game['away_team_id']}
-                        - **🔮 Blended (30% Elo + 35% Log + 35% XGB):** {blended_home_prob*100:.1f}% {game['home_team_id']} | {(1-blended_home_prob)*100:.1f}% {game['away_team_id']}
-                        """)
-                    
-                    with col2:
-                        st.markdown("#### Model Breakdown")
-                        st.markdown(f"""
-                        <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px;">
-                            <p style="margin: 0.5rem 0;"><strong>Elo:</strong> {elo_home*100:.1f}%</p>
-                            <p style="margin: 0.5rem 0;"><strong>Logistic:</strong> {log_home*100:.1f}%</p>
-                            <p style="margin: 0.5rem 0;"><strong>XGBoost:</strong> {xgb_home*100:.1f}%</p>
-                            <p style="margin: 0.5rem 0; background: #667eea; color: white; padding: 0.5rem; border-radius: 5px;"><strong>Blended:</strong> {blended_home_prob*100:.1f}%</p>
+                        <div class="pick-box">
+                            <h3 style="margin: 0;">🎯 {pick_team}</h3>
+                            <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem;">{pick_prob:.1f}% Confidence</p>
                         </div>
                         """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        st.markdown("#### Model Analysis")
+                        st.markdown(f"""
+                        <div class="prob-bar">Model A: {elo_home*100:.1f}%</div>
+                        <div class="prob-bar">Model B: {log_home*100:.1f}%</div>
+                        <div class="prob-bar">Model C: {xgb_home*100:.1f}%</div>
+                        <div class="prob-bar" style="background: #667eea; color: white; font-weight: bold;">
+                            Combined: {blended_home*100:.1f}%
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.caption(f"(Probabilities for {game['home_team_id']})")
                     
                     st.markdown("---")
                 
