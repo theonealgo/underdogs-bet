@@ -6,13 +6,13 @@ Premium Dashboard for PurePicks.COM
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from auth import require_premium, logout
+from auth import require_auth, logout
 from src.data_storage.database import DatabaseManager
 
 st.set_page_config(page_title="Dashboard - PurePicks.COM", page_icon="📊", layout="wide")
 
-# Require premium subscription
-user_data = require_premium()
+# Require authentication (premium check removed - all users have access)
+user_data = require_auth()
 
 # Custom CSS for dashboard
 st.markdown("""
