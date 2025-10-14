@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "PurePicks.COM"
+args = "UnitDuel.com"
 
 [[workflows.workflow]]
-name = "PurePicks.COM"
+name = "UnitDuel.com"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "streamlit run purepicks_app.py --server.port 5000"
+args = "streamlit run unitduel_app.py --server.port 5000"
 waitForPort = 5000
 
 [workflows.workflow.metadata]

@@ -1,5 +1,5 @@
 """
-Premium Dashboard for PurePicks.COM
+Premium Dashboard for UnitDuel.com
 30-Day Predictions View
 """
 
@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from auth import require_auth, logout
 from src.data_storage.database import DatabaseManager
 
-st.set_page_config(page_title="Dashboard - PurePicks.COM", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Dashboard - UnitDuel.com", page_icon="📊", layout="wide")
 
 # Require authentication (premium check removed - all users have access)
 user_data = require_auth()
@@ -61,7 +61,7 @@ with col1:
 
 with col2:
     if st.button("🏠 Home"):
-        st.switch_page("purepicks_app.py")
+        st.switch_page("unitduel_app.py")
     if st.button("🚪 Logout"):
         logout()
 
@@ -163,6 +163,6 @@ except Exception as e:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
-    <p>© 2025 PurePicks.COM | Premium Dashboard</p>
+    <p>© 2025 UnitDuel.com | Premium Dashboard</p>
 </div>
 """, unsafe_allow_html=True)

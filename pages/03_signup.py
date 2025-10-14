@@ -1,11 +1,11 @@
 """
-Signup Page for PurePicks.COM
+Signup Page for UnitDuel.com
 """
 
 import streamlit as st
 from auth import AuthManager, init_session_state
 
-st.set_page_config(page_title="Sign Up - PurePicks.COM", page_icon="✨", layout="centered")
+st.set_page_config(page_title="Sign Up - UnitDuel.com", page_icon="✨", layout="centered")
 
 # Custom CSS
 st.markdown("""
@@ -25,7 +25,7 @@ init_session_state()
 auth_manager = AuthManager()
 
 # Header
-st.markdown("### ✨ Join PurePicks.COM")
+st.markdown("### ✨ Join UnitDuel.com")
 st.markdown("Create your account and get started")
 st.markdown("---")
 
@@ -41,7 +41,7 @@ with st.form("signup_form"):
         submit = st.form_submit_button("Create Account", use_container_width=True, type="primary")
     with col2:
         if st.form_submit_button("Back to Home", use_container_width=True):
-            st.switch_page("purepicks_app.py")
+            st.switch_page("unitduel_app.py")
     
     if submit:
         # Validation

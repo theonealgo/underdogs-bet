@@ -1,11 +1,11 @@
 """
-Login Page for PurePicks.COM
+Login Page for UnitDuel.com
 """
 
 import streamlit as st
 from auth import AuthManager, init_session_state
 
-st.set_page_config(page_title="Login - PurePicks.COM", page_icon="🔐", layout="centered")
+st.set_page_config(page_title="Login - UnitDuel.com", page_icon="🔐", layout="centered")
 
 # Custom CSS
 st.markdown("""
@@ -25,7 +25,7 @@ init_session_state()
 auth_manager = AuthManager()
 
 # Header
-st.markdown("### 🔐 Login to PurePicks.COM")
+st.markdown("### 🔐 Login to UnitDuel.com")
 st.markdown("---")
 
 # Login Form
@@ -40,7 +40,7 @@ with st.form("login_form"):
         back_home = st.form_submit_button("Back to Home", use_container_width=True)
     
     if back_home:
-        st.switch_page("purepicks_app.py")
+        st.switch_page("unitduel_app.py")
     
     if submit:
         if not username or not password:

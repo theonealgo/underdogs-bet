@@ -1,5 +1,5 @@
 """
-PurePicks.COM - Professional Sports Prediction Platform
+UnitDuel.com - Professional Sports Prediction Platform
 Landing Page with Free Pick
 """
 
@@ -11,7 +11,7 @@ from auth import AuthManager, init_session_state
 
 # Page config
 st.set_page_config(
-    page_title="PurePicks.COM - Elite Sports Predictions",
+    page_title="UnitDuel.com - Elite Sports Predictions",
     page_icon="🏆",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -137,7 +137,7 @@ auth_manager = AuthManager()
 # Header
 st.markdown("""
 <div class="main-header">
-    <h1 style="margin: 0; font-size: 3.5rem;">🏆 PurePicks.COM</h1>
+    <h1 style="margin: 0; font-size: 3.5rem;">🏆 UnitDuel.com</h1>
     <p style="font-size: 1.3rem; margin-top: 1rem;">Elite Sports Predictions Powered by AI</p>
 </div>
 """, unsafe_allow_html=True)
@@ -255,7 +255,7 @@ with col2:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 2rem;">
-    <p>© 2025 PurePicks.COM | Elite Sports Predictions</p>
+    <p>© 2025 UnitDuel.com | Elite Sports Predictions</p>
     <p style="font-size: 0.9rem;">Powered by Advanced Machine Learning Models</p>
 </div>
 """, unsafe_allow_html=True)

@@ -1,5 +1,5 @@
 """
-Simple Authentication System for PurePicks.COM
+Simple Authentication System for UnitDuel.com
 User will add Stripe integration later
 """
 
