@@ -55,10 +55,8 @@ with st.form("signup_form"):
             success, message = auth_manager.signup(username, email, password)
             if success:
                 st.success(message)
-                st.info("Please login to continue")
+                st.info("✅ Account created! Please use the 'Login Here' button below to sign in.")
                 st.balloons()
-                if st.button("Go to Login"):
-                    st.switch_page("pages/02_login.py")
             else:
                 st.error(message)
 

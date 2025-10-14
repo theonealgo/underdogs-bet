@@ -37,8 +37,10 @@ with st.form("login_form"):
     with col1:
         submit = st.form_submit_button("Login", use_container_width=True, type="primary")
     with col2:
-        if st.form_submit_button("Back to Home", use_container_width=True):
-            st.switch_page("purepicks_app.py")
+        back_home = st.form_submit_button("Back to Home", use_container_width=True)
+    
+    if back_home:
+        st.switch_page("purepicks_app.py")
     
     if submit:
         if not username or not password:
