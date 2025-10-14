@@ -108,36 +108,51 @@ try:
                 
                 # Show games for this date
                 for _, game in date_games.iterrows():
-                    # Calculate blended probability
-                    elo = float(game['elo_home_prob']) if pd.notna(game['elo_home_prob']) else 0.5
-                    logistic = float(game['logistic_home_prob']) if pd.notna(game['logistic_home_prob']) else 0.5
-                    xgboost = float(game['xgboost_home_prob']) if pd.notna(game['xgboost_home_prob']) else 0.5
+                    # Get home probabilities (these are already HOME team win probabilities from database)
+                    elo_home = float(game['elo_home_prob']) if pd.notna(game['elo_home_prob']) else 0.5
+                    log_home = float(game['logistic_home_prob']) if pd.notna(game['logistic_home_prob']) else 0.5
+                    xgb_home = float(game['xgboost_home_prob']) if pd.notna(game['xgboost_home_prob']) else 0.5
                     
-                    blended = (0.30 * elo + 0.35 * logistic + 0.35 * xgboost) * 100
+                    # Blended HOME team win probability (30% Elo + 35% Logistic + 35% XGBoost)
+                    blended_home_prob = (0.30 * elo_home + 0.35 * log_home + 0.35 * xgb_home)
                     
                     # Determine pick
-                    if blended > 50:
-                        pick = game['home_team_id']
-                        confidence = blended
+                    if blended_home_prob > 0.5:
+                        pick_team = game['home_team_id']
+                        pick_prob = blended_home_prob * 100
                     else:
-                        pick = game['away_team_id']
-                        confidence = 100 - blended
+                        pick_team = game['away_team_id']
+                        pick_prob = (1 - blended_home_prob) * 100
                     
-                    # Display game card
-                    col1, col2 = st.columns([2, 1])
+                    # Display game card with proper styling
+                    st.markdown(f"""
+                    <div style="background: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1.5rem; border-left: 5px solid #667eea;">
+                        <h4 style="margin: 0 0 1rem 0;">🏈 {game['away_team_id']} @ {game['home_team_id']}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col1, col2 = st.columns([1, 1])
                     
                     with col1:
-                        st.markdown(f"**{game['away_team_id']} @ {game['home_team_id']}**")
-                        st.markdown(f"🎯 **Pick:** {pick} ({confidence:.1f}% confidence)")
+                        st.markdown(f"### 🎯 **Pick: {pick_team}**")
+                        st.markdown(f"**Confidence: {pick_prob:.1f}%**")
+                        
+                        st.markdown("#### Model Probabilities (Home Team):")
+                        st.markdown(f"""
+                        - **Elo Rating:** {elo_home*100:.1f}% {game['home_team_id']} | {(1-elo_home)*100:.1f}% {game['away_team_id']}
+                        - **Logistic Regression:** {log_home*100:.1f}% {game['home_team_id']} | {(1-log_home)*100:.1f}% {game['away_team_id']}
+                        - **XGBoost:** {xgb_home*100:.1f}% {game['home_team_id']} | {(1-xgb_home)*100:.1f}% {game['away_team_id']}
+                        - **🔮 Blended (30% Elo + 35% Log + 35% XGB):** {blended_home_prob*100:.1f}% {game['home_team_id']} | {(1-blended_home_prob)*100:.1f}% {game['away_team_id']}
+                        """)
                     
                     with col2:
-                        st.markdown("**Model Breakdown:**")
+                        st.markdown("#### Model Breakdown")
                         st.markdown(f"""
-                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                            <span class="prediction-confidence">Elo: {elo*100:.1f}%</span>
-                            <span class="prediction-confidence">Log: {logistic*100:.1f}%</span>
-                            <span class="prediction-confidence">XGB: {xgboost*100:.1f}%</span>
-                            <span class="prediction-confidence" style="background: #667eea; color: white;">Blended: {blended:.1f}%</span>
+                        <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px;">
+                            <p style="margin: 0.5rem 0;"><strong>Elo:</strong> {elo_home*100:.1f}%</p>
+                            <p style="margin: 0.5rem 0;"><strong>Logistic:</strong> {log_home*100:.1f}%</p>
+                            <p style="margin: 0.5rem 0;"><strong>XGBoost:</strong> {xgb_home*100:.1f}%</p>
+                            <p style="margin: 0.5rem 0; background: #667eea; color: white; padding: 0.5rem; border-radius: 5px;"><strong>Blended:</strong> {blended_home_prob*100:.1f}%</p>
                         </div>
                         """, unsafe_allow_html=True)
                     

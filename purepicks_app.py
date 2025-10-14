@@ -98,7 +98,7 @@ def get_top_free_pick():
             if not df.empty:
                 pick = df.iloc[0]
                 
-                # Calculate blended probability
+                # Calculate blended probability (HOME team win probability)
                 elo = float(pick['elo_home_prob']) if pick['elo_home_prob'] else 0.5
                 logistic = float(pick['logistic_home_prob']) if pick['logistic_home_prob'] else 0.5
                 xgboost = float(pick['xgboost_home_prob']) if pick['xgboost_home_prob'] else 0.5
@@ -115,13 +115,15 @@ def get_top_free_pick():
                 
                 return {
                     'sport': pick['sport'],
+                    'home': pick['home_team_id'],
+                    'away': pick['away_team_id'],
                     'matchup': f"{pick['away_team_id']} @ {pick['home_team_id']}",
                     'pick': pick_team,
                     'confidence': confidence,
-                    'elo': elo * 100,
-                    'logistic': logistic * 100,
-                    'xgboost': xgboost * 100,
-                    'blended': blended * 100
+                    'elo_home': elo * 100,
+                    'logistic_home': logistic * 100,
+                    'xgboost_home': xgboost * 100,
+                    'blended_home': blended * 100
                 }
     except Exception as e:
         st.error(f"Error loading pick: {e}")
@@ -186,41 +188,17 @@ if free_pick:
     </div>
     """, unsafe_allow_html=True)
     
-    # Model Breakdown
-    st.markdown("#### 🔬 Model Breakdown")
-    col1, col2, col3, col4 = st.columns(4)
+    # Model Breakdown (showing HOME team probabilities)
+    st.markdown("#### 🔬 Model Breakdown (Home Team Win Probability)")
     
-    with col1:
-        st.markdown(f"""
-        <div class="model-stat">
-            <p style="margin: 0; color: #666;">Elo</p>
-            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['elo']:.1f}%</h3>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown(f"""
+    **{free_pick['home']}** (Home) vs **{free_pick['away']}** (Away)
     
-    with col2:
-        st.markdown(f"""
-        <div class="model-stat">
-            <p style="margin: 0; color: #666;">Logistic</p>
-            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['logistic']:.1f}%</h3>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown(f"""
-        <div class="model-stat">
-            <p style="margin: 0; color: #666;">XGBoost</p>
-            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['xgboost']:.1f}%</h3>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown(f"""
-        <div class="model-stat">
-            <p style="margin: 0; color: #666;">Blended</p>
-            <h3 style="margin: 0.5rem 0; color: #667eea;">{free_pick['blended']:.1f}%</h3>
-        </div>
-        """, unsafe_allow_html=True)
+    - **Elo Rating:** {free_pick['elo_home']:.1f}% {free_pick['home']} | {100-free_pick['elo_home']:.1f}% {free_pick['away']}
+    - **Logistic Regression:** {free_pick['logistic_home']:.1f}% {free_pick['home']} | {100-free_pick['logistic_home']:.1f}% {free_pick['away']}
+    - **XGBoost:** {free_pick['xgboost_home']:.1f}% {free_pick['home']} | {100-free_pick['xgboost_home']:.1f}% {free_pick['away']}
+    - **🔮 Blended (30% Elo + 35% Logistic + 35% XGBoost):** {free_pick['blended_home']:.1f}% {free_pick['home']} | {100-free_pick['blended_home']:.1f}% {free_pick['away']}
+    """)
 else:
     st.info("No picks available for today. Check back soon!")
 
