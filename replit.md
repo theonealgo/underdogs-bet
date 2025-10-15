@@ -92,6 +92,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Updates (October 2025)
 
+**Sports Background Image (Oct 15, 2025)**
+- **Added professional sports background** to all pages (football, baseball, basketball design)
+- Background image: `/static/sports_background.png` with dark blue sports theme
+- Fixed background with cover sizing for consistent display across all devices
+- Semi-transparent overlay ensures content readability over background
+- Applied site-wide through base template
+
 **Model Display Clarification (Oct 15, 2025)**
 - **Removed "Consensus" label confusion** - Changed to accurate "Logistic" model name
 - **Added "Home Win Probability" labels** to clarify what percentages represent
