@@ -70,58 +70,40 @@
         }
         
         .navbar nav {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            flex-direction: column;
+            padding: 1rem 0;
+            display: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        
+        .navbar nav.active {
             display: flex;
-            align-items: center;
         }
         
         .navbar nav a {
             color: white;
             text-decoration: none;
-            margin-left: 2rem;
+            margin: 0.5rem 0;
+            padding: 0.5rem 2rem;
+            width: 100%;
+            text-align: left;
             font-weight: 500;
-            transition: opacity 0.3s;
+            transition: background 0.3s;
         }
         
         .navbar nav a:hover {
-            opacity: 0.8;
+            background: rgba(255,255,255,0.1);
         }
         
         @media (max-width: 768px) {
             .navbar-logo {
                 height: 40px;
-            }
-            
-            .navbar nav {
-                position: absolute;
-                top: 100%;
-                left: 0;
-                right: 0;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                flex-direction: column;
-                padding: 1rem 0;
-                display: none;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            }
-            
-            .navbar nav.active {
-                display: flex;
-            }
-            
-            .navbar nav a {
-                margin: 0.5rem 0;
-                padding: 0.5rem 2rem;
-                width: 100%;
-                text-align: left;
-            }
-            
-            .navbar nav a:hover {
-                background: rgba(255,255,255,0.1);
-            }
-        }
-        
-        @media (min-width: 769px) {
-            .navbar nav {
-                display: flex !important;
             }
         }
         
