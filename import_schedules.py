@@ -65,7 +65,8 @@ def import_sport_schedule(sport):
         
         for game in schedule:
             game_date = parse_date(game['date'])
-            game_id = f"{sport}_{game['match_id']}"
+            match_id = game.get('match_id', game.get('id', ''))
+            game_id = f"{sport}_{match_id}"
             
             # Store game info
             games_data.append({
@@ -138,9 +139,8 @@ def import_sport_schedule(sport):
                         print(f"  ⚠ Could not generate prediction for {game['game_id']}: {e}")
                 
                 if predictions_data:
-                    pred_df = pd.DataFrame(predictions_data)
-                    db.store_predictions(pred_df)
-                    print(f"✓ Generated {len(pred_df)} predictions for upcoming games")
+                    db.store_predictions(predictions_data)  # Pass list, not DataFrame
+                    print(f"✓ Generated {len(predictions_data)} predictions for upcoming games")
             else:
                 print(f"  ℹ No upcoming games to predict")
         else:
