@@ -172,7 +172,7 @@ def import_sport_schedule(sport):
 
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("UNITDUEL.COM - SCHEDULE IMPORTER")
+    print("JACKPOTPICKS.BET - SCHEDULE IMPORTER")
     print("="*60)
     print("Importing schedules from models/schedules.py")
     
@@ -200,4 +200,4 @@ if __name__ == "__main__":
     print(f"{'='*60}")
     print(f"Total games imported: {total_games}")
     print(f"Sports processed: {len(available_sports)}")
-    print("\n🎉 UnitDuel.com is ready!")
+    print("\n🎉 jackpotpicks.bet is ready!")

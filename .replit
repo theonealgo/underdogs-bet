@@ -20,19 +20,19 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "UnitDuel.com"
+args = "jackpotpicks.bet"
 
 [[workflows.workflow]]
-name = "UnitDuel.com"
+name = "jackpotpicks.bet"
 author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python flask_app.py"
 waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [[ports]]
 localPort = 5000

@@ -1,5 +1,5 @@
 """
-UnitDuel.com - Flask Application
+jackpotpicks.bet - Flask Application
 Professional Sports Prediction Platform
 """
 

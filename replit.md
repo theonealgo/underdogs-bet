@@ -1,8 +1,8 @@
-# Multi-Sport Prediction System
+# jackpotpicks.bet - Multi-Sport Prediction System
 
 ## Overview
 
-This is a comprehensive multi-sport game prediction system (MLB, NBA, NFL, NHL, NCAA Football, NCAA Basketball, WNBA) that uses machine learning to predict game winners and totals (over/under). The system features a dual-source data collection strategy: API data for playoff games and Excel files for regular season schedules. It includes automated data pipelines, backtesting capabilities, and a Streamlit web interface for visualization and interaction.
+jackpotpicks.bet is a comprehensive multi-sport game prediction platform (MLB, NBA, NFL, NHL, NCAA Football, NCAA Basketball, WNBA) that uses machine learning to predict game winners and totals (over/under). The system features a dual-source data collection strategy: API data for playoff games and Excel files for regular season schedules. It includes automated data pipelines, backtesting capabilities, and a Flask web application for visualization and interaction.
 
 ## User Preferences
 
