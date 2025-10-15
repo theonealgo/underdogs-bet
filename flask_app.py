@@ -187,9 +187,8 @@ def logout():
     return redirect(url_for('index'))
 
 @app.route('/dashboard')
-@login_required
 def dashboard():
-    """Dashboard with predictions"""
+    """Dashboard with predictions - open for testing"""
     sport_filter = request.args.get('sport', 'NFL')
     
     db = DatabaseManager()
