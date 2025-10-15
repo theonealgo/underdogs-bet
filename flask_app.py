@@ -308,8 +308,9 @@ def dashboard():
                          user=current_user)
 
 @app.route('/results')
+@login_required
 def results():
-    """Results page showing model backtesting performance"""
+    """Results page showing model backtesting performance - ADMIN ONLY"""
     conn = sqlite3.connect('sports_predictions.db')
     cursor = conn.cursor()
     
