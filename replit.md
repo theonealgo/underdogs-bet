@@ -92,6 +92,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Updates (October 2025)
 
+**Responsive Burger Menu (Oct 15, 2025)**
+- **Mobile-friendly navigation** with hamburger menu for screens ≤768px
+- **Accessible button** with proper aria-labels and aria-expanded states
+- **Auto-close behavior** when clicking links or outside menu
+- **Smooth transitions** between mobile and desktop layouts
+- Desktop view maintains horizontal navigation, mobile shows vertical dropdown
+
 **Backtesting System & Results Page (Oct 15, 2025)**
 - **Created comprehensive backtesting system** using leave-one-out cross-validation
 - Evaluates model predictions against actual completed game results
