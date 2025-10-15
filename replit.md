@@ -92,6 +92,21 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Updates (October 2025)
 
+**Backtesting System & Results Page (Oct 15, 2025)**
+- **Created comprehensive backtesting system** using leave-one-out cross-validation
+- Evaluates model predictions against actual completed game results
+- **Realistic accuracy results**:
+  - NFL: Consensus & XGBoost 60.0% (best), Elo 53.8%
+  - NHL: Consensus 45.8% (best), Elo & XGBoost 43.8%
+  - MLB: Elo 54.8% (best), Consensus & XGBoost 48.4%
+- **Results page** at `/results` displays:
+  - Model performance metrics by sport
+  - Visual accuracy bars with gradient fills
+  - Automatic highlighting of best-performing model(s)
+  - Handles ties correctly (e.g., NFL shows 3 models tied at 60%)
+- Proper validation prevents data leakage (each game excluded from its own training set)
+- Database table `model_backtest_results` stores historical performance metrics
+
 **Flask Conversion (Oct 15, 2025)**
 - **Complete migration from Streamlit to Flask** for better control and customization
 - Implemented Flask-Login authentication system with session management
