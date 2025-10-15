@@ -253,6 +253,38 @@ def dashboard():
                          sport_filter=sport_filter,
                          user=current_user)
 
+@app.route('/results')
+def results():
+    """Results page showing model backtesting performance"""
+    conn = sqlite3.connect('sports_predictions.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT sport, elo_correct, consensus_correct, xgboost_correct, combined_correct,
+               total_games, elo_accuracy, consensus_accuracy, xgboost_accuracy, combined_accuracy
+        FROM model_backtest_results
+        ORDER BY sport
+    ''')
+    
+    backtest_results = []
+    for row in cursor.fetchall():
+        backtest_results.append({
+            'sport': row[0],
+            'elo_correct': row[1],
+            'consensus_correct': row[2],
+            'xgboost_correct': row[3],
+            'combined_correct': row[4],
+            'total': row[5],
+            'elo_accuracy': row[6],
+            'consensus_accuracy': row[7],
+            'xgboost_accuracy': row[8],
+            'combined_accuracy': row[9]
+        })
+    
+    conn.close()
+    
+    return render_template('results.html', backtest_results=backtest_results, user=current_user)
+
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=5000, debug=True)
