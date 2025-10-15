@@ -84,11 +84,25 @@ def import_sport_schedule(sport):
             if game.get('result'):
                 try:
                     result = game['result'].strip()
-                    # Handle format: "24 - 20" (home - away)
+                    home_score = None
+                    away_score = None
+                    
+                    # Handle different result formats
                     if ' - ' in result:
+                        # Format: "24 - 20" (home - away)
                         scores = result.split('-')
                         home_score = int(scores[0].strip())
                         away_score = int(scores[1].strip())
+                    elif 'home win' in result.lower():
+                        # Format: "Home Win" - assign dummy scores
+                        home_score = 1
+                        away_score = 0
+                    elif 'away win' in result.lower():
+                        # Format: "Away Win" - assign dummy scores
+                        home_score = 0
+                        away_score = 1
+                    
+                    if home_score is not None and away_score is not None:
                         training_data.append({
                             'Home': game['home_team'],
                             'Away': game['away_team'],
