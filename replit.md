@@ -11,10 +11,11 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Frontend Architecture
-- **Streamlit Web Interface**: Multi-page application with navigation sidebar
-- **Interactive Dashboards**: Real-time predictions, historical data visualization, model performance metrics
-- **Plotly Visualizations**: Dynamic charts and graphs for data presentation
-- **Caching Strategy**: Uses `@st.cache_resource` for component initialization to improve performance
+- **Flask Web Application**: Professional web app with Jinja2 templates
+- **Routes**: Landing page (/), Login (/login), Signup (/signup), Dashboard (/dashboard), Logout (/logout)
+- **Authentication**: Flask-Login session-based authentication with secure password hashing
+- **Responsive Design**: Clean, modern UI with gradient accents and mobile-friendly layout
+- **Template Inheritance**: Base template with consistent navigation and styling
 
 ### Backend Architecture
 - **Modular Design**: Clean separation of concerns across data collection, storage, modeling, and API layers
@@ -70,8 +71,10 @@ Preferred communication style: Simple, everyday language.
 - **trafilatura**: Web content extraction
 
 ### Web Interface
-- **streamlit**: Web application framework
-- **plotly**: Interactive data visualization
+- **flask**: Web application framework
+- **flask-login**: User session management and authentication
+- **flask-wtf**: Form handling and CSRF protection
+- **werkzeug**: Password hashing and security utilities
 
 ### Utilities
 - **schedule**: Task scheduling and automation
@@ -88,6 +91,23 @@ Preferred communication style: Simple, everyday language.
   - See `schedules/README.md` for format details
 
 ### Recent Updates (October 2025)
+
+**Flask Conversion (Oct 15, 2025)**
+- **Complete migration from Streamlit to Flask** for better control and customization
+- Implemented Flask-Login authentication system with session management
+- Created professional HTML templates with Jinja2 (base, index, login, signup, dashboard)
+- Maintained all original functionality: landing page with free pick, authentication, dashboard with sport filtering
+- Dashboard shows 7-day predictions with Model A/B/C breakdown (hides actual model names from competitors)
+- Clean, modern UI with gradient design and responsive layout
+- All users automatically set to premium subscription (Stripe integration pending)
+- Workflow updated to run Flask on port 5000
+
+**Schedule Import System (Oct 15, 2025)**
+- Created `import_schedules.py` to import games and predictions from `models/schedules.py`
+- Successfully imported 2,857 games across all sports (NFL: 272, NBA: 1,237, NHL: 1,312, MLB: 36, partial NCAAF)
+- Generated 1,471 predictions (NFL: 207, NHL: 1,264) using ensemble models
+- Fixed database corruption where MLB showed NFL team names
+- Predictions now properly stored with Elo, Logistic, and XGBoost probabilities
 
 **Universal Ensemble Prediction System (Oct 13, 2025)**
 - Created universal ensemble predictor using **Elo Ratings + GLMNet + XGBoost**
