@@ -139,18 +139,24 @@
                         <div class="pick-team">Pick: {{ pred.pick }}</div>
                         <div class="confidence">{{ "%.1f"|format(pred.confidence) }}% Confidence</div>
                         
+                        <div style="font-size: 0.9rem; color: rgba(255,255,255,0.8); margin: 10px 0;">
+                            Home Win Probability by Model:
+                        </div>
                         <div class="model-breakdown">
                             <div class="model-stat">
-                                <div class="model-name">Elo (35%)</div>
+                                <div class="model-name">Elo Rating</div>
                                 <div class="model-value">{{ "%.1f"|format(pred.elo_home) }}%</div>
+                                <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">35% weight</div>
                             </div>
                             <div class="model-stat">
-                                <div class="model-name">Consensus (15%)</div>
+                                <div class="model-name">Logistic</div>
                                 <div class="model-value">{{ "%.1f"|format(pred.logistic_home) }}%</div>
+                                <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">15% weight</div>
                             </div>
                             <div class="model-stat">
-                                <div class="model-name">XGBoost (50%)</div>
+                                <div class="model-name">XGBoost</div>
                                 <div class="model-value">{{ "%.1f"|format(pred.xgboost_home) }}%</div>
+                                <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">50% weight</div>
                             </div>
                         </div>
                     </div>

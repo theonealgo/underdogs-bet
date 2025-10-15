@@ -92,6 +92,23 @@ Preferred communication style: Simple, everyday language.
 
 ### Recent Updates (October 2025)
 
+**Model Display Clarification (Oct 15, 2025)**
+- **Removed "Consensus" label confusion** - Changed to accurate "Logistic" model name
+- **Added "Home Win Probability" labels** to clarify what percentages represent
+- **Display model weights** next to each prediction (Elo 35%, Logistic 15%, XGBoost 50%)
+- **Three distinct models shown**:
+  1. Elo Rating (35% weight in ensemble)
+  2. Logistic Regression/GLMNet (15% weight in ensemble)
+  3. XGBoost (50% weight in ensemble)
+- **Final "Pick" is the weighted ensemble** combining all three models
+- Applied consistent labeling across main page (/) and dashboard (/dashboard)
+
+**14-Day MLB Forecast (Oct 15, 2025)**
+- **Main page now displays 14 days of MLB predictions** (previous 7 + next 7 days)
+- **Centered layout** with max-width 900px container for clean presentation
+- **Date-grouped display** with clear date headers for easy navigation
+- Each game card shows matchup, pick, confidence, and model breakdown
+
 **Responsive Burger Menu (Oct 15, 2025)**
 - **Mobile-friendly navigation** with hamburger menu for screens ≤768px
 - **Accessible button** with proper aria-labels and aria-expanded states

@@ -157,18 +157,22 @@
                     </div>
                 </div>
                 
+                <p style="font-size: 0.85rem; color: #666; margin: 10px 0;">Home Win Probability:</p>
                 <div class="model-grid">
                     <div class="model-item">
                         <strong>Elo Rating</strong>
                         {{ "%.1f"|format(pred.elo_home) }}%
+                        <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">35% weight</div>
                     </div>
                     <div class="model-item">
-                        <strong>Consensus</strong>
+                        <strong>Logistic</strong>
                         {{ "%.1f"|format(pred.logistic_home) }}%
+                        <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">15% weight</div>
                     </div>
                     <div class="model-item">
                         <strong>XGBoost</strong>
                         {{ "%.1f"|format(pred.xgboost_home) }}%
+                        <div style="font-size: 0.75rem; color: #999; margin-top: 3px;">50% weight</div>
                     </div>
                 </div>
             </div>
