@@ -177,7 +177,9 @@
             </div>
         </div>
         
-        <div class="model-result {% if result.elo_accuracy >= result.consensus_accuracy and result.elo_accuracy >= result.xgboost_accuracy %}best-model{% endif %}">
+        {% set max_accuracy = [result.elo_accuracy, result.consensus_accuracy, result.xgboost_accuracy, result.combined_accuracy]|max %}
+        
+        <div class="model-result {% if result.elo_accuracy == max_accuracy %}best-model{% endif %}">
             <span class="model-name">Elo Rating (35%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
@@ -187,7 +189,7 @@
             </div>
         </div>
         
-        <div class="model-result {% if result.consensus_accuracy > result.elo_accuracy and result.consensus_accuracy >= result.xgboost_accuracy %}best-model{% endif %}">
+        <div class="model-result {% if result.consensus_accuracy == max_accuracy %}best-model{% endif %}">
             <span class="model-name">Consensus (15%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
@@ -197,7 +199,7 @@
             </div>
         </div>
         
-        <div class="model-result {% if result.xgboost_accuracy > result.elo_accuracy and result.xgboost_accuracy > result.consensus_accuracy %}best-model{% endif %}">
+        <div class="model-result {% if result.xgboost_accuracy == max_accuracy %}best-model{% endif %}">
             <span class="model-name">XGBoost (50%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
@@ -207,7 +209,7 @@
             </div>
         </div>
         
-        <div class="model-result" style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #667eea;">
+        <div class="model-result {% if result.combined_accuracy == max_accuracy %}best-model{% endif %}" style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #667eea;">
             <span class="model-combined">Combined Ensemble</span>
             <div class="accuracy">
                 <div class="accuracy-bar">

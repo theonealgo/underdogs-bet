@@ -30,7 +30,7 @@ def parse_result_winner(result, home_team, away_team):
     return None
 
 def backtest_sport(sport):
-    """Backtest a specific sport"""
+    """Backtest a specific sport using leave-one-out cross-validation"""
     print(f"\n{'='*60}")
     print(f"Backtesting {sport}")
     print(f"{'='*60}")
@@ -45,9 +45,8 @@ def backtest_sport(sport):
     
     print(f"  Found {len(completed_games)} completed games")
     
-    # Prepare training data and test games
-    training_data = []
-    test_games = []
+    # Prepare all game data
+    all_games_data = []
     
     for game in completed_games:
         result = game['result'].strip()
@@ -67,52 +66,49 @@ def backtest_sport(sport):
             away_score = 1
         
         if home_score is not None and away_score is not None:
-            training_data.append({
+            all_games_data.append({
                 'Home': game['home_team'],
                 'Away': game['away_team'],
                 'Home_Score': home_score,
-                'Away_Score': away_score
-            })
-            
-            test_games.append({
-                'home': game['home_team'],
-                'away': game['away_team'],
-                'actual_winner': parse_result_winner(game['result'], game['home_team'], game['away_team']),
-                'result': game['result']
+                'Away_Score': away_score,
+                'actual_winner': parse_result_winner(game['result'], game['home_team'], game['away_team'])
             })
     
-    if not test_games:
+    if not all_games_data:
         print(f"  Could not parse any results")
         return None
     
-    training_df = pd.DataFrame(training_data)
-    
-    # Generate predictions and compare
+    # Generate predictions and compare using leave-one-out
     results = {
         'elo_correct': 0,
         'consensus_correct': 0,
         'xgboost_correct': 0,
         'combined_correct': 0,
-        'total': len(test_games)
+        'total': len(all_games_data)
     }
     
-    for game in test_games:
-        pred = calculate_predictions(training_df, game['home'], game['away'])
+    for i, test_game in enumerate(all_games_data):
+        # Create training set excluding the current test game (leave-one-out)
+        training_data = [g for j, g in enumerate(all_games_data) if j != i]
+        training_df = pd.DataFrame(training_data)
+        
+        # Generate prediction for this game
+        pred = calculate_predictions(training_df, test_game['Home'], test_game['Away'])
         
         # Determine predicted winners
-        elo_pred = game['home'] if pred['elo_home_prob'] > 0.5 else game['away']
-        consensus_pred = game['home'] if pred['logistic_home_prob'] > 0.5 else game['away']
-        xgboost_pred = game['home'] if pred['xgboost_home_prob'] > 0.5 else game['away']
-        combined_pred = game['home'] if pred['home_win_prob'] > 0.5 else game['away']
+        elo_pred = test_game['Home'] if pred['elo_home_prob'] > 0.5 else test_game['Away']
+        consensus_pred = test_game['Home'] if pred['logistic_home_prob'] > 0.5 else test_game['Away']
+        xgboost_pred = test_game['Home'] if pred['xgboost_home_prob'] > 0.5 else test_game['Away']
+        combined_pred = test_game['Home'] if pred['home_win_prob'] > 0.5 else test_game['Away']
         
         # Check accuracy
-        if elo_pred == game['actual_winner']:
+        if elo_pred == test_game['actual_winner']:
             results['elo_correct'] += 1
-        if consensus_pred == game['actual_winner']:
+        if consensus_pred == test_game['actual_winner']:
             results['consensus_correct'] += 1
-        if xgboost_pred == game['actual_winner']:
+        if xgboost_pred == test_game['actual_winner']:
             results['xgboost_correct'] += 1
-        if combined_pred == game['actual_winner']:
+        if combined_pred == test_game['actual_winner']:
             results['combined_correct'] += 1
     
     # Calculate percentages
