@@ -120,9 +120,63 @@ def get_top_free_pick():
 
 @app.route('/')
 def index():
-    """Landing page with free pick"""
-    free_pick = get_top_free_pick()
-    return render_template('index.html', free_pick=free_pick)
+    """Landing page with MLB predictions for 14 days"""
+    db = DatabaseManager()
+    today = datetime.now().date()
+    start_date = today - timedelta(days=7)  # 7 days ago
+    end_date = today + timedelta(days=7)    # 7 days from now
+    
+    mlb_predictions = []
+    
+    try:
+        with db._get_connection() as conn:
+            query = """
+                SELECT 
+                    p.game_id, p.sport, p.game_date,
+                    g.home_team_id, g.away_team_id,
+                    p.elo_home_prob, p.logistic_home_prob, p.xgboost_home_prob,
+                    p.win_probability
+                FROM predictions p
+                JOIN games g ON p.game_id = g.game_id
+                WHERE p.sport = 'MLB'
+                AND DATE(p.game_date) >= DATE(?)
+                AND DATE(p.game_date) <= DATE(?)
+                ORDER BY p.game_date, p.game_id
+            """
+            df = pd.read_sql_query(query, conn, params=[
+                start_date.strftime('%Y-%m-%d'),
+                end_date.strftime('%Y-%m-%d')
+            ])
+            
+            for _, row in df.iterrows():
+                elo = float(row['elo_home_prob']) if row['elo_home_prob'] else 0.5
+                logistic = float(row['logistic_home_prob']) if row['logistic_home_prob'] else 0.5
+                xgboost = float(row['xgboost_home_prob']) if row['xgboost_home_prob'] else 0.5
+                
+                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+                blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
+                
+                if blended > 0.5:
+                    pick = row['home_team_id']
+                    confidence = blended * 100
+                else:
+                    pick = row['away_team_id']
+                    confidence = (1 - blended) * 100
+                
+                mlb_predictions.append({
+                    'date': row['game_date'],
+                    'home': row['home_team_id'],
+                    'away': row['away_team_id'],
+                    'pick': pick,
+                    'confidence': confidence,
+                    'elo_home': elo * 100,
+                    'logistic_home': logistic * 100,
+                    'xgboost_home': xgboost * 100
+                })
+    except Exception as e:
+        print(f"Error loading MLB predictions: {e}")
+    
+    return render_template('index.html', mlb_predictions=mlb_predictions)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
