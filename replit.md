@@ -97,7 +97,12 @@ Preferred communication style: Simple, everyday language.
 - Implemented Flask-Login authentication system with session management
 - Created professional HTML templates with Jinja2 (base, index, login, signup, dashboard)
 - Maintained all original functionality: landing page with free pick, authentication, dashboard with sport filtering
-- Dashboard shows 7-day predictions with Model A/B/C breakdown (hides actual model names from competitors)
+- Dashboard shows 7-day predictions with three-model ensemble breakdown
+- **Ensemble Model**: CompositeHome = (XGBoost × 50%) + (Elo × 35%) + (Consensus × 15%)
+  - XGBoost given highest weight for better accuracy
+  - Elo Rating provides stable baseline
+  - Consensus model offers additional validation
+- Login removed for testing phase - open dashboard access
 - Clean, modern UI with gradient design and responsive layout
 - All users automatically set to premium subscription (Stripe integration pending)
 - Workflow updated to run Flask on port 5000

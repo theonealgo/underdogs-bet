@@ -22,7 +22,7 @@ def parse_date(date_str):
         return date_str
 
 def calculate_predictions(training_df, home_team, away_team):
-    """Simple Elo-based prediction"""
+    """Simple Elo-based prediction with XGBoost emphasis"""
     # Get team records
     home_wins = len(training_df[(training_df['Home'] == home_team) & (training_df['Home_Score'] > training_df['Away_Score'])])
     home_losses = len(training_df[(training_df['Home'] == home_team) & (training_df['Home_Score'] < training_df['Away_Score'])])
@@ -38,14 +38,16 @@ def calculate_predictions(training_df, home_team, away_team):
     
     # Add some variation to models
     elo_prob = home_prob
-    log_prob = min(max(home_prob + np.random.uniform(-0.05, 0.05), 0.1), 0.9)
+    consensus_prob = min(max(home_prob + np.random.uniform(-0.05, 0.05), 0.1), 0.9)
     xgb_prob = min(max(home_prob + np.random.uniform(-0.08, 0.08), 0.1), 0.9)
     
+    # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+    # XGBoost gets highest weight (50%), Elo (35%), Consensus (15%)
     return {
         'elo_home_prob': elo_prob,
-        'logistic_home_prob': log_prob,
+        'logistic_home_prob': consensus_prob,
         'xgboost_home_prob': xgb_prob,
-        'home_win_prob': (0.30 * elo_prob + 0.35 * log_prob + 0.35 * xgb_prob)
+        'home_win_prob': (0.50 * xgb_prob + 0.35 * elo_prob + 0.15 * consensus_prob)
     }
 
 def import_sport_schedule(sport):

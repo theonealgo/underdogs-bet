@@ -92,7 +92,8 @@ def get_top_free_pick():
                 logistic = float(pick['logistic_home_prob']) if pick['logistic_home_prob'] else 0.5
                 xgboost = float(pick['xgboost_home_prob']) if pick['xgboost_home_prob'] else 0.5
                 
-                blended = (0.30 * elo + 0.35 * logistic + 0.35 * xgboost)
+                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+                blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
                 
                 if blended > 0.5:
                     pick_team = pick['home_team_id']
@@ -223,7 +224,8 @@ def dashboard():
                 logistic = float(row['logistic_home_prob']) if row['logistic_home_prob'] else 0.5
                 xgboost = float(row['xgboost_home_prob']) if row['xgboost_home_prob'] else 0.5
                 
-                blended = (0.30 * elo + 0.35 * logistic + 0.35 * xgboost)
+                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+                blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
                 
                 if blended > 0.5:
                     pick = row['home_team_id']
