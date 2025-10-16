@@ -83,6 +83,15 @@ def calculate_predictions(training_df, home_team, away_team):
         'home_win_prob': (0.50 * xgb_prob + 0.35 * elo_prob + 0.15 * consensus_prob)
     }
 
+def parse_date_to_datetime(date_str):
+    """Parse DD/MM/YYYY date string to datetime for comparison"""
+    try:
+        return datetime.strptime(date_str, '%d/%m/%Y')
+    except Exception as e:
+        # CRITICAL: If parsing fails, return None (don't leak with sentinel date!)
+        # This will cause the game to use dummy data instead of leaked training data
+        return None
+
 def import_sport_schedule(sport):
     """Import schedule and generate predictions for a sport"""
     print(f"\n{'='*60}")
@@ -124,7 +133,7 @@ def import_sport_schedule(sport):
                 'status': 'final' if game.get('result') or game.get('pts') else 'Scheduled'
             })
             
-            # Extract training data from completed games
+            # Extract training data from completed games (with date for chronological filtering)
             if game.get('result') or game.get('pts'):
                 try:
                     result = game.get('result', '').strip() if game.get('result') else None
@@ -156,7 +165,8 @@ def import_sport_schedule(sport):
                             'Home': home_team,
                             'Away': away_team,
                             'Home_Score': home_score,
-                            'Away_Score': away_score
+                            'Away_Score': away_score,
+                            'game_date': game_date  # Store date for chronological filtering
                         })
                 except Exception as e:
                     print(f"  ⚠ Could not parse result for game {game_id}: {e}")
@@ -168,10 +178,10 @@ def import_sport_schedule(sport):
             db.store_games(games_df)
             print(f"✓ Stored {len(games_df)} games in database")
         
-        # Generate predictions (with or without training data)
-        future_games = games_df[games_df['status'] == 'Scheduled']
+        # Generate predictions for ALL games (both scheduled and completed)
+        all_games = games_df.copy()
         
-        if not future_games.empty:
+        if not all_games.empty:
             predictions_data = []
             
             # Create training data (real or dummy)
@@ -204,10 +214,57 @@ def import_sport_schedule(sport):
                 
                 training_df = pd.DataFrame(training_data)
             
-            # Generate predictions for all future games
-            for _, game in future_games.iterrows():
+            # Generate predictions for all games (scheduled and completed)
+            for _, game in all_games.iterrows():
                 try:
-                    pred = calculate_predictions(training_df, game['home_team_id'], game['away_team_id'])
+                    # CRITICAL: Only use games that happened BEFORE this game (chronological filtering)
+                    # This prevents data leakage for backtesting
+                    
+                    # Check if training data has game_date column (real data vs dummy data)
+                    if 'game_date' in training_df.columns:
+                        # Use chronological filtering for real training data
+                        current_game_date = parse_date_to_datetime(game['game_date'])
+                        
+                        # If date parsing fails, use dummy data (NO DATA LEAKAGE)
+                        if current_game_date is None:
+                            # Cannot parse date - use league-average dummy data
+                            dummy_data = []
+                            for team in [game['home_team_id'], game['away_team_id']]:
+                                for i in range(3):
+                                    dummy_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 100, 'Away_Score': 95})
+                                for i in range(2):
+                                    dummy_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 95, 'Away_Score': 100})
+                                for i in range(2):
+                                    dummy_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 95, 'Away_Score': 100})
+                                for i in range(3):
+                                    dummy_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 100, 'Away_Score': 95})
+                            game_specific_training = pd.DataFrame(dummy_data)
+                        else:
+                            # Filter to only games with valid dates that are BEFORE current game
+                            game_specific_training = training_df[
+                                training_df['game_date'].apply(lambda d: parse_date_to_datetime(d) is not None and parse_date_to_datetime(d) < current_game_date)
+                            ].copy()
+                        
+                        # If no prior games after filtering, create league-average dummy data (NO DATA LEAKAGE)
+                        if game_specific_training.empty:
+                            # Generate balanced dummy data for this game's teams only
+                            dummy_data = []
+                            for team in [game['home_team_id'], game['away_team_id']]:
+                                # 5 wins, 5 losses each
+                                for i in range(3):
+                                    dummy_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 100, 'Away_Score': 95})
+                                for i in range(2):
+                                    dummy_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 95, 'Away_Score': 100})
+                                for i in range(2):
+                                    dummy_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 95, 'Away_Score': 100})
+                                for i in range(3):
+                                    dummy_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 100, 'Away_Score': 95})
+                            game_specific_training = pd.DataFrame(dummy_data)
+                    else:
+                        # Dummy league-average data (no dates) - use all training data
+                        game_specific_training = training_df.copy()
+                    
+                    pred = calculate_predictions(game_specific_training, game['home_team_id'], game['away_team_id'])
                     
                     predictions_data.append({
                         'sport': sport,
@@ -230,9 +287,9 @@ def import_sport_schedule(sport):
             
             if predictions_data:
                 db.store_predictions(predictions_data)  # Pass list, not DataFrame
-                print(f"✓ Generated {len(predictions_data)} predictions for upcoming games")
+                print(f"✓ Generated {len(predictions_data)} predictions for all games")
         else:
-            print(f"  ℹ No upcoming games to predict")
+            print(f"  ℹ No games found to generate predictions")
         
         return len(games_data)
     
