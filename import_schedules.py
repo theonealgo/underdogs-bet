@@ -14,12 +14,18 @@ from schedules import get_schedule, get_available_sports
 from src.data_storage.database import DatabaseManager
 
 def parse_date(date_str):
-    """Parse date from DD/MM/YYYY HH:MM format to DD/MM/YYYY"""
+    """Parse date from ISO YYYY-MM-DD HH:MM format to DD/MM/YYYY"""
     try:
-        dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
-        return dt.strftime('%d/%m/%Y')  # Store in DD/MM/YYYY format
+        # Parse ISO format (YYYY-MM-DD HH:MM)
+        dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
+        return dt.strftime('%d/%m/%Y')  # Store in DD/MM/YYYY for consistency
     except:
-        return date_str
+        # Fallback for old format
+        try:
+            dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
+            return dt.strftime('%d/%m/%Y')
+        except:
+            return date_str
 
 def calculate_predictions(training_df, home_team, away_team):
     """Simple Elo-based prediction with XGBoost emphasis"""
