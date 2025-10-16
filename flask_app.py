@@ -243,12 +243,13 @@ def logout():
 
 @app.route('/dashboard')
 def dashboard():
-    """Dashboard with predictions - open for testing"""
-    sport_filter = request.args.get('sport', 'NFL')
-    
+    """Dashboard with sport selection cards"""
+    return render_template('dashboard.html', user=current_user)
+
+def get_sport_predictions(sport_code, sport_name, sport_emoji):
+    """Helper function to get predictions for a specific sport"""
     db = DatabaseManager()
     today = datetime.now().date()
-    week_later = today + timedelta(days=7)
     
     predictions = []
     
@@ -264,13 +265,11 @@ def dashboard():
                 JOIN games g ON p.game_id = g.game_id
                 WHERE p.sport = ?
                 AND DATE(p.game_date) >= DATE(?)
-                AND DATE(p.game_date) <= DATE(?)
                 ORDER BY p.game_date, p.game_id
             """
             df = pd.read_sql_query(query, conn, params=[
-                sport_filter,
-                today.strftime('%Y-%m-%d'),
-                week_later.strftime('%Y-%m-%d')
+                sport_code,
+                today.strftime('%Y-%m-%d')
             ])
             
             for _, row in df.iterrows():
@@ -278,34 +277,69 @@ def dashboard():
                 logistic = float(row['logistic_home_prob']) if row['logistic_home_prob'] else 0.5
                 xgboost = float(row['xgboost_home_prob']) if row['xgboost_home_prob'] else 0.5
                 
-                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Logistic% * w3)
                 blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
                 
                 if blended > 0.5:
                     pick = row['home_team_id']
-                    confidence = blended * 100
+                    # Show pick team's probability
+                    xgb_pct = xgboost * 100
+                    elo_pct = elo * 100
+                    consensus_pct = blended * 100
                 else:
                     pick = row['away_team_id']
-                    confidence = (1 - blended) * 100
+                    # Show pick team's probability (flip for away team)
+                    xgb_pct = (1 - xgboost) * 100
+                    elo_pct = (1 - elo) * 100
+                    consensus_pct = (1 - blended) * 100
                 
                 predictions.append({
                     'date': row['game_date'],
-                    'sport': row['sport'],
                     'home': row['home_team_id'],
                     'away': row['away_team_id'],
                     'pick': pick,
-                    'confidence': confidence,
-                    'elo_home': elo * 100,
-                    'logistic_home': logistic * 100,
-                    'xgboost_home': xgboost * 100
+                    'xgboost_pct': xgb_pct,
+                    'elo_pct': elo_pct,
+                    'consensus_pct': consensus_pct
                 })
     except Exception as e:
-        print(f"Error loading predictions: {e}")
+        print(f"Error loading {sport_name} predictions: {e}")
     
-    return render_template('dashboard.html', 
+    return render_template('sport_predictions.html', 
                          predictions=predictions, 
-                         sport_filter=sport_filter,
+                         sport_name=sport_name,
+                         sport_emoji=sport_emoji,
                          user=current_user)
+
+@app.route('/nfl')
+def nfl_predictions():
+    """NFL predictions page"""
+    return get_sport_predictions('NFL', 'NFL', '🏈')
+
+@app.route('/nba')
+def nba_predictions():
+    """NBA predictions page"""
+    return get_sport_predictions('NBA', 'NBA', '🏀')
+
+@app.route('/mlb')
+def mlb_predictions():
+    """MLB predictions page"""
+    return get_sport_predictions('MLB', 'MLB', '⚾')
+
+@app.route('/nhl')
+def nhl_predictions():
+    """NHL predictions page"""
+    return get_sport_predictions('NHL', 'NHL', '🏒')
+
+@app.route('/ncaaf')
+def ncaaf_predictions():
+    """NCAA Football predictions page"""
+    return get_sport_predictions('NCAAF', 'NCAA Football', '🏈')
+
+@app.route('/ncaab')
+def ncaab_predictions():
+    """NCAA Basketball predictions page"""
+    return get_sport_predictions('NCAAB', 'NCAA Basketball', '🏀')
 
 @app.route('/results')
 @login_required
