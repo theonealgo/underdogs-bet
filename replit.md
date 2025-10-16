@@ -12,10 +12,16 @@ Preferred communication style: Simple, everyday language.
 
 ### Frontend Architecture
 - **Flask Web Application**: Professional web app with Jinja2 templates
-- **Routes**: Landing page (/), Login (/login), Signup (/signup), Dashboard (/dashboard), Logout (/logout)
+- **Routes**: 
+  - Landing page (/) - 14-day MLB predictions
+  - Login (/login), Signup (/signup), Logout (/logout)
+  - Dashboard (/dashboard) - Sport selection page with 6 sport cards
+  - Sport-specific pages: /nfl, /nba, /mlb, /nhl, /ncaaf, /ncaab
+  - Results (/results) - Model backtesting performance (admin only)
 - **Authentication**: Flask-Login session-based authentication with secure password hashing
 - **Responsive Design**: Clean, modern UI with gradient accents and mobile-friendly layout
 - **Template Inheritance**: Base template with consistent navigation and styling
+- **Compact Table Display**: Sport predictions shown in efficient table format (Date | Away | @ | Home | Pick | XGB% | Elo% | Con%)
 
 ### Backend Architecture
 - **Modular Design**: Clean separation of concerns across data collection, storage, modeling, and API layers
@@ -91,6 +97,25 @@ Preferred communication style: Simple, everyday language.
   - See `schedules/README.md` for format details
 
 ### Recent Updates (October 2025)
+
+**Dashboard Redesign & Sport-Specific Pages (Oct 16, 2025)**
+- **Redesigned dashboard** as sport selection page with 6 sport cards (NFL, NBA, MLB, NHL, NCAA Football, NCAA Basketball)
+- **Individual sport prediction pages** with compact table format for easier viewing
+- **Table format**: Date | Away | @ | Home | Pick | XGB% | Elo% | Con%
+- **New routes**: /nfl, /nba, /mlb, /nhl, /ncaaf, /ncaab
+- **Percentage display logic**: All percentages (XGB%, Elo%, Con%) shown for the picked team
+  - Home pick: Shows home probabilities (e.g., 65% means 65% chance home team wins)
+  - Away pick: Shows inverted probabilities (e.g., 65% means 65% chance away team wins)
+- **Con% (Consensus)**: Final weighted ensemble = (50% XGBoost + 35% Elo + 15% Logistic)
+- **Improved navigation**: "Back to Dashboard" link on all sport pages
+- **Clean, modern design**: Sport cards with hover effects, responsive table layout
+
+**Missing MLB Predictions Generated (Oct 16, 2025)**
+- **Generated predictions for 31 additional MLB games** that were missing predictions
+- **Total MLB games**: 36 games with predictions across 12 different teams
+- **Teams included**: CLE, DET, CHC, SD, NYY, BOS, LAD, CIN, MIL, PHI, TOR, SEA
+- Fixed issue where only SEA vs TOR games had predictions - now all MLB games covered
+- Created `generate_missing_predictions.py` script for future use
 
 **Sports Background Image (Oct 15, 2025)**
 - **Added professional sports background** to all pages (football, baseball, basketball design)
