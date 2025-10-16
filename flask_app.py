@@ -221,9 +221,7 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                 game_date = None
                 try:
                     game_date = datetime.strptime(row['game_date'], '%d/%m/%Y').date()
-                    # Only show games from today onwards
-                    if game_date < today:
-                        continue
+                    # Show ALL games from the schedule (past and future)
                 except:
                     # If date parsing fails, include the game anyway
                     game_date = datetime.now().date()  # Default to today for sorting
