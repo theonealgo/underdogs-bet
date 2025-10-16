@@ -248,8 +248,11 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                     elo_pct = (1 - elo) * 100
                     consensus_pct = (1 - blended) * 100
                 
+                # Format date for display as DD/MM/YYYY
+                display_date = game_date.strftime('%d/%m/%Y') if game_date else row['game_date']
+                
                 predictions.append({
-                    'date': row['game_date'],
+                    'date': display_date,
                     'home': row['home_team_id'],
                     'away': row['away_team_id'],
                     'pick': pick,

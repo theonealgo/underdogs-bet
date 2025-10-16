@@ -14,10 +14,10 @@ from schedules import get_schedule, get_available_sports
 from src.data_storage.database import DatabaseManager
 
 def parse_date(date_str):
-    """Parse date from DD/MM/YYYY HH:MM format to YYYY-MM-DD"""
+    """Parse date from DD/MM/YYYY HH:MM format to DD/MM/YYYY"""
     try:
         dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
-        return dt.strftime('%Y-%m-%d')
+        return dt.strftime('%d/%m/%Y')  # Store in DD/MM/YYYY format
     except:
         return date_str
 
