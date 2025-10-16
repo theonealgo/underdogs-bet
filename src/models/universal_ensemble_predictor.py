@@ -221,13 +221,14 @@ class UniversalSportsEnsemble:
                 'xgboost': 0.50
             }
     
-    def create_features(self, df: pd.DataFrame, is_training: bool = True) -> pd.DataFrame:
+    def create_features(self, df: pd.DataFrame, is_training: bool = True, team_stats: pd.DataFrame = None) -> pd.DataFrame:
         """
-        Create features for prediction
+        Create features for prediction with sport-specific enhancements
         
         Args:
             df: DataFrame with home_team, away_team columns
             is_training: If True, updates Elo ratings based on results
+            team_stats: Optional team statistics for advanced feature engineering
             
         Returns:
             DataFrame with features
@@ -256,6 +257,10 @@ class UniversalSportsEnsemble:
                 'elo_product': home_elo * away_elo,
             }
             
+            # Add sport-specific features if team stats provided
+            if team_stats is not None and not team_stats.empty:
+                features = self._add_sport_specific_features(features, home_team, away_team, team_stats, row)
+            
             # Update Elo if training
             if is_training and 'result' in df.columns:
                 result = row['result']
@@ -268,13 +273,78 @@ class UniversalSportsEnsemble:
         
         return pd.DataFrame(features_list)
     
-    def train(self, historical_df: pd.DataFrame) -> Dict:
+    def _add_sport_specific_features(self, features: dict, home_team: str, away_team: str, team_stats: pd.DataFrame, game_row: pd.Series) -> dict:
+        """Add sport-specific advanced features based on team statistics"""
+        
+        # Get team stats for both teams
+        home_stats = team_stats[team_stats['team_id'] == home_team].tail(1)  # Most recent stats
+        away_stats = team_stats[team_stats['team_id'] == away_team].tail(1)
+        
+        if home_stats.empty or away_stats.empty:
+            return features
+        
+        home_stats = home_stats.iloc[0]
+        away_stats = away_stats.iloc[0]
+        
+        # NFL-specific features
+        if self.sport == 'NFL':
+            # Offensive features
+            features['home_pass_yards_pg'] = home_stats.get('passing_yards_per_game', 250)
+            features['away_pass_yards_pg'] = away_stats.get('passing_yards_per_game', 250)
+            features['home_rush_yards_pg'] = home_stats.get('rushing_yards_per_game', 120)
+            features['away_rush_yards_pg'] = away_stats.get('rushing_yards_per_game', 120)
+            features['home_total_yards_pg'] = home_stats.get('total_yards_per_game', 370)
+            features['away_total_yards_pg'] = away_stats.get('total_yards_per_game', 370)
+            
+            # Defensive features
+            features['home_pass_yards_allowed'] = home_stats.get('pass_yards_allowed_per_game', 250)
+            features['away_pass_yards_allowed'] = away_stats.get('pass_yards_allowed_per_game', 250)
+            features['home_rush_yards_allowed'] = home_stats.get('rush_yards_allowed_per_game', 120)
+            features['away_rush_yards_allowed'] = away_stats.get('rush_yards_allowed_per_game', 120)
+            
+            # Turnover features
+            features['home_turnover_margin'] = home_stats.get('turnover_margin', 0)
+            features['away_turnover_margin'] = away_stats.get('turnover_margin', 0)
+            features['turnover_matchup'] = features['home_turnover_margin'] - features['away_turnover_margin']
+            
+            # EPA features
+            features['home_offensive_epa'] = home_stats.get('offensive_epa', 0)
+            features['away_offensive_epa'] = away_stats.get('offensive_epa', 0)
+            features['home_defensive_epa'] = home_stats.get('defensive_epa', 0)
+            features['away_defensive_epa'] = away_stats.get('defensive_epa', 0)
+            features['epa_matchup'] = (features['home_offensive_epa'] - features['away_defensive_epa']) - (features['away_offensive_epa'] - features['home_defensive_epa'])
+            
+            # Matchup features
+            features['off_matchup'] = (features['home_total_yards_pg'] / 370) - (features['away_rush_yards_allowed'] + features['away_pass_yards_allowed']) / 370
+            features['def_matchup'] = (370 / (features['home_rush_yards_allowed'] + features['home_pass_yards_allowed'])) - (features['away_total_yards_pg'] / 370)
+        
+        # NBA/NHL features (similar pattern)
+        elif self.sport in ['NBA', 'NHL']:
+            features['home_goals_pg'] = home_stats.get('goals_per_game', home_stats.get('points_per_game', 110))
+            features['away_goals_pg'] = away_stats.get('goals_per_game', away_stats.get('points_per_game', 110))
+            features['home_goals_against'] = home_stats.get('goals_against_per_game', home_stats.get('points_allowed_per_game', 110))
+            features['away_goals_against'] = away_stats.get('goals_against_per_game', away_stats.get('points_allowed_per_game', 110))
+            features['off_def_matchup'] = (features['home_goals_pg'] - features['away_goals_against']) - (features['away_goals_pg'] - features['home_goals_against'])
+        
+        # MLB features (batting/pitching)
+        elif self.sport == 'MLB':
+            features['home_era'] = home_stats.get('era', 4.0)
+            features['away_era'] = away_stats.get('era', 4.0)
+            features['home_ops'] = home_stats.get('ops', 0.750)
+            features['away_ops'] = away_stats.get('ops', 0.750)
+            features['pitching_matchup'] = features['away_era'] - features['home_era']  # Lower ERA is better
+            features['batting_matchup'] = features['home_ops'] - features['away_ops']
+        
+        return features
+    
+    def train(self, historical_df: pd.DataFrame, team_stats: pd.DataFrame = None) -> Dict:
         """
         Train all models on historical data
         
         Args:
             historical_df: DataFrame with home_team, away_team, result columns
                           result should be 'H' (home win) or 'A' (away win)
+            team_stats: Optional team statistics for advanced feature engineering
         
         Returns:
             Training results dictionary
@@ -282,8 +352,8 @@ class UniversalSportsEnsemble:
         try:
             self.logger.info(f"Training {self.sport} ensemble on {len(historical_df)} games")
             
-            # Create features with Elo updates
-            features_df = self.create_features(historical_df, is_training=True)
+            # Create features with Elo updates and sport-specific stats
+            features_df = self.create_features(historical_df, is_training=True, team_stats=team_stats)
             
             # Filter only games with results
             features_df = features_df.dropna(subset=['target'])
@@ -292,11 +362,26 @@ class UniversalSportsEnsemble:
                 self.logger.warning("No training data with results")
                 return {'error': 'No training data'}
             
-            # Prepare training data with all features
+            # Prepare training data with all available features
+            # Start with base Elo features
             feature_cols = ['home_elo', 'away_elo', 'elo_diff', 'elo_ratio', 
                           'home_elo_squared', 'away_elo_squared', 'elo_diff_squared',
                           'home_advantage', 'elo_product']
-            X = features_df[feature_cols].values
+            
+            # Add sport-specific features if they exist
+            sport_feature_cols = [col for col in features_df.columns 
+                                if col not in feature_cols + ['target'] 
+                                and not col.endswith('_id') 
+                                and not col.startswith('game_')]
+            
+            if sport_feature_cols:
+                feature_cols.extend(sport_feature_cols)
+                self.logger.info(f"Using {len(sport_feature_cols)} sport-specific features for {self.sport}")
+            
+            # Store feature columns for prediction
+            self.feature_cols = feature_cols
+            
+            X = features_df[feature_cols].fillna(0).values  # Fill NaN with 0 for missing stats
             y = features_df['target'].values
             
             # Scale features
@@ -317,6 +402,8 @@ class UniversalSportsEnsemble:
             results = {
                 'sport': self.sport,
                 'games_trained': len(features_df),
+                'features_used': len(feature_cols),
+                'feature_names': feature_cols,
                 'logistic_accuracy': float(logistic_score),
                 'xgboost_accuracy': float(xgb_score),
                 'teams': len(self.elo_system.ratings)
@@ -329,13 +416,14 @@ class UniversalSportsEnsemble:
             self.logger.error(f"Error training {self.sport} models: {str(e)}")
             raise
     
-    def predict_game(self, home_team: str, away_team: str) -> Dict:
+    def predict_game(self, home_team: str, away_team: str, team_stats: pd.DataFrame = None) -> Dict:
         """
         Predict game outcome using ensemble
         
         Args:
             home_team: Home team name
             away_team: Away team name
+            team_stats: Optional team statistics for advanced features
             
         Returns:
             Dictionary with predictions from each model
@@ -346,11 +434,22 @@ class UniversalSportsEnsemble:
             'away_team': away_team
         }])
         
-        features_df = self.create_features(game_df, is_training=False)
-        feature_cols = ['home_elo', 'away_elo', 'elo_diff', 'elo_ratio', 
-                      'home_elo_squared', 'away_elo_squared', 'elo_diff_squared',
-                      'home_advantage', 'elo_product']
-        X = features_df[feature_cols].values
+        features_df = self.create_features(game_df, is_training=False, team_stats=team_stats)
+        
+        # Use stored feature columns if available, otherwise use base features
+        if hasattr(self, 'feature_cols'):
+            feature_cols = self.feature_cols
+        else:
+            feature_cols = ['home_elo', 'away_elo', 'elo_diff', 'elo_ratio', 
+                          'home_elo_squared', 'away_elo_squared', 'elo_diff_squared',
+                          'home_advantage', 'elo_product']
+        
+        # Ensure all required features exist
+        for col in feature_cols:
+            if col not in features_df.columns:
+                features_df[col] = 0  # Fill missing features with 0
+        
+        X = features_df[feature_cols].fillna(0).values
         
         # Elo prediction
         elo_prob = self.elo_system.predict_game(home_team, away_team)
