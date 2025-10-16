@@ -14,18 +14,24 @@ from schedules import get_schedule, get_available_sports
 from src.data_storage.database import DatabaseManager
 
 def parse_date(date_str):
-    """Parse date from ISO YYYY-MM-DD HH:MM format to DD/MM/YYYY"""
-    try:
-        # Parse ISO format (YYYY-MM-DD HH:MM)
-        dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
-        return dt.strftime('%d/%m/%Y')  # Store in DD/MM/YYYY for consistency
-    except:
-        # Fallback for old format
+    """Parse date from various formats to DD/MM/YYYY"""
+    # Try different date formats
+    formats = [
+        '%Y-%m-%d %H:%M',        # ISO: "2025-09-05 00:20"
+        '%d/%m/%Y %H:%M',        # Old format: "05/09/2025 00:20"
+        '%a, %b %d, %Y',         # NBA format: "Tue, Oct 21, 2025"
+        '%d-%b-%y',              # NCAAF format: "18-Oct-25"
+    ]
+    
+    for fmt in formats:
         try:
-            dt = datetime.strptime(date_str, '%d/%m/%Y %H:%M')
-            return dt.strftime('%d/%m/%Y')
+            dt = datetime.strptime(date_str, fmt)
+            return dt.strftime('%d/%m/%Y')  # Always return DD/MM/YYYY
         except:
-            return date_str
+            continue
+    
+    # If all formats fail, return original
+    return date_str
 
 def calculate_predictions(training_df, home_team, away_team):
     """Simple Elo-based prediction with XGBoost emphasis"""
@@ -73,8 +79,17 @@ def import_sport_schedule(sport):
         
         for game in schedule:
             game_date = parse_date(game['date'])
-            match_id = game.get('match_id', game.get('id', ''))
+            
+            # Skip header rows or invalid dates
+            if 'date' in game_date.lower() or not any(c.isdigit() for c in game_date):
+                continue
+                
+            match_id = game.get('match_id', game.get('id', game.get('rk', '')))
             game_id = f"{sport}_{match_id}"
+            
+            # Handle different schedule formats
+            home_team = game.get('home_team') or game.get('loser', '')  # NCAAF uses 'loser' for home
+            away_team = game.get('away_team') or game.get('winner', '')  # NCAAF uses 'winner' for away
             
             # Store game info
             games_data.append({
@@ -82,38 +97,43 @@ def import_sport_schedule(sport):
                 'league': sport,
                 'game_id': game_id,
                 'game_date': game_date,
-                'home_team_id': game['home_team'],
-                'away_team_id': game['away_team'],
+                'home_team_id': home_team,
+                'away_team_id': away_team,
                 'venue': game.get('venue', ''),
-                'status': 'final' if game.get('result') else 'Scheduled'
+                'status': 'final' if game.get('result') or game.get('pts') else 'Scheduled'
             })
             
             # Extract training data from completed games
-            if game.get('result'):
+            if game.get('result') or game.get('pts'):
                 try:
-                    result = game['result'].strip()
+                    result = game.get('result', '').strip() if game.get('result') else None
+                    pts = game.get('pts')  # NCAAF format
                     home_score = None
                     away_score = None
                     
                     # Handle different result formats
-                    if ' - ' in result:
+                    if result and ' - ' in result:
                         # Format: "24 - 20" (home - away)
                         scores = result.split('-')
                         home_score = int(scores[0].strip())
                         away_score = int(scores[1].strip())
-                    elif 'home win' in result.lower():
+                    elif result and 'home win' in result.lower():
                         # Format: "Home Win" - assign dummy scores
                         home_score = 1
                         away_score = 0
-                    elif 'away win' in result.lower():
+                    elif result and 'away win' in result.lower():
                         # Format: "Away Win" - assign dummy scores
                         home_score = 0
                         away_score = 1
+                    elif pts is not None and game.get('pts.1') is not None:
+                        # NCAAF format: pts = away_score, pts.1 = home_score
+                        away_score = int(pts)
+                        home_score = int(game['pts.1'])
                     
                     if home_score is not None and away_score is not None:
                         training_data.append({
-                            'Home': game['home_team'],
-                            'Away': game['away_team'],
+                            'Home': home_team,
+                            'Away': away_team,
                             'Home_Score': home_score,
                             'Away_Score': away_score
                         })
@@ -127,46 +147,62 @@ def import_sport_schedule(sport):
             db.store_games(games_df)
             print(f"✓ Stored {len(games_df)} games in database")
         
-        # Generate predictions if we have training data
-        if training_data:
-            training_df = pd.DataFrame(training_data)
-            print(f"✓ Using {len(training_df)} completed games for predictions...")
+        # Generate predictions (with or without training data)
+        future_games = games_df[games_df['status'] == 'Scheduled']
+        
+        if not future_games.empty:
+            predictions_data = []
             
-            # Generate predictions for upcoming games
-            future_games = games_df[games_df['status'] == 'Scheduled']
-            if not future_games.empty:
-                predictions_data = []
-                
-                for _, game in future_games.iterrows():
-                    try:
-                        pred = calculate_predictions(training_df, game['home_team_id'], game['away_team_id'])
-                        
-                        predictions_data.append({
-                            'sport': sport,
-                            'league': sport,
-                            'game_id': game['game_id'],
-                            'game_date': game['game_date'],
-                            'home_team_id': game['home_team_id'],
-                            'away_team_id': game['away_team_id'],
-                            'predicted_winner': game['home_team_id'] if pred['home_win_prob'] > 0.5 else game['away_team_id'],
-                            'win_probability': float(max(pred['home_win_prob'], 1 - pred['home_win_prob'])),
-                            'elo_home_prob': float(pred['elo_home_prob']),
-                            'logistic_home_prob': float(pred['logistic_home_prob']),
-                            'xgboost_home_prob': float(pred['xgboost_home_prob']),
-                            'predicted_total': None,
-                            'model_version': '1.0',
-                            'key_factors': '[]'
-                        })
-                    except Exception as e:
-                        print(f"  ⚠ Could not generate prediction for {game['game_id']}: {e}")
-                
-                if predictions_data:
-                    db.store_predictions(predictions_data)  # Pass list, not DataFrame
-                    print(f"✓ Generated {len(predictions_data)} predictions for upcoming games")
+            # Create training data (real or dummy)
+            if training_data:
+                training_df = pd.DataFrame(training_data)
+                print(f"✓ Using {len(training_df)} completed games for predictions...")
             else:
-                print(f"  ℹ No upcoming games to predict")
+                # No historical data - use league-average dummy data for all teams
+                print(f"  ℹ No historical data - using league averages for predictions...")
+                all_teams = set()
+                for _, game in games_df.iterrows():
+                    all_teams.add(game['home_team_id'])
+                    all_teams.add(game['away_team_id'])
+                
+                # Create dummy 50-50 records for each team
+                training_data = []
+                for team in all_teams:
+                    # Give each team 5 wins and 5 losses for balance
+                    for i in range(5):
+                        training_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 100, 'Away_Score': 95})
+                        training_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 95, 'Away_Score': 100})
+                training_df = pd.DataFrame(training_data)
+            
+            # Generate predictions for all future games
+            for _, game in future_games.iterrows():
+                try:
+                    pred = calculate_predictions(training_df, game['home_team_id'], game['away_team_id'])
+                    
+                    predictions_data.append({
+                        'sport': sport,
+                        'league': sport,
+                        'game_id': game['game_id'],
+                        'game_date': game['game_date'],
+                        'home_team_id': game['home_team_id'],
+                        'away_team_id': game['away_team_id'],
+                        'predicted_winner': game['home_team_id'] if pred['home_win_prob'] > 0.5 else game['away_team_id'],
+                        'win_probability': float(max(pred['home_win_prob'], 1 - pred['home_win_prob'])),
+                        'elo_home_prob': float(pred['elo_home_prob']),
+                        'logistic_home_prob': float(pred['logistic_home_prob']),
+                        'xgboost_home_prob': float(pred['xgboost_home_prob']),
+                        'predicted_total': None,
+                        'model_version': '1.0',
+                        'key_factors': '[]'
+                    })
+                except Exception as e:
+                    print(f"  ⚠ Could not generate prediction for {game['game_id']}: {e}")
+            
+            if predictions_data:
+                db.store_predictions(predictions_data)  # Pass list, not DataFrame
+                print(f"✓ Generated {len(predictions_data)} predictions for upcoming games")
         else:
-            print(f"  ℹ No completed games for training (all future games)")
+            print(f"  ℹ No upcoming games to predict")
         
         return len(games_data)
     

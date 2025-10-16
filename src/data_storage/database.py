@@ -685,14 +685,10 @@ class DatabaseManager:
                     lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
                 )
             
-            # Handle date conversion
+            # Keep dates as DD/MM/YYYY strings (don't convert to date objects)
+            # This ensures consistency with games table format
             if 'game_date' in predictions_df.columns:
-                predictions_df['game_date'] = pd.to_datetime(
-                    predictions_df['game_date'], 
-                    format='mixed',
-                    dayfirst=True,
-                    errors='coerce'
-                ).dt.date
+                predictions_df['game_date'] = predictions_df['game_date'].astype(str)
             
             predictions_df = predictions_df.replace({np.nan: None})
             
