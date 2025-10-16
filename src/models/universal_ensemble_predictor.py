@@ -73,16 +73,105 @@ class UniversalSportsEnsemble:
     Works for: MLB, NFL, NBA, NHL, NCAA Football, NCAA Basketball, WNBA
     """
     
-    def __init__(self, sport: str, k_factor: float = 20):
+    # Sport-specific Elo K-factors (optimized for each sport)
+    SPORT_K_FACTORS = {
+        'NFL': 35,      # 17 games, high variance per game
+        'NBA': 18,      # 82 games, lower variance per game
+        'NHL': 22,      # 82 games, more randomness than NBA
+        'MLB': 14,      # 162 games, low variance per game
+        'NCAAF': 30,    # ~12 games, high variance, recruiting matters
+        'NCAAB': 24,    # ~30 games, tournament volatility
+        'WNBA': 20      # 40 games, moderate variance
+    }
+    
+    # Sport-specific XGBoost hyperparameters (tuned for each sport)
+    SPORT_XGB_PARAMS = {
+        'NFL': {
+            'n_estimators': 150,
+            'max_depth': 5,
+            'learning_rate': 0.05,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'gamma': 1,
+            'reg_alpha': 0.1,
+            'reg_lambda': 1.0
+        },
+        'NBA': {
+            'n_estimators': 200,
+            'max_depth': 4,
+            'learning_rate': 0.03,
+            'subsample': 0.7,
+            'colsample_bytree': 0.7,
+            'gamma': 0.5,
+            'reg_alpha': 0.05,
+            'reg_lambda': 0.5
+        },
+        'NHL': {
+            'n_estimators': 175,
+            'max_depth': 5,
+            'learning_rate': 0.04,
+            'subsample': 0.75,
+            'colsample_bytree': 0.75,
+            'gamma': 0.8,
+            'reg_alpha': 0.1,
+            'reg_lambda': 0.8
+        },
+        'MLB': {
+            'n_estimators': 250,
+            'max_depth': 3,
+            'learning_rate': 0.02,
+            'subsample': 0.6,
+            'colsample_bytree': 0.6,
+            'gamma': 0.3,
+            'reg_alpha': 0.01,
+            'reg_lambda': 0.3
+        },
+        'NCAAF': {
+            'n_estimators': 160,
+            'max_depth': 6,
+            'learning_rate': 0.06,
+            'subsample': 0.85,
+            'colsample_bytree': 0.85,
+            'gamma': 1.2,
+            'reg_alpha': 0.15,
+            'reg_lambda': 1.2
+        },
+        'NCAAB': {
+            'n_estimators': 180,
+            'max_depth': 5,
+            'learning_rate': 0.04,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'gamma': 0.7,
+            'reg_alpha': 0.08,
+            'reg_lambda': 0.7
+        },
+        'WNBA': {
+            'n_estimators': 140,
+            'max_depth': 4,
+            'learning_rate': 0.05,
+            'subsample': 0.75,
+            'colsample_bytree': 0.75,
+            'gamma': 0.6,
+            'reg_alpha': 0.08,
+            'reg_lambda': 0.6
+        }
+    }
+    
+    def __init__(self, sport: str, k_factor: float = None):
         """
         Initialize ensemble predictor
         
         Args:
             sport: Sport code (MLB, NFL, NBA, NHL, etc.)
-            k_factor: Elo k-factor (higher = more volatile ratings)
+            k_factor: Elo k-factor (if None, uses sport-specific optimized value)
         """
         self.sport = sport
         self.logger = logging.getLogger(__name__)
+        
+        # Use sport-specific K-factor if not provided
+        if k_factor is None:
+            k_factor = self.SPORT_K_FACTORS.get(sport, 20)
         
         # Initialize models
         self.elo_system = UniversalEloRatingSystem(sport, k_factor=k_factor)
@@ -97,24 +186,40 @@ class UniversalSportsEnsemble:
             solver='lbfgs'
         )
         
-        # XGBoost
+        # Use sport-specific XGBoost parameters
+        xgb_params = self.SPORT_XGB_PARAMS.get(sport, {
+            'n_estimators': 100,
+            'max_depth': 6,
+            'learning_rate': 0.1,
+            'subsample': 1.0,
+            'colsample_bytree': 1.0,
+            'gamma': 0,
+            'reg_alpha': 0,
+            'reg_lambda': 1.0
+        })
+        
         self.xgb_model = XGBClassifier(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
             random_state=42,
-            eval_metric='logloss'
+            eval_metric='logloss',
+            **xgb_params
         )
         
         self.scaler = StandardScaler()
         self.is_trained = False
         
-        # Ensemble weights
-        self.ensemble_weights = {
-            'elo': 0.3,
-            'logistic': 0.35,
-            'xgboost': 0.35
-        }
+        # Sport-specific ensemble weights (NFL needs higher XGBoost weight)
+        if sport == 'NFL':
+            self.ensemble_weights = {
+                'elo': 0.35,
+                'logistic': 0.15,
+                'xgboost': 0.50  # NFL benefits more from XGBoost with proper features
+            }
+        else:
+            self.ensemble_weights = {
+                'elo': 0.35,
+                'logistic': 0.15,
+                'xgboost': 0.50
+            }
     
     def create_features(self, df: pd.DataFrame, is_training: bool = True) -> pd.DataFrame:
         """
