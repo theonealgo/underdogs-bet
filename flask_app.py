@@ -218,6 +218,7 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
             
             for _, row in df.iterrows():
                 # Parse DD/MM/YYYY date format
+                game_date = None
                 try:
                     game_date = datetime.strptime(row['game_date'], '%d/%m/%Y').date()
                     # Only show games from today onwards
@@ -225,7 +226,7 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                         continue
                 except:
                     # If date parsing fails, include the game anyway
-                    pass
+                    game_date = datetime.now().date()  # Default to today for sorting
                 
                 elo = float(row['elo_home_prob']) if row['elo_home_prob'] else 0.5
                 logistic = float(row['logistic_home_prob']) if row['logistic_home_prob'] else 0.5
