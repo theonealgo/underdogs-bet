@@ -35,23 +35,44 @@ def parse_date(date_str):
 
 def calculate_predictions(training_df, home_team, away_team):
     """Simple Elo-based prediction with XGBoost emphasis"""
-    # Get team records
-    home_wins = len(training_df[(training_df['Home'] == home_team) & (training_df['Home_Score'] > training_df['Away_Score'])])
-    home_losses = len(training_df[(training_df['Home'] == home_team) & (training_df['Home_Score'] < training_df['Away_Score'])])
-    away_wins = len(training_df[(training_df['Away'] == away_team) & (training_df['Away_Score'] > training_df['Home_Score'])])
-    away_losses = len(training_df[(training_df['Away'] == away_team) & (training_df['Away_Score'] < training_df['Home_Score'])])
+    # Get overall team records (both home and away games combined)
+    home_team_wins = len(training_df[
+        ((training_df['Home'] == home_team) & (training_df['Home_Score'] > training_df['Away_Score'])) |
+        ((training_df['Away'] == home_team) & (training_df['Away_Score'] > training_df['Home_Score']))
+    ])
+    home_team_losses = len(training_df[
+        ((training_df['Home'] == home_team) & (training_df['Home_Score'] < training_df['Away_Score'])) |
+        ((training_df['Away'] == home_team) & (training_df['Away_Score'] < training_df['Home_Score']))
+    ])
     
-    # Simple win percentage
-    home_pct = home_wins / max(home_wins + home_losses, 1)
-    away_pct = away_wins / max(away_wins + away_losses, 1)
+    away_team_wins = len(training_df[
+        ((training_df['Home'] == away_team) & (training_df['Home_Score'] > training_df['Away_Score'])) |
+        ((training_df['Away'] == away_team) & (training_df['Away_Score'] > training_df['Home_Score']))
+    ])
+    away_team_losses = len(training_df[
+        ((training_df['Home'] == away_team) & (training_df['Home_Score'] < training_df['Away_Score'])) |
+        ((training_df['Away'] == away_team) & (training_df['Away_Score'] < training_df['Home_Score']))
+    ])
     
-    # Home field advantage
-    home_prob = (home_pct + 0.1) / (home_pct + away_pct + 0.1)
+    # Overall win percentages (not venue-specific)
+    home_pct = home_team_wins / max(home_team_wins + home_team_losses, 1)
+    away_pct = away_team_wins / max(away_team_wins + away_team_losses, 1)
     
-    # Add some variation to models
+    # Calculate base probability from win percentages
+    if home_pct + away_pct > 0:
+        # Basic probability based on team strength
+        base_prob = home_pct / (home_pct + away_pct)
+        # Add modest home field advantage (5% boost)
+        home_prob = min(base_prob + 0.05, 0.9)
+    else:
+        home_prob = 0.55  # Default 55% for home team when no data
+    
+    # Model variations - deterministic based on team strength, no random noise
     elo_prob = home_prob
-    consensus_prob = min(max(home_prob + np.random.uniform(-0.05, 0.05), 0.1), 0.9)
-    xgb_prob = min(max(home_prob + np.random.uniform(-0.08, 0.08), 0.1), 0.9)
+    # Logistic slightly more conservative (closer to 50%)
+    consensus_prob = 0.5 + (home_prob - 0.5) * 0.8
+    # XGBoost slightly more confident
+    xgb_prob = min(max(0.5 + (home_prob - 0.5) * 1.1, 0.1), 0.9)
     
     # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
     # XGBoost gets highest weight (50%), Elo (35%), Consensus (15%)
@@ -165,13 +186,22 @@ def import_sport_schedule(sport):
                     all_teams.add(game['home_team_id'])
                     all_teams.add(game['away_team_id'])
                 
-                # Create dummy 50-50 records for each team
+                # Create balanced 50-50 records for each team (equal wins and losses)
                 training_data = []
                 for team in all_teams:
-                    # Give each team 5 wins and 5 losses for balance
-                    for i in range(5):
+                    # Give each team exactly 5 wins and 5 losses for true 50/50 balance
+                    # Wins (home and away)
+                    for i in range(3):
                         training_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 100, 'Away_Score': 95})
+                    for i in range(2):
                         training_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 95, 'Away_Score': 100})
+                    
+                    # Losses (home and away)
+                    for i in range(2):
+                        training_data.append({'Home': team, 'Away': 'Opponent', 'Home_Score': 95, 'Away_Score': 100})
+                    for i in range(3):
+                        training_data.append({'Home': 'Opponent', 'Away': team, 'Home_Score': 100, 'Away_Score': 95})
+                
                 training_df = pd.DataFrame(training_data)
             
             # Generate predictions for all future games
