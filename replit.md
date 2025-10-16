@@ -34,11 +34,14 @@ Preferred communication style: Simple, everyday language.
 - **Ensemble Model**: Composite prediction using weighted combination of XGBoost (50%), Elo (35%), and Logistic Regression (15%).
 - **Cross-Validation**: Built-in model evaluation and hyperparameter tuning.
 - **Backtesting Framework**: Historical performance evaluation with configurable date ranges and confidence thresholds, validating against actual game results.
+- **League-Average Fallback**: For sports without historical data (e.g., NBA), generates balanced 50/50 predictions with 5% home field advantage using balanced dummy training data (5 wins, 5 losses per team). Deterministic and reproducible.
 
 ### Data Collection Strategy
 - **Dual-Source System**: Automatic switching between Excel files (user-provided in `schedules/`) for regular season and official league APIs for playoffs.
 - **API Integration**: Utilizes MLB Stats API, NHL API, NBA, NFL, WNBA, NCAA collectors with rate limiting and error handling.
-- **Excel Schedule Support**: Flexible column and date format detection for user-provided schedules.
+- **Excel Schedule Support**: Multi-format date parsing supporting ISO (YYYY-MM-DD HH:MM), legacy DD/MM/YYYY, NBA text format ("Tue, Oct 21, 2025"), and NCAAF formats.
+- **Date Format Consistency**: All dates stored as DD/MM/YYYY strings in database to prevent automatic pandas date conversion and month/day confusion.
+- **Active Sports**: NFL (207 predictions), NBA (1204 predictions), NHL (1264 predictions), MLB (5 predictions), NCAAF (29 predictions). NCAAB and WNBA schedules pending data.
 
 ### Automation Framework
 - **Scheduled Tasks**: Daily data updates, prediction generation, and weekly model retraining.
