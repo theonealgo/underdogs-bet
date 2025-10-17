@@ -348,7 +348,10 @@ class UniversalSportsEnsemble:
                 result = row['result']
                 if result in ['H', 'A']:
                     home_won = result == 'H'
-                    self.elo_system.update_ratings(home_team, away_team, home_won)
+                    # Get scores if available for MoV and split Elo updates
+                    home_score = row.get('home_score') if 'home_score' in row else None
+                    away_score = row.get('away_score') if 'away_score' in row else None
+                    self.elo_system.update_ratings(home_team, away_team, home_won, home_score, away_score)
                     features['target'] = 1 if home_won else 0
             
             features_list.append(features)
