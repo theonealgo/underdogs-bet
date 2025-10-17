@@ -4,6 +4,7 @@ Generate REAL predictions for all sports using trained ensemble models
 """
 import pandas as pd
 import numpy as np
+import json
 from src.data_storage.database import DatabaseManager
 from src.models.universal_ensemble_predictor import UniversalSportsEnsemble
 import os
@@ -71,6 +72,14 @@ def main():
                 away_team=game['away_team_id']
             )
             
+            # Store model probabilities as JSON for calibration analysis
+            key_factors = json.dumps({
+                'xgboost_home_prob': float(pred['xgboost_home_prob']),
+                'elo_home_prob': float(pred['elo_home_prob']),
+                'logistic_home_prob': float(pred['logistic_home_prob']),
+                'blended_home_prob': float(pred['blended_home_prob'])
+            })
+            
             predictions_data.append({
                 'sport': sport,
                 'league': game['league'],
@@ -85,7 +94,7 @@ def main():
                 'xgboost_home_prob': pred['xgboost_home_prob'],
                 'predicted_total': None,
                 'model_version': '1.0',
-                'key_factors': '[]'
+                'key_factors': key_factors
             })
         
         # Store predictions

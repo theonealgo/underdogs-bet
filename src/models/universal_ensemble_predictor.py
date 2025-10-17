@@ -13,6 +13,7 @@ from typing import Dict, Tuple, List, Optional
 import logging
 import pickle
 import os
+import json
 
 
 class UniversalEloRatingSystem:
@@ -276,14 +277,17 @@ class UniversalSportsEnsemble:
         self.scaler = StandardScaler()
         self.is_trained = False
         
-        # Sport-specific ensemble weights
+        # Calibration-based dynamic weights and team bias factors
+        self.calibration_weights = None
+        self.team_bias_factors = {}
+        
+        # Sport-specific ensemble weights (default, will be overridden by calibration if available)
         if sport == 'NFL':
-            # NFL: Favor Elo (77% accuracy) over overfitted ML models
-            # After regularization tuning, rebalance based on CV performance
+            # NFL: Simple XGB-heavy blend (Elo as advisor)
             self.ensemble_weights = {
-                'elo': 0.60,      # Best performer on real games
-                'xgboost': 0.30,  # Heavily regularized
-                'logistic': 0.10  # Heavily regularized
+                'elo': 0.30,      # Advisor role
+                'xgboost': 0.70,  # Primary predictor
+                'logistic': 0.00  # Not used (consensus between XGB/Elo)
             }
         else:
             self.ensemble_weights = {
@@ -291,6 +295,34 @@ class UniversalSportsEnsemble:
                 'logistic': 0.15,
                 'xgboost': 0.50
             }
+        
+        # Try to load calibration data if available
+        self._load_calibration_data()
+    
+    def _load_calibration_data(self):
+        """Load calibration-based weights and team bias factors from calibration report"""
+        try:
+            calibration_file = 'calibration_report.json'
+            if os.path.exists(calibration_file):
+                with open(calibration_file, 'r') as f:
+                    report = json.load(f)
+                
+                # Load dynamic weights if available
+                if 'dynamic_weights' in report:
+                    weights = report['dynamic_weights']
+                    self.calibration_weights = {
+                        'xgb': weights.get('xgb', 0.70),
+                        'elo': weights.get('elo', 0.30)
+                    }
+                    self.logger.info(f"Loaded calibration weights: XGB={self.calibration_weights['xgb']:.1%}, Elo={self.calibration_weights['elo']:.1%}")
+                
+                # Load team bias factors
+                if 'team_stats' in report:
+                    for team, stats in report['team_stats'].items():
+                        self.team_bias_factors[team] = stats.get('correction_factor', 0.0)
+                    self.logger.info(f"Loaded bias factors for {len(self.team_bias_factors)} teams")
+        except Exception as e:
+            self.logger.warning(f"Could not load calibration data: {e}")
     
     def create_features(self, df: pd.DataFrame, is_training: bool = True, team_stats: pd.DataFrame = None) -> pd.DataFrame:
         """
@@ -342,6 +374,10 @@ class UniversalSportsEnsemble:
                 # Matchup-specific Elo (offense vs defense)
                 'off_def_matchup_elo': (home_off_elo - away_def_elo) - (away_off_elo - home_def_elo),
             }
+            
+            # CALIBRATION FEATURE: Elo home field interaction
+            # Helps XGBoost learn when Elo overreacts to home advantage
+            features['elo_home_interaction'] = elo_diff * features['home_advantage']
             
             # Add sport-specific features if team stats provided
             if team_stats is not None and not team_stats.empty:
@@ -602,6 +638,14 @@ class UniversalSportsEnsemble:
         # Matchup features (offense vs defense)
         features['off_def_matchup'] = features.get('home_pts_scored_l5', 20) - features.get('away_pts_allowed_l5', 20) - (features.get('away_pts_scored_l5', 20) - features.get('home_pts_allowed_l5', 20))
         
+        # ========== CALIBRATION FEATURE: Elo Home Overreaction Detection ==========
+        # Interaction feature: Elo_diff * home_field to help XGB learn when Elo overreacts
+        # This captures when Elo gives too much/little credit to home advantage
+        # Note: These base Elo features are added by parent method create_features()
+        # We just add the interaction term here
+        # The 'home_advantage' feature (default 100 rating points ~= 0.64 win prob) exists in base features
+        # We'll compute the interaction from the elo_diff which will be available after base features are added
+        
         return features
     
     def _compute_win_pct(self, team_prior: pd.DataFrame, window: int = 5) -> float:
@@ -839,19 +883,47 @@ class UniversalSportsEnsemble:
             self.logger.error(f"Error training {self.sport} models: {str(e)}")
             raise
     
-    def _nfl_simple_blend(self, elo_prob: float, xgb_prob: float) -> float:
+    def _nfl_simple_blend(self, elo_prob: float, xgb_prob: float, home_team: str = None, away_team: str = None) -> float:
         """
         NFL ensemble: XGB as primary predictor, Elo as advisor.
-        No logistic (it's just consensus between XGB and Elo).
+        Uses calibration-based dynamic weights if available.
+        Applies team-specific bias corrections.
         
         Args:
             elo_prob: Elo home team win probability
             xgb_prob: XGBoost home team win probability
+            home_team: Home team name (for bias correction)
+            away_team: Away team name (for bias correction)
             
         Returns:
-            Weighted blend: 70% XGB, 30% Elo
+            Weighted blend with calibration and bias correction
         """
-        return xgb_prob * 0.70 + elo_prob * 0.30
+        # Use calibration weights if available, otherwise default
+        if self.calibration_weights:
+            xgb_weight = self.calibration_weights['xgb']
+            elo_weight = self.calibration_weights['elo']
+        else:
+            xgb_weight = 0.70
+            elo_weight = 0.30
+        
+        # Base prediction
+        blended_prob = xgb_prob * xgb_weight + elo_prob * elo_weight
+        
+        # Apply team bias corrections if available
+        if home_team and away_team:
+            home_bias = self.team_bias_factors.get(home_team, 0.0)
+            away_bias = self.team_bias_factors.get(away_team, 0.0)
+            
+            # Net bias: positive home bias increases home win prob, negative away bias increases home win prob
+            net_bias = home_bias - away_bias
+            
+            # Apply bias correction (scaled by 0.5 to be conservative)
+            blended_prob += net_bias * 0.5
+            
+            # Clip to valid probability range
+            blended_prob = np.clip(blended_prob, 0.01, 0.99)
+        
+        return blended_prob
     
     def predict_game(self, home_team: str, away_team: str, team_stats: pd.DataFrame = None) -> Dict:
         """
@@ -902,8 +974,8 @@ class UniversalSportsEnsemble:
         
         # Blended prediction
         if self.sport == 'NFL':
-            # Simple XGB-heavy blend (70% XGB, 30% Elo)
-            blended_prob = self._nfl_simple_blend(elo_prob, xgb_prob)
+            # Simple XGB-heavy blend with calibration and bias correction
+            blended_prob = self._nfl_simple_blend(elo_prob, xgb_prob, home_team, away_team)
         else:
             # Standard weighted average for other sports
             blended_prob = (
