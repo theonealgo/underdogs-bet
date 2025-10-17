@@ -274,66 +274,277 @@ class UniversalSportsEnsemble:
         return pd.DataFrame(features_list)
     
     def _add_sport_specific_features(self, features: dict, home_team: str, away_team: str, team_stats: pd.DataFrame, game_row: pd.Series) -> dict:
-        """Add sport-specific advanced features based on team statistics"""
+        """
+        Add sport-specific advanced features with chronological filtering to prevent target leakage.
+        Computes rolling averages, lag variables, and fatigue metrics using ONLY prior games.
+        """
         
-        # Get team stats for both teams
-        home_stats = team_stats[team_stats['team_id'] == home_team].tail(1)  # Most recent stats
-        away_stats = team_stats[team_stats['team_id'] == away_team].tail(1)
+        # Get game date for chronological filtering
+        game_date = game_row.get('game_date') if 'game_date' in game_row else None
         
-        if home_stats.empty or away_stats.empty:
+        # CRITICAL: Filter to only use team stats from games BEFORE this game (prevent target leakage)
+        if game_date is not None and 'date' in team_stats.columns:
+            try:
+                # Ensure date columns are datetime
+                if not pd.api.types.is_datetime64_any_dtype(team_stats['date']):
+                    team_stats = team_stats.copy()
+                    team_stats['date'] = pd.to_datetime(team_stats['date'], errors='coerce')
+                
+                if not pd.api.types.is_datetime64_any_dtype(pd.Series([game_date])):
+                    game_date = pd.to_datetime(game_date, errors='coerce')
+                
+                # Filter to only prior games
+                prior_stats = team_stats[team_stats['date'] < game_date].copy()
+            except:
+                prior_stats = team_stats.copy()
+        else:
+            prior_stats = team_stats.copy()
+        
+        if prior_stats.empty:
+            return features  # No prior data available
+        
+        # Compute chronological team stats for home and away teams
+        home_prior = prior_stats[prior_stats['team_id'] == home_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats['team_id'] == home_team]
+        away_prior = prior_stats[prior_stats['team_id'] == away_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats['team_id'] == away_team]
+        
+        if home_prior.empty or away_prior.empty:
             return features
         
-        home_stats = home_stats.iloc[0]
-        away_stats = away_stats.iloc[0]
-        
-        # NFL-specific features
+        # NFL-specific comprehensive features
         if self.sport == 'NFL':
-            # Offensive features
-            features['home_pass_yards_pg'] = home_stats.get('passing_yards_per_game', 250)
-            features['away_pass_yards_pg'] = away_stats.get('passing_yards_per_game', 250)
-            features['home_rush_yards_pg'] = home_stats.get('rushing_yards_per_game', 120)
-            features['away_rush_yards_pg'] = away_stats.get('rushing_yards_per_game', 120)
-            features['home_total_yards_pg'] = home_stats.get('total_yards_per_game', 370)
-            features['away_total_yards_pg'] = away_stats.get('total_yards_per_game', 370)
-            
-            # Defensive features
-            features['home_pass_yards_allowed'] = home_stats.get('pass_yards_allowed_per_game', 250)
-            features['away_pass_yards_allowed'] = away_stats.get('pass_yards_allowed_per_game', 250)
-            features['home_rush_yards_allowed'] = home_stats.get('rush_yards_allowed_per_game', 120)
-            features['away_rush_yards_allowed'] = away_stats.get('rush_yards_allowed_per_game', 120)
-            
-            # Turnover features
-            features['home_turnover_margin'] = home_stats.get('turnover_margin', 0)
-            features['away_turnover_margin'] = away_stats.get('turnover_margin', 0)
-            features['turnover_matchup'] = features['home_turnover_margin'] - features['away_turnover_margin']
-            
-            # EPA features
-            features['home_offensive_epa'] = home_stats.get('offensive_epa', 0)
-            features['away_offensive_epa'] = away_stats.get('offensive_epa', 0)
-            features['home_defensive_epa'] = home_stats.get('defensive_epa', 0)
-            features['away_defensive_epa'] = away_stats.get('defensive_epa', 0)
-            features['epa_matchup'] = (features['home_offensive_epa'] - features['away_defensive_epa']) - (features['away_offensive_epa'] - features['home_defensive_epa'])
-            
-            # Matchup features
-            features['off_matchup'] = (features['home_total_yards_pg'] / 370) - (features['away_rush_yards_allowed'] + features['away_pass_yards_allowed']) / 370
-            features['def_matchup'] = (370 / (features['home_rush_yards_allowed'] + features['home_pass_yards_allowed'])) - (features['away_total_yards_pg'] / 370)
+            features.update(self._nfl_features(home_prior, away_prior, home_team, away_team, game_date))
         
-        # NBA/NHL features (similar pattern)
-        elif self.sport in ['NBA', 'NHL']:
-            features['home_goals_pg'] = home_stats.get('goals_per_game', home_stats.get('points_per_game', 110))
-            features['away_goals_pg'] = away_stats.get('goals_per_game', away_stats.get('points_per_game', 110))
-            features['home_goals_against'] = home_stats.get('goals_against_per_game', home_stats.get('points_allowed_per_game', 110))
-            features['away_goals_against'] = away_stats.get('goals_against_per_game', away_stats.get('points_allowed_per_game', 110))
-            features['off_def_matchup'] = (features['home_goals_pg'] - features['away_goals_against']) - (features['away_goals_pg'] - features['home_goals_against'])
+        # NBA-specific comprehensive features
+        elif self.sport == 'NBA':
+            features.update(self._nba_features(home_prior, away_prior, home_team, away_team, game_date))
         
-        # MLB features (batting/pitching)
+        # NHL-specific comprehensive features
+        elif self.sport == 'NHL':
+            features.update(self._nhl_features(home_prior, away_prior, home_team, away_team, game_date))
+        
+        # MLB-specific comprehensive features
         elif self.sport == 'MLB':
-            features['home_era'] = home_stats.get('era', 4.0)
-            features['away_era'] = away_stats.get('era', 4.0)
-            features['home_ops'] = home_stats.get('ops', 0.750)
-            features['away_ops'] = away_stats.get('ops', 0.750)
-            features['pitching_matchup'] = features['away_era'] - features['home_era']  # Lower ERA is better
-            features['batting_matchup'] = features['home_ops'] - features['away_ops']
+            features.update(self._mlb_features(home_prior, away_prior, home_team, away_team, game_date))
+        
+        # NCAAF-specific comprehensive features
+        elif self.sport == 'NCAAF':
+            features.update(self._ncaaf_features(home_prior, away_prior, home_team, away_team, game_date))
+        
+        return features
+    
+    def _compute_rolling_stats(self, team_prior: pd.DataFrame, stat_cols: list, windows: list = [3, 5]) -> dict:
+        """Compute rolling average statistics for multiple windows"""
+        rolling_features = {}
+        
+        for window in windows:
+            for col in stat_cols:
+                if col in team_prior.columns:
+                    rolling_val = team_prior[col].tail(window).mean()
+                    rolling_features[f'{col}_last{window}'] = rolling_val if not pd.isna(rolling_val) else 0
+        
+        return rolling_features
+    
+    def _compute_lag_features(self, team_prior: pd.DataFrame, stat_cols: list, lags: list = [1, 2]) -> dict:
+        """Compute lag features (previous game stats)"""
+        lag_features = {}
+        
+        for lag in lags:
+            for col in stat_cols:
+                if col in team_prior.columns and len(team_prior) >= lag:
+                    lag_val = team_prior[col].iloc[-lag]
+                    lag_features[f'{col}_lag{lag}'] = lag_val if not pd.isna(lag_val) else 0
+        
+        return lag_features
+    
+    def _compute_rest_days(self, team_prior: pd.DataFrame, current_date) -> int:
+        """Compute days of rest since last game"""
+        if 'date' in team_prior.columns and not team_prior.empty and current_date is not None:
+            try:
+                last_game_date = team_prior['date'].iloc[-1]
+                if pd.notna(last_game_date) and pd.notna(current_date):
+                    return (pd.to_datetime(current_date) - pd.to_datetime(last_game_date)).days
+            except:
+                pass
+        return 7  # Default 1 week rest
+    
+    def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+        """NFL-specific comprehensive features"""
+        features = {}
+        
+        # Season averages (all prior games)
+        home_season = home_prior.tail(10)  # Last 10 games max for season stats
+        away_season = away_prior.tail(10)
+        
+        # Offensive stats
+        features['home_pass_ypg'] = home_season['passing_yards_per_game'].mean() if 'passing_yards_per_game' in home_season else 250
+        features['away_pass_ypg'] = away_season['passing_yards_per_game'].mean() if 'passing_yards_per_game' in away_season else 250
+        features['home_rush_ypg'] = home_season['rushing_yards_per_game'].mean() if 'rushing_yards_per_game' in home_season else 120
+        features['away_rush_ypg'] = away_season['rushing_yards_per_game'].mean() if 'rushing_yards_per_game' in away_season else 120
+        
+        # Defensive stats
+        features['home_pass_yds_allowed'] = home_season['pass_yards_allowed_per_game'].mean() if 'pass_yards_allowed_per_game' in home_season else 250
+        features['away_pass_yds_allowed'] = away_season['pass_yards_allowed_per_game'].mean() if 'pass_yards_allowed_per_game' in away_season else 250
+        features['home_rush_yds_allowed'] = home_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in home_season else 120
+        features['away_rush_yds_allowed'] = away_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in away_season else 120
+        
+        # Rolling averages (3-game, 5-game)
+        nfl_stat_cols = ['offensive_epa', 'defensive_epa', 'net_epa']
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nfl_stat_cols, [3, 5]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nfl_stat_cols, [3, 5]).items()})
+        
+        # Lag features (previous 2 games)
+        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, nfl_stat_cols, [1, 2]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, nfl_stat_cols, [1, 2]).items()})
+        
+        # Rest/Fatigue metrics
+        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
+        features['home_short_rest'] = 1 if features['home_rest_days'] <= 4 else 0  # Thursday/Monday games
+        features['away_short_rest'] = 1 if features['away_rest_days'] <= 4 else 0
+        
+        # Matchup features
+        features['off_matchup'] = features['home_pass_ypg'] + features['home_rush_ypg'] - (features['away_pass_yds_allowed'] + features['away_rush_yds_allowed'])
+        features['def_matchup'] = (features['away_pass_ypg'] + features['away_rush_ypg']) - (features['home_pass_yds_allowed'] + features['home_rush_yds_allowed'])
+        
+        return features
+    
+    def _nba_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+        """NBA-specific comprehensive features"""
+        features = {}
+        
+        home_season = home_prior.tail(15)
+        away_season = away_prior.tail(15)
+        
+        # Scoring stats
+        features['home_ppg'] = home_season['points_per_game'].mean() if 'points_per_game' in home_season else 110
+        features['away_ppg'] = away_season['points_per_game'].mean() if 'points_per_game' in away_season else 110
+        features['home_papg'] = home_season['points_allowed_per_game'].mean() if 'points_allowed_per_game' in home_season else 110
+        features['away_papg'] = away_season['points_allowed_per_game'].mean() if 'points_allowed_per_game' in away_season else 110
+        
+        # Rolling averages (3, 5, 10 game)
+        nba_cols = ['points_per_game', 'points_allowed_per_game']
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nba_cols, [3, 5, 10]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nba_cols, [3, 5, 10]).items()})
+        
+        # Lag features (previous 2 games)
+        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, nba_cols, [1, 2]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, nba_cols, [1, 2]).items()})
+        
+        # Rest/fatigue (NBA back-to-backs matter)
+        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
+        features['home_back_to_back'] = 1 if features['home_rest_days'] <= 1 else 0
+        features['away_back_to_back'] = 1 if features['away_rest_days'] <= 1 else 0
+        
+        # Matchup
+        features['off_def_matchup'] = (features['home_ppg'] - features['away_papg']) - (features['away_ppg'] - features['home_papg'])
+        
+        return features
+    
+    def _nhl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+        """NHL-specific comprehensive features"""
+        features = {}
+        
+        home_season = home_prior.tail(15)
+        away_season = away_prior.tail(15)
+        
+        # Scoring stats
+        features['home_gpg'] = home_season['goals_per_game'].mean() if 'goals_per_game' in home_season else 3.0
+        features['away_gpg'] = away_season['goals_per_game'].mean() if 'goals_per_game' in away_season else 3.0
+        features['home_gapg'] = home_season['goals_against_per_game'].mean() if 'goals_against_per_game' in home_season else 3.0
+        features['away_gapg'] = away_season['goals_against_per_game'].mean() if 'goals_against_per_game' in away_season else 3.0
+        
+        # Rolling averages
+        nhl_cols = ['goals_per_game', 'goals_against_per_game']
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nhl_cols, [3, 5, 10]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nhl_cols, [3, 5, 10]).items()})
+        
+        # Lag features (previous 2 games)
+        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, nhl_cols, [1, 2]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, nhl_cols, [1, 2]).items()})
+        
+        # Rest/fatigue
+        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
+        features['home_back_to_back'] = 1 if features['home_rest_days'] <= 1 else 0
+        features['away_back_to_back'] = 1 if features['away_rest_days'] <= 1 else 0
+        
+        # Matchup
+        features['off_def_matchup'] = (features['home_gpg'] - features['away_gapg']) - (features['away_gpg'] - features['home_gapg'])
+        
+        return features
+    
+    def _mlb_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+        """MLB-specific comprehensive features"""
+        features = {}
+        
+        home_season = home_prior.tail(20)
+        away_season = away_prior.tail(20)
+        
+        # Pitching stats
+        features['home_era'] = home_season['era'].mean() if 'era' in home_season else 4.0
+        features['away_era'] = away_season['era'].mean() if 'era' in away_season else 4.0
+        features['home_whip'] = home_season['whip'].mean() if 'whip' in home_season else 1.3
+        features['away_whip'] = away_season['whip'].mean() if 'whip' in away_season else 1.3
+        
+        # Batting stats
+        features['home_ops'] = home_season['ops'].mean() if 'ops' in home_season else 0.750
+        features['away_ops'] = away_season['ops'].mean() if 'ops' in away_season else 0.750
+        
+        # Rolling averages (5, 10, 15 game for baseball)
+        mlb_cols = ['era', 'ops', 'runs_per_game']
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, mlb_cols, [5, 10, 15]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, mlb_cols, [5, 10, 15]).items()})
+        
+        # Lag features (previous 2 games)
+        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, mlb_cols, [1, 2]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, mlb_cols, [1, 2]).items()})
+        
+        # Rest (less important in MLB)
+        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
+        
+        # Matchup
+        features['pitching_matchup'] = features['away_era'] - features['home_era']  # Lower is better
+        features['batting_matchup'] = features['home_ops'] - features['away_ops']
+        
+        return features
+    
+    def _ncaaf_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+        """NCAA Football-specific comprehensive features"""
+        features = {}
+        
+        home_season = home_prior.tail(8)  # Shorter season
+        away_season = away_prior.tail(8)
+        
+        # Offensive stats
+        features['home_ppg'] = home_season['points_per_game'].mean() if 'points_per_game' in home_season else 28
+        features['away_ppg'] = away_season['points_per_game'].mean() if 'points_per_game' in away_season else 28
+        
+        # Defensive stats
+        features['home_papg'] = home_season['points_allowed_per_game'].mean() if 'points_allowed_per_game' in home_season else 24
+        features['away_papg'] = away_season['points_allowed_per_game'].mean() if 'points_allowed_per_game' in away_season else 24
+        
+        # Rolling averages (3-game for college)
+        ncaaf_cols = ['points_per_game', 'points_allowed_per_game', 'total_yards_per_game']
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, ncaaf_cols, [3]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, ncaaf_cols, [3]).items()})
+        
+        # Lag features (previous 2 games)
+        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, ncaaf_cols, [1, 2]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, ncaaf_cols, [1, 2]).items()})
+        
+        # Rest
+        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
+        
+        # Matchup
+        features['off_def_matchup'] = (features['home_ppg'] - features['away_papg']) - (features['away_ppg'] - features['home_papg'])
         
         return features
     
