@@ -839,75 +839,19 @@ class UniversalSportsEnsemble:
             self.logger.error(f"Error training {self.sport} models: {str(e)}")
             raise
     
-    def _nfl_confidence_weighted_blend(self, elo_prob: float, xgb_prob: float, logistic_prob: float, 
-                                        home_rest: float = None, away_rest: float = None) -> float:
+    def _nfl_simple_blend(self, elo_prob: float, xgb_prob: float) -> float:
         """
-        NFL-specific confidence-based weighting system with rest differential override.
-        
-        Logic (3 Tiers):
-        TIER 1 - REST OVERRIDE: If Elo very confident (≥80%) but underdog has rest advantage,
-                 flip to underdog (captures high-value upsets)
-        TIER 2 - CONFIDENCE ZONES: Apply confidence-based weighting based on Elo/XGB divergence
-        TIER 3 - DEFAULT: Standard weighted ensemble
+        NFL ensemble: XGB as primary predictor, Elo as advisor.
+        No logistic (it's just consensus between XGB and Elo).
         
         Args:
             elo_prob: Elo home team win probability
             xgb_prob: XGBoost home team win probability
-            logistic_prob: Logistic home team win probability
-            home_rest: Days of rest for home team (optional)
-            away_rest: Days of rest for away team (optional)
             
         Returns:
-            Confidence-weighted blended probability with rest override
+            Weighted blend: 70% XGB, 30% Elo
         """
-        # Convert to percentages for easier logic
-        elo_pct = elo_prob * 100
-        xgb_pct = xgb_prob * 100
-        
-        # DEBUG: Log rest days to verify they're being passed
-        if hasattr(self, 'logger') and home_rest is not None and away_rest is not None:
-            if elo_pct >= 80 or elo_pct <= 20:
-                self.logger.debug(f"REST DEBUG: Elo={elo_pct:.1f}%, home_rest={home_rest}, away_rest={away_rest}, rest_diff={away_rest-home_rest}")
-        
-        # TIER 1: REST DIFFERENTIAL OVERRIDE (Highest Priority)
-        # Captures high-value upsets where rested underdogs beat tired favorites
-        if home_rest is not None and away_rest is not None:
-            rest_diff = away_rest - home_rest  # Positive = away more rested
-            
-            # Case A: Elo heavily favors home (≥80%), but away has rest advantage (≥1 day)
-            # Example: Bills (rested) upset Pats (short rest) despite 92% Elo for Pats
-            if elo_pct >= 80 and rest_diff >= 1:
-                # FLIP to away underdog - compute baseline then invert to force away win
-                baseline = elo_prob * 0.60 + xgb_prob * 0.30 + logistic_prob * 0.10
-                return 1.0 - baseline  # Flip to away team (underdog)
-            
-            # Case B: Elo heavily favors away (≤20%), but home has rest advantage (≤-1 day)
-            # Mirror case - home underdog has rest advantage
-            if elo_pct <= 20 and rest_diff <= -1:
-                # FLIP to home underdog - boost home probability to ensure home win
-                # If Elo gives home ~15-20%, we want to flip to ~55-60% home win
-                return 0.60  # Force home underdog to win with reasonable confidence
-        
-        # TIER 2: CONFIDENCE ZONES (No rest override triggered)
-        
-        # Zone 1: High Elo Favor (≥75%) - Don't override strong Elo with weak XGB
-        if elo_pct >= 75 and xgb_pct <= 55:
-            # Strong home favor from Elo, weak opposition from XGB -> trust Elo heavily
-            return elo_prob * 0.85 + xgb_prob * 0.10 + logistic_prob * 0.05
-        
-        elif elo_pct <= 25 and xgb_pct >= 45:
-            # Strong away favor from Elo (inverse), weak opposition from XGB -> trust Elo heavily
-            return elo_prob * 0.85 + xgb_prob * 0.10 + logistic_prob * 0.05
-        
-        # Zone 2: Moderate/Coin Flip Range - Sweet spot for upsets
-        # Elo moderately confident (55-75%), XGB neutral (45-55%) -> let XGB find value
-        elif (55 <= elo_pct <= 75 or 25 <= elo_pct <= 45) and (45 <= xgb_pct <= 55):
-            # This is where XGB can identify hidden patterns Elo misses
-            return elo_prob * 0.50 + xgb_prob * 0.40 + logistic_prob * 0.10
-        
-        # TIER 3: DEFAULT - Use standard NFL ensemble weights (60/30/10)
-        else:
-            return elo_prob * 0.60 + xgb_prob * 0.30 + logistic_prob * 0.10
+        return xgb_prob * 0.70 + elo_prob * 0.30
     
     def predict_game(self, home_team: str, away_team: str, team_stats: pd.DataFrame = None) -> Dict:
         """
@@ -956,12 +900,10 @@ class UniversalSportsEnsemble:
             logistic_prob = elo_prob
             xgb_prob = elo_prob
         
-        # Blended prediction with confidence-based weighting for NFL
+        # Blended prediction
         if self.sport == 'NFL':
-            # Extract rest days from features if available
-            home_rest = features_df['home_rest_days'].iloc[0] if 'home_rest_days' in features_df.columns else None
-            away_rest = features_df['away_rest_days'].iloc[0] if 'away_rest_days' in features_df.columns else None
-            blended_prob = self._nfl_confidence_weighted_blend(elo_prob, xgb_prob, logistic_prob, home_rest, away_rest)
+            # Simple XGB-heavy blend (70% XGB, 30% Elo)
+            blended_prob = self._nfl_simple_blend(elo_prob, xgb_prob)
         else:
             # Standard weighted average for other sports
             blended_prob = (
