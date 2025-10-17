@@ -2879,61 +2879,63 @@ def get_mlb_schedule():
     """MLB Schedule - Update once per season"""
     # ------ Enter MLB schedule code here ------
     mlb_schedule = [   
-    # AL Wild Card Series: DET vs CLE
-    {'match_id': 1, 'round': 1, 'date': '30/09/2025', 'venue': 'Cleveland', 'home_team': 'CLE', 'away_team': 'DET', 'result': 'Away Win'},
-    {'match_id': 2, 'round': 1, 'date': '01/10/2025', 'venue': 'Cleveland', 'home_team': 'CLE', 'away_team': 'DET', 'result': 'Home Win'},
-    {'match_id': 3, 'round': 1, 'date': '02/10/2025', 'venue': 'Cleveland', 'home_team': 'CLE', 'away_team': 'DET', 'result': 'Away Win'},
+    # AL Wild Card: Detroit Tigers vs Cleveland Guardians
+    {'match_id': 1, 'round': 'AL Wild Card', 'date': '2025-10-01', 'venue': 'Cleveland', 'home_team': 'Cleveland Guardians', 'away_team': 'Detroit Tigers', 'result': 'Away Win'},
+    {'match_id': 2, 'round': 'AL Wild Card', 'date': '2025-10-02', 'venue': 'Cleveland', 'home_team': 'Cleveland Guardians', 'away_team': 'Detroit Tigers', 'result': 'Away Win'},
 
-    # NL Wild Card Series: CHC vs SD
-    {'match_id': 4, 'round': 1, 'date': '30/09/2025', 'venue': 'Chicago', 'home_team': 'CHC', 'away_team': 'SD', 'result': 'Home Win'},
-    {'match_id': 5, 'round': 1, 'date': '01/10/2025', 'venue': 'Chicago', 'home_team': 'CHC', 'away_team': 'SD', 'result': 'Away Win'},
-    {'match_id': 6, 'round': 1, 'date': '02/10/2025', 'venue': 'Chicago', 'home_team': 'CHC', 'away_team': 'SD', 'result': 'Home Win'},
+    # NL Wild Card: Chicago Cubs vs San Diego Padres
+    {'match_id': 4, 'round': 'NL Wild Card', 'date': '2025-10-01', 'venue': 'Chicago', 'home_team': 'Chicago Cubs', 'away_team': 'San Diego Padres', 'result': 'Away Win'},
+    {'match_id': 5, 'round': 'NL Wild Card', 'date': '2025-10-02', 'venue': 'Chicago', 'home_team': 'Chicago Cubs', 'away_team': 'San Diego Padres', 'result': 'Home Win'},
 
-    # AL Wild Card Series: BOS vs NYY
-    {'match_id': 7, 'round': 1, 'date': '30/09/2025', 'venue': 'New York', 'home_team': 'NYY', 'away_team': 'BOS', 'result': 'Away Win'},
-    {'match_id': 8, 'round': 1, 'date': '01/10/2025', 'venue': 'New York', 'home_team': 'NYY', 'away_team': 'BOS', 'result': 'Home Win'},
-    {'match_id': 9, 'round': 1, 'date': '02/10/2025', 'venue': 'New York', 'home_team': 'NYY', 'away_team': 'BOS', 'result': 'Home Win'},
+    # AL Wild Card: New York Yankees vs Boston Red Sox 
+    {'match_id': 7, 'round': 'AL Wild Card', 'date': '2025-10-01', 'venue': 'New York', 'home_team': 'New York Yankees', 'away_team': 'Boston Red Sox', 'result': 'Home Win'},
+    {'match_id': 8, 'round': 'AL Wild Card', 'date': '2025-10-02', 'venue': 'New York', 'home_team': 'New York Yankees', 'away_team': 'Boston Red Sox', 'result': 'Home Win'},
 
-    # NL Wild Card Series: CIN vs LAD
-    {'match_id': 10, 'round': 1, 'date': '30/09/2025', 'venue': 'Los Angeles', 'home_team': 'LAD', 'away_team': 'CIN', 'result': 'Home Win'},
-    {'match_id': 11, 'round': 1, 'date': '01/10/2025', 'venue': 'Los Angeles', 'home_team': 'LAD', 'away_team': 'CIN', 'result': 'Home Win'},
+    # NL Wild Card: Cincinnati Reds vs Los Angeles Dodgers
+    {'match_id': 10, 'round': 'NL Wild Card', 'date': '2025-10-01', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Cincinnati Reds', 'result': 'Home Win'},
+    {'match_id': 11, 'round': 'NL Wild Card', 'date': '2025-10-02', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Cincinnati Reds', 'result': 'Home Win'},
 
-    # NLDS: MIL vs CHC
-    {'match_id': 12, 'round': 2, 'date': '04/10/2025', 'venue': 'Milwaukee', 'home_team': 'MIL', 'away_team': 'CHC', 'result': 'Home Win'},
-    {'match_id': 13, 'round': 2, 'date': '06/10/2025', 'venue': 'Milwaukee', 'home_team': 'MIL', 'away_team': 'CHC', 'result': 'Home Win'},
-    {'match_id': 14, 'round': 2, 'date': '08/10/2025', 'venue': 'Chicago', 'home_team': 'CHC', 'away_team': 'MIL', 'result': 'Home Win'},
-    {'match_id': 15, 'round': 2, 'date': '09/10/2025', 'venue': 'Chicago', 'home_team': 'CHC', 'away_team': 'MIL', 'result': 'Away Win'},
-    {'match_id': 16, 'round': 2, 'date': '11/10/2025', 'venue': 'Milwaukee', 'home_team': 'MIL', 'away_team': 'CHC', 'result': 'Home Win'},
+    # NLDS: Milwaukee Brewers vs Chicago Cubs
+    {'match_id': 13, 'round': 'NLDS', 'date': '2025-10-05', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Chicago Cubs', 'result': None},
+    {'match_id': 14, 'round': 'NLDS', 'date': '2025-10-06', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Chicago Cubs', 'result': None},
+    {'match_id': 15, 'round': 'NLDS', 'date': '2025-10-08', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Chicago Cubs', 'result': None},
+    {'match_id': 16, 'round': 'NLDS', 'date': '2025-10-09', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Chicago Cubs', 'result': None},
+    {'match_id': 17, 'round': 'NLDS', 'date': '2025-10-11', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Chicago Cubs', 'result': None},
 
-    # ALDS: TOR vs NYY
-    {'match_id': 17, 'round': 2, 'date': '04/10/2025', 'venue': 'Toronto', 'home_team': 'TOR', 'away_team': 'NYY', 'result': 'Home Win'},
-    {'match_id': 18, 'round': 2, 'date': '05/10/2025', 'venue': 'Toronto', 'home_team': 'TOR', 'away_team': 'NYY', 'result': 'Home Win'},
-    {'match_id': 19, 'round': 2, 'date': '07/10/2025', 'venue': 'New York', 'home_team': 'NYY', 'away_team': 'TOR', 'result': 'Away Win'},
-    {'match_id': 20, 'round': 2, 'date': '08/10/2025', 'venue': 'New York', 'home_team': 'NYY', 'away_team': 'TOR', 'result': 'Away Win'},
+    # ALDS: Toronto Blue Jays vs New York Yankees
+    {'match_id': 18, 'round': 'ALDS', 'date': '2025-10-05', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'New York Yankees', 'result': None},
+    {'match_id': 19, 'round': 'ALDS', 'date': '2025-10-06', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'New York Yankees', 'result': None},
+    {'match_id': 20, 'round': 'ALDS', 'date': '2025-10-08', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'New York Yankees', 'result': None},
 
-    # NLDS: LAD vs PHI
-    {'match_id': 21, 'round': 2, 'date': '04/10/2025', 'venue': 'Philadelphia', 'home_team': 'PHI', 'away_team': 'LAD', 'result': 'Away Win'},
-    {'match_id': 22, 'round': 2, 'date': '06/10/2025', 'venue': 'Philadelphia', 'home_team': 'PHI', 'away_team': 'LAD', 'result': 'Away Win'},
-    {'match_id': 23, 'round': 2, 'date': '08/10/2025', 'venue': 'Los Angeles', 'home_team': 'LAD', 'away_team': 'PHI', 'result': 'Away Win'},
-    {'match_id': 24, 'round': 2, 'date': '09/10/2025', 'venue': 'Los Angeles', 'home_team': 'LAD', 'away_team': 'PHI', 'result': 'Home Win'},
+    # NLDS: Los Angeles Dodgers vs Philadelphia Phillies
+    {'match_id': 22, 'round': 'NLDS', 'date': '2025-10-05', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Philadelphia Phillies', 'result': None},
+    {'match_id': 23, 'round': 'NLDS', 'date': '2025-10-06', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Philadelphia Phillies', 'result': None},
+    {'match_id': 24, 'round': 'NLDS', 'date': '2025-10-08', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Philadelphia Phillies', 'result': None},
+    {'match_id': 25, 'round': 'NLDS', 'date': '2025-10-09', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Philadelphia Phillies', 'result': None},
 
-    # ALDS: SEA vs DET
-    {'match_id': 25, 'round': 2, 'date': '04/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'DET', 'result': 'Away Win'},
-    {'match_id': 26, 'round': 2, 'date': '05/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'DET', 'result': 'Home Win'},
-    {'match_id': 27, 'round': 2, 'date': '07/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'DET', 'result': 'Away Win'},
-    {'match_id': 28, 'round': 2, 'date': '08/10/2025', 'venue': 'Detroit', 'home_team': 'DET', 'away_team': 'SEA', 'result': 'Home Win'},
-    {'match_id': 29, 'round': 2, 'date': '10/10/2025', 'venue': 'Detroit', 'home_team': 'DET', 'away_team': 'SEA', 'result': 'Away Win'},
+    # ALDS: Seattle Mariners vs Detroit Tigers
+    {'match_id': 27, 'round': 'ALDS', 'date': '2025-10-07', 'venue': 'Seattle', 'home_team': 'Seattle Mariners', 'away_team': 'Detroit Tigers', 'result': None},
+    {'match_id': 28, 'round': 'ALDS', 'date': '2025-10-08', 'venue': 'Detroit', 'home_team': 'Detroit Tigers', 'away_team': 'Seattle Mariners', 'result': None},
+    {'match_id': 29, 'round': 'ALDS', 'date': '2025-10-10', 'venue': 'Detroit', 'home_team': 'Detroit Tigers', 'away_team': 'Seattle Mariners', 'result': None},
 
-    # ALCS: SEA vs TOR
-    {'match_id': 30, 'round': 3, 'date': '12/10/2025', 'venue': 'Toronto', 'home_team': 'TOR', 'away_team': 'SEA', 'result': 'Away Win'},
-    {'match_id': 31, 'round': 3, 'date': '13/10/2025', 'venue': 'Toronto', 'home_team': 'TOR', 'away_team': 'SEA', 'result': 'Away Win'},
-    {'match_id': 32, 'round': 3, 'date': '15/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'TOR', 'result': None},
-    {'match_id': 33, 'round': 3, 'date': '16/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'TOR', 'result': None},
-    {'match_id': 34, 'round': 3, 'date': '17/10/2025', 'venue': 'Seattle', 'home_team': 'SEA', 'away_team': 'TOR', 'result': None},
-    {'match_id': 35, 'round': 3, 'date': '19/10/2025', 'venue': 'Toronto', 'home_team': 'TOR', 'away_team': 'SEA', 'result': None},
-    {'match_id': 36, 'round': 3, 'date': '20/10/2025', 'home_team': 'TOR', 'away_team': 'SEA', 'venue': 'Toronto', 'result': None},
+    # ALCS: Seattle Mariners vs Toronto Blue Jays
+    {'match_id': 30, 'round': 'ALCS', 'date': '2025-10-12', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'Seattle Mariners', 'result': None},
+    {'match_id': 31, 'round': 'ALCS', 'date': '2025-10-13', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'Seattle Mariners', 'result': None},
+    {'match_id': 32, 'round': 'ALCS', 'date': '2025-10-15', 'venue': 'Seattle', 'home_team': 'Seattle Mariners', 'away_team': 'Toronto Blue Jays', 'result': None},
+    {'match_id': 33, 'round': 'ALCS', 'date': '2025-10-16', 'venue': 'Seattle', 'home_team': 'Seattle Mariners', 'away_team': 'Toronto Blue Jays', 'result': None},
+    {'match_id': 34, 'round': 'ALCS', 'date': '2025-10-17', 'venue': 'Seattle', 'home_team': 'Seattle Mariners', 'away_team': 'Toronto Blue Jays', 'result': None},
+    {'match_id': 35, 'round': 'ALCS', 'date': '2025-10-19', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'Seattle Mariners', 'result': None},
+    {'match_id': 36, 'round': 'ALCS', 'date': '2025-10-20', 'venue': 'Toronto', 'home_team': 'Toronto Blue Jays', 'away_team': 'Seattle Mariners', 'result': None},
+
+    # NLCS: Los Angeles Dodgers vs Milwaukee Brewers
+    {'match_id': 37, 'round': 'NLCS', 'date': '2025-10-13', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Los Angeles Dodgers', 'result': None},
+    {'match_id': 38, 'round': 'NLCS', 'date': '2025-10-14', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Los Angeles Dodgers', 'result': None},
+    {'match_id': 40, 'round': 'NLCS', 'date': '2025-10-16', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Los Angeles Dodgers', 'result': None},
+    {'match_id': 41, 'round': 'NLCS', 'date': '2025-10-17', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Milwaukee Brewers', 'result': None},
+    {'match_id': 42, 'round': 'NLCS', 'date': '2025-10-18', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Milwaukee Brewers', 'result': None},
+    {'match_id': 43, 'round': 'NLCS', 'date': '2025-10-19', 'venue': 'Los Angeles', 'home_team': 'Los Angeles Dodgers', 'away_team': 'Milwaukee Brewers', 'result': None},
+    {'match_id': 44, 'round': 'NLCS', 'date': '2025-10-21', 'venue': 'Milwaukee', 'home_team': 'Milwaukee Brewers', 'away_team': 'Los Angeles Dodgers', 'result': None},
 ]
-
 
     # ------------------------------------------
     return mlb_schedule
