@@ -59,6 +59,13 @@ Preferred communication style: Simple, everyday language.
 - **Date Format Consistency**: All dates stored as DD/MM/YYYY strings in database to prevent automatic pandas date conversion and month/day confusion.
 - **Active Sports**: NFL (207 predictions), NBA (1204 predictions), NHL (1264 predictions), MLB (5 predictions), NCAAF (29 predictions). NCAAB and WNBA schedules pending data.
 
+### Prediction Generation Workflow
+- **Real Model-Based Predictions**: Uses `generate_real_predictions.py` to load trained ensemble models and generate authentic predictions for all upcoming games.
+- **Model Persistence Fix (Oct 2025)**: Fixed critical bug where training metadata (games_trained, feature_cols, accuracy) wasn't being persisted. Models now properly save/load all training state.
+- **Placeholder Prevention**: Deprecated `generate_missing_predictions.py` (random placeholders) in favor of model-based generation. File renamed to `DEPRECATED_generate_missing_predictions.py.bak` to prevent accidental reuse.
+- **Current Predictions**: 6,167 real predictions across all sports (NFL: 557, NBA: 1,497, NHL: 2,624, MLB: 1,361, NCAAF: 128) based on 3,619 historical games.
+- **Workflow**: After model retraining, run `python generate_real_predictions.py` to repopulate predictions with authentic model outputs.
+
 ### Automation Framework
 - **Scheduled Tasks**: Daily data updates, prediction generation, and weekly model retraining.
 - **Threading Support**: Non-blocking scheduler execution.
