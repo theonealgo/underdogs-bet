@@ -154,14 +154,15 @@ class UniversalSportsEnsemble:
     # Sport-specific XGBoost hyperparameters (tuned for each sport)
     SPORT_XGB_PARAMS = {
         'NFL': {
-            'n_estimators': 150,
-            'max_depth': 5,
-            'learning_rate': 0.05,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
+            'n_estimators': 120,
+            'max_depth': 3,
+            'learning_rate': 0.03,
+            'subsample': 0.6,
+            'colsample_bytree': 0.6,
+            'min_child_weight': 5,
             'gamma': 1,
-            'reg_alpha': 0.1,
-            'reg_lambda': 1.0
+            'reg_alpha': 1.0,
+            'reg_lambda': 10.0
         },
         'NBA': {
             'n_estimators': 200,
@@ -243,14 +244,15 @@ class UniversalSportsEnsemble:
         # Initialize models
         self.elo_system = UniversalEloRatingSystem(sport, k_factor=k_factor)
         
-        # Logistic Regression (simpler, more reliable)
+        # Logistic Regression (simpler, more reliable) with strong regularization
         from sklearn.linear_model import LogisticRegression
         self.logistic_model = LogisticRegression(
             penalty='l2',
-            C=1.0,
+            C=0.1,  # Strong regularization to prevent overfitting
             max_iter=1000,
             random_state=42,
-            solver='lbfgs'
+            solver='lbfgs',
+            class_weight='balanced'  # Handle class imbalance
         )
         
         # Use sport-specific XGBoost parameters
@@ -274,12 +276,14 @@ class UniversalSportsEnsemble:
         self.scaler = StandardScaler()
         self.is_trained = False
         
-        # Sport-specific ensemble weights (NFL needs higher XGBoost weight)
+        # Sport-specific ensemble weights
         if sport == 'NFL':
+            # NFL: Favor Elo (77% accuracy) over overfitted ML models
+            # After regularization tuning, rebalance based on CV performance
             self.ensemble_weights = {
-                'elo': 0.35,
-                'logistic': 0.15,
-                'xgboost': 0.50  # NFL benefits more from XGBoost with proper features
+                'elo': 0.60,      # Best performer on real games
+                'xgboost': 0.30,  # Heavily regularized
+                'logistic': 0.10  # Heavily regularized
             }
         else:
             self.ensemble_weights = {
@@ -389,8 +393,10 @@ class UniversalSportsEnsemble:
             return features  # No prior data available
         
         # Compute chronological team stats for home and away teams
-        home_prior = prior_stats[prior_stats['team_id'] == home_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats['team_id'] == home_team]
-        away_prior = prior_stats[prior_stats['team_id'] == away_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats['team_id'] == away_team]
+        # Column name is 'team' (renamed during loading from team_id)
+        team_col = 'team' if 'team' in prior_stats.columns else 'team_id'
+        home_prior = prior_stats[prior_stats[team_col] == home_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats[team_col] == home_team]
+        away_prior = prior_stats[prior_stats[team_col] == away_team].sort_values('date') if 'date' in prior_stats.columns else prior_stats[prior_stats[team_col] == away_team]
         
         if home_prior.empty or away_prior.empty:
             return features
