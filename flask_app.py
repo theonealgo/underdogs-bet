@@ -221,10 +221,13 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                 game_date = None
                 try:
                     game_date = datetime.strptime(row['game_date'], '%d/%m/%Y').date()
-                    # Show ALL games from the schedule (past and future)
+                    # Only show future games (skip games from more than 7 days ago)
+                    days_ago = (today - game_date).days
+                    if days_ago > 7:
+                        continue  # Skip old games
                 except:
-                    # If date parsing fails, include the game anyway
-                    game_date = datetime.now().date()  # Default to today for sorting
+                    # If date parsing fails, skip the game
+                    continue
                 
                 elo = float(row['elo_home_prob']) if row['elo_home_prob'] else 0.5
                 logistic = float(row['logistic_home_prob']) if row['logistic_home_prob'] else 0.5
