@@ -221,9 +221,9 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                 game_date = None
                 try:
                     game_date = datetime.strptime(row['game_date'], '%d/%m/%Y').date()
-                    # Only show future games (skip games from more than 7 days ago)
+                    # Show full season (skip games from more than 90 days ago)
                     days_ago = (today - game_date).days
-                    if days_ago > 7:
+                    if days_ago > 90:
                         continue  # Skip old games
                 except:
                     # If date parsing fails, skip the game
