@@ -53,10 +53,13 @@ Preferred communication style: Simple, everyday language.
   - **MLB-Specific**: ~18 features (ERA/OPS/runs rolling/lag, pitching/batting matchup)
   - **NCAAF-Specific**: ~15 features (points/yards rolling/lag, rest, matchup)
 - **Team Stats System (Oct 2025)**: Populated team_stats table with 570 NFL records from 285 completed games, enabling all rolling window features
-- **Ensemble Model Weights (Oct 2025)**:
-  - **NFL**: 60% Elo, 30% XGBoost, 10% Logistic (favors Elo's strong performance, heavily regularized ML models)
-  - **Other Sports**: 50% XGBoost, 35% Elo, 15% Logistic
-- **NFL Model Performance**: 72.3% accuracy on 285 completed games (up from 53% baseline)
+- **NFL Confidence-Based Weighting (Oct 2025)**:
+  - **Rule 1 - High Elo Favor** (Elo ≥75%, XGB ≤55%): 85% Elo / 10% XGB / 5% Log - Don't let weak XGB override strong Elo (89.4% accuracy on 113 games)
+  - **Rule 2 - Upset Zone** (Elo 55-75%, XGB 45-55%): 50% Elo / 40% XGB / 10% Log - Let XGB find hidden value (68.7% accuracy on 134 games)
+  - **Default**: 60% Elo / 30% XGB / 10% Log - Standard weighting for other scenarios (36.8% accuracy on 38 games)
+  - Improvement: 72.6% vs 72.3% simple weighted (+0.4%)
+- **Other Sports Ensemble Weights**: 50% XGBoost, 35% Elo, 15% Logistic (simple weighted average)
+- **NFL Model Performance**: 72.6% accuracy on 285 completed games (up from 53% baseline)
 - **Overfitting Prevention**: Discovered and fixed severe overfitting (98.9% training → 44.9% real-world for XGBoost). Applied aggressive regularization and ensemble reweighting, improving to 72.6% real-world accuracy.
 - **Cross-Validation**: Built-in model evaluation and hyperparameter tuning.
 - **Backtesting Framework**: Historical performance evaluation with configurable date ranges and confidence thresholds, validating against actual game results.

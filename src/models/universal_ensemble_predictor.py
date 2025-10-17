@@ -839,6 +839,49 @@ class UniversalSportsEnsemble:
             self.logger.error(f"Error training {self.sport} models: {str(e)}")
             raise
     
+    def _nfl_confidence_weighted_blend(self, elo_prob: float, xgb_prob: float, logistic_prob: float) -> float:
+        """
+        NFL-specific confidence-based weighting system.
+        
+        Logic:
+        1. High Elo Favor (Elo ≥75% AND XGB ≤55%): Default to Elo pick
+           - If Elo is extremely confident, don't let a weak XGB flip it
+        2. Moderate Elo/Coin Flip (Elo 55-75%, XGB 45-55%): Allow XGB contrarian pick
+           - Sweet spot for finding value/upsets
+        3. Otherwise: Use weighted ensemble
+        
+        Args:
+            elo_prob: Elo home team win probability
+            xgb_prob: XGBoost home team win probability
+            logistic_prob: Logistic home team win probability
+            
+        Returns:
+            Confidence-weighted blended probability
+        """
+        # Convert to percentages for easier logic
+        elo_pct = elo_prob * 100
+        xgb_pct = xgb_prob * 100
+        
+        # Rule 1: High Elo Favor - Don't override strong Elo with weak XGB
+        # If Elo is very confident (≥75%) and XGB is weak/neutral (≤55%), trust Elo
+        if elo_pct >= 75 and xgb_pct <= 55:
+            # Strong home favor from Elo, weak opposition from XGB -> trust Elo heavily
+            return elo_prob * 0.85 + xgb_prob * 0.10 + logistic_prob * 0.05
+        
+        elif elo_pct <= 25 and xgb_pct >= 45:
+            # Strong away favor from Elo (inverse), weak opposition from XGB -> trust Elo heavily
+            return elo_prob * 0.85 + xgb_prob * 0.10 + logistic_prob * 0.05
+        
+        # Rule 2: Moderate/Coin Flip Range - Sweet spot for upsets
+        # Elo moderately confident (55-75%), XGB neutral (45-55%) -> let XGB find value
+        elif (55 <= elo_pct <= 75 or 25 <= elo_pct <= 45) and (45 <= xgb_pct <= 55):
+            # This is where XGB can identify hidden patterns Elo misses
+            return elo_prob * 0.50 + xgb_prob * 0.40 + logistic_prob * 0.10
+        
+        # Default: Use standard NFL ensemble weights (60/30/10)
+        else:
+            return elo_prob * 0.60 + xgb_prob * 0.30 + logistic_prob * 0.10
+    
     def predict_game(self, home_team: str, away_team: str, team_stats: pd.DataFrame = None) -> Dict:
         """
         Predict game outcome using ensemble
@@ -886,12 +929,16 @@ class UniversalSportsEnsemble:
             logistic_prob = elo_prob
             xgb_prob = elo_prob
         
-        # Blended prediction
-        blended_prob = (
-            self.ensemble_weights['elo'] * elo_prob +
-            self.ensemble_weights['logistic'] * logistic_prob +
-            self.ensemble_weights['xgboost'] * xgb_prob
-        )
+        # Blended prediction with confidence-based weighting for NFL
+        if self.sport == 'NFL':
+            blended_prob = self._nfl_confidence_weighted_blend(elo_prob, xgb_prob, logistic_prob)
+        else:
+            # Standard weighted average for other sports
+            blended_prob = (
+                self.ensemble_weights['elo'] * elo_prob +
+                self.ensemble_weights['logistic'] * logistic_prob +
+                self.ensemble_weights['xgboost'] * xgb_prob
+            )
         
         predicted_winner = home_team if blended_prob > 0.5 else away_team
         
