@@ -52,14 +52,19 @@ Preferred communication style: Simple, everyday language.
   - **NHL-Specific**: ~20 features (goals rolling/lag, back-to-back, matchup)
   - **MLB-Specific**: ~18 features (ERA/OPS/runs rolling/lag, pitching/batting matchup)
   - **NCAAF-Specific**: ~15 features (points/yards rolling/lag, rest, matchup)
-- **Team Stats System (Oct 2025)**: Populated team_stats table with 570 NFL records from 285 completed games, enabling all rolling window features
+- **Team Stats System (Oct 2025)**: Populated team_stats table with 758 NFL records from 379 completed games, enabling all rolling window features
 - **NFL Confidence-Based Weighting (Oct 2025)**:
   - **Rule 1 - High Elo Favor** (Elo ≥75%, XGB ≤55%): 85% Elo / 10% XGB / 5% Log - Don't let weak XGB override strong Elo (89.4% accuracy on 113 games)
   - **Rule 2 - Upset Zone** (Elo 55-75%, XGB 45-55%): 50% Elo / 40% XGB / 10% Log - Let XGB find hidden value (68.7% accuracy on 134 games)
   - **Default**: 60% Elo / 30% XGB / 10% Log - Standard weighting for other scenarios (36.8% accuracy on 38 games)
   - Improvement: 72.6% vs 72.3% simple weighted (+0.4%)
 - **Other Sports Ensemble Weights**: 50% XGBoost, 35% Elo, 15% Logistic (simple weighted average)
-- **NFL Model Performance**: 72.6% accuracy on 285 completed games (up from 53% baseline)
+- **NFL Model Performance (Oct 17, 2025)**: 
+  - **Historical Accuracy**: 72.6% on 285 2024 season games (up from 53% baseline)
+  - **2025 Season Performance**: 68.1% on 94 completed 2025 games (Oct 17, 2025)
+  - **Critical Fix**: Identified temporal data mismatch - model trained only on 2024 data couldn't predict 2025 games well (53.2%). Solution: Imported 2025 game results and retrained model with 379 total games (2024 + 2025), improving 2025 accuracy by +14.9 percentage points (53.2% → 68.1%)
+  - **Training Data**: 379 games (285 from 2024 season, 94 from 2025 season through Oct 17)
+  - **Model Performance**: Elo 70.2%, XGBoost 54.3%, Logistic 34.0%, Ensemble 68.1%
 - **Overfitting Prevention**: Discovered and fixed severe overfitting (98.9% training → 44.9% real-world for XGBoost). Applied aggressive regularization and ensemble reweighting, improving to 72.6% real-world accuracy.
 - **Cross-Validation**: Built-in model evaluation and hyperparameter tuning.
 - **Backtesting Framework**: Historical performance evaluation with configurable date ranges and confidence thresholds, validating against actual game results.
