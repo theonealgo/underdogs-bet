@@ -16,9 +16,9 @@ import os
 
 
 class UniversalEloRatingSystem:
-    """Elo rating system that works for any sport"""
+    """Elo rating system that works for any sport with advanced features"""
     
-    def __init__(self, sport: str, k_factor: float = 20, initial_rating: float = 1500):
+    def __init__(self, sport: str, k_factor: float = 20, initial_rating: float = 1500, use_time_decay: bool = False):
         """
         Initialize Elo rating system
         
@@ -26,11 +26,16 @@ class UniversalEloRatingSystem:
             sport: Sport name (MLB, NFL, NBA, NHL, etc.)
             k_factor: How much ratings change after each game
             initial_rating: Starting rating for all teams
+            use_time_decay: If True, apply time decay to weight recent games higher
         """
         self.sport = sport
         self.k_factor = k_factor
         self.initial_rating = initial_rating
+        self.use_time_decay = use_time_decay
         self.ratings = {}
+        # Offensive/Defensive split ratings for better matchup analysis
+        self.offensive_ratings = {}
+        self.defensive_ratings = {}
         self.logger = logging.getLogger(__name__)
     
     def get_rating(self, team: str) -> float:
@@ -39,12 +44,24 @@ class UniversalEloRatingSystem:
             self.ratings[team] = self.initial_rating
         return self.ratings[team]
     
+    def get_offensive_rating(self, team: str) -> float:
+        """Get team's offensive Elo rating"""
+        if team not in self.offensive_ratings:
+            self.offensive_ratings[team] = self.initial_rating
+        return self.offensive_ratings[team]
+    
+    def get_defensive_rating(self, team: str) -> float:
+        """Get team's defensive Elo rating"""
+        if team not in self.defensive_ratings:
+            self.defensive_ratings[team] = self.initial_rating
+        return self.defensive_ratings[team]
+    
     def expected_score(self, rating_a: float, rating_b: float) -> float:
         """Calculate expected win probability for team A"""
         return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     
-    def update_ratings(self, home_team: str, away_team: str, home_won: bool):
-        """Update Elo ratings after a game"""
+    def update_ratings(self, home_team: str, away_team: str, home_won: bool, home_score: int = None, away_score: int = None):
+        """Update Elo ratings after a game with margin of victory adjustment"""
         home_rating = self.get_rating(home_team)
         away_rating = self.get_rating(away_team)
         
@@ -56,9 +73,59 @@ class UniversalEloRatingSystem:
         home_actual = 1.0 if home_won else 0.0
         away_actual = 1.0 - home_actual
         
-        # Update ratings
-        self.ratings[home_team] = home_rating + self.k_factor * (home_actual - home_expected)
-        self.ratings[away_team] = away_rating + self.k_factor * (away_actual - away_expected)
+        # Margin of victory multiplier (if scores provided)
+        mov_multiplier = 1.0
+        if home_score is not None and away_score is not None:
+            score_diff = abs(home_score - away_score)
+            rating_diff = abs(home_rating - away_rating)
+            # Logarithmic scaling: bigger wins matter more, but diminishing returns
+            mov_multiplier = np.log(score_diff + 1) * 2.2 / (rating_diff / 400 + 1.0)
+            mov_multiplier = min(mov_multiplier, 2.5)  # Cap at 2.5x
+        
+        # Update ratings with MoV adjustment
+        k_effective = self.k_factor * mov_multiplier
+        self.ratings[home_team] = home_rating + k_effective * (home_actual - home_expected)
+        self.ratings[away_team] = away_rating + k_effective * (away_actual - away_expected)
+        
+        # Update offensive/defensive split ratings (if scores provided)
+        if home_score is not None and away_score is not None:
+            self._update_split_ratings(home_team, away_team, home_score, away_score)
+    
+    def _update_split_ratings(self, home_team: str, away_team: str, home_score: int, away_score: int):
+        """Update offensive and defensive Elo ratings based on points scored/allowed"""
+        # Get current split ratings
+        home_off = self.get_offensive_rating(home_team)
+        away_off = self.get_offensive_rating(away_team)
+        home_def = self.get_defensive_rating(home_team)
+        away_def = self.get_defensive_rating(away_team)
+        
+        # Expected points (normalized to 0-1 scale)
+        # Higher defensive rating = fewer points allowed
+        home_off_expected = self.expected_score(home_off, away_def)
+        away_off_expected = self.expected_score(away_off, home_def)
+        
+        # Actual performance (normalized)
+        total_points = home_score + away_score
+        if total_points > 0:
+            home_off_actual = home_score / total_points
+            away_off_actual = away_score / total_points
+        else:
+            home_off_actual = 0.5
+            away_off_actual = 0.5
+        
+        # Update offensive ratings
+        k_split = self.k_factor * 0.8  # Slightly lower K for split ratings
+        self.offensive_ratings[home_team] = home_off + k_split * (home_off_actual - home_off_expected)
+        self.offensive_ratings[away_team] = away_off + k_split * (away_off_actual - away_off_expected)
+        
+        # Update defensive ratings (inverse logic - lower score allowed = better)
+        home_def_actual = 1 - away_off_actual  # Good defense = opponent scores less
+        away_def_actual = 1 - home_off_actual
+        home_def_expected = 1 - away_off_expected
+        away_def_expected = 1 - home_off_expected
+        
+        self.defensive_ratings[home_team] = home_def + k_split * (home_def_actual - home_def_expected)
+        self.defensive_ratings[away_team] = away_def + k_split * (away_def_actual - away_def_expected)
     
     def predict_game(self, home_team: str, away_team: str) -> float:
         """Predict home team win probability"""
@@ -244,6 +311,12 @@ class UniversalSportsEnsemble:
             away_elo = self.elo_system.get_rating(away_team)
             elo_diff = home_elo - away_elo
             
+            # Get offensive/defensive split Elo ratings
+            home_off_elo = self.elo_system.get_offensive_rating(home_team)
+            away_off_elo = self.elo_system.get_offensive_rating(away_team)
+            home_def_elo = self.elo_system.get_defensive_rating(home_team)
+            away_def_elo = self.elo_system.get_defensive_rating(away_team)
+            
             # Create enhanced features
             features = {
                 'home_elo': home_elo,
@@ -255,6 +328,15 @@ class UniversalSportsEnsemble:
                 'elo_diff_squared': elo_diff ** 2,
                 'home_advantage': 100,  # Stronger home advantage signal
                 'elo_product': home_elo * away_elo,
+                # Offensive/Defensive split Elo features
+                'home_off_elo': home_off_elo,
+                'away_off_elo': away_off_elo,
+                'home_def_elo': home_def_elo,
+                'away_def_elo': away_def_elo,
+                'off_elo_diff': home_off_elo - away_off_elo,
+                'def_elo_diff': home_def_elo - away_def_elo,
+                # Matchup-specific Elo (offense vs defense)
+                'off_def_matchup_elo': (home_off_elo - away_def_elo) - (away_off_elo - home_def_elo),
             }
             
             # Add sport-specific features if team stats provided
@@ -368,7 +450,7 @@ class UniversalSportsEnsemble:
         return 7  # Default 1 week rest
     
     def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
-        """NFL-specific comprehensive features"""
+        """NFL-specific comprehensive features with advanced momentum and matchup analytics"""
         features = {}
         
         # Season averages (all prior games)
@@ -387,12 +469,56 @@ class UniversalSportsEnsemble:
         features['home_rush_yds_allowed'] = home_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in home_season else 120
         features['away_rush_yds_allowed'] = away_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in away_season else 120
         
-        # Rolling averages (3-game, 5-game)
+        # Advanced rolling averages (L3, L5, L8 windows for momentum capture)
         nfl_stat_cols = ['offensive_epa', 'defensive_epa', 'net_epa']
-        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nfl_stat_cols, [3, 5]).items()})
-        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nfl_stat_cols, [3, 5]).items()})
+        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nfl_stat_cols, [3, 5, 8]).items()})
+        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nfl_stat_cols, [3, 5, 8]).items()})
         
-        # Lag features (previous 2 games)
+        # Win percentage rolling averages (momentum indicator)
+        home_win_pct_l3 = self._compute_win_pct(home_prior, window=3)
+        home_win_pct_l5 = self._compute_win_pct(home_prior, window=5)
+        home_win_pct_l8 = self._compute_win_pct(home_prior, window=8)
+        away_win_pct_l3 = self._compute_win_pct(away_prior, window=3)
+        away_win_pct_l5 = self._compute_win_pct(away_prior, window=5)
+        away_win_pct_l8 = self._compute_win_pct(away_prior, window=8)
+        
+        features['home_win_pct_l3'] = home_win_pct_l3
+        features['home_win_pct_l5'] = home_win_pct_l5
+        features['home_win_pct_l8'] = home_win_pct_l8
+        features['away_win_pct_l3'] = away_win_pct_l3
+        features['away_win_pct_l5'] = away_win_pct_l5
+        features['away_win_pct_l8'] = away_win_pct_l8
+        features['win_pct_diff_l3'] = home_win_pct_l3 - away_win_pct_l3
+        features['win_pct_diff_l5'] = home_win_pct_l5 - away_win_pct_l5
+        features['win_pct_diff_l8'] = home_win_pct_l8 - away_win_pct_l8
+        
+        # Point differential rolling averages (captures scoring margin trends)
+        point_diff_cols = ['points_scored', 'points_allowed']
+        if all(col in home_prior.columns for col in point_diff_cols):
+            home_prior['point_differential'] = home_prior['points_scored'] - home_prior['points_allowed']
+            away_prior['point_differential'] = away_prior['points_scored'] - away_prior['points_allowed']
+            
+            features['home_pt_diff_l3'] = home_prior['point_differential'].tail(3).mean()
+            features['home_pt_diff_l5'] = home_prior['point_differential'].tail(5).mean()
+            features['home_pt_diff_l8'] = home_prior['point_differential'].tail(8).mean()
+            features['away_pt_diff_l3'] = away_prior['point_differential'].tail(3).mean()
+            features['away_pt_diff_l5'] = away_prior['point_differential'].tail(5).mean()
+            features['away_pt_diff_l8'] = away_prior['point_differential'].tail(8).mean()
+            features['pt_diff_advantage'] = (features['home_pt_diff_l5'] - features['away_pt_diff_l5'])
+        
+        # Turnover margin rolling averages (critical NFL predictor)
+        turnover_cols = ['turnovers_gained', 'turnovers_lost']
+        if all(col in home_prior.columns for col in turnover_cols):
+            home_prior['turnover_margin'] = home_prior['turnovers_gained'] - home_prior['turnovers_lost']
+            away_prior['turnover_margin'] = away_prior['turnovers_gained'] - away_prior['turnovers_lost']
+            
+            features['home_to_margin_l3'] = home_prior['turnover_margin'].tail(3).mean()
+            features['home_to_margin_l5'] = home_prior['turnover_margin'].tail(5).mean()
+            features['away_to_margin_l3'] = away_prior['turnover_margin'].tail(3).mean()
+            features['away_to_margin_l5'] = away_prior['turnover_margin'].tail(5).mean()
+            features['to_margin_diff'] = features.get('home_to_margin_l5', 0) - features.get('away_to_margin_l5', 0)
+        
+        # Lag features (previous 2 games - immediate momentum)
         features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, nfl_stat_cols, [1, 2]).items()})
         features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, nfl_stat_cols, [1, 2]).items()})
         
@@ -403,11 +529,28 @@ class UniversalSportsEnsemble:
         features['home_short_rest'] = 1 if features['home_rest_days'] <= 4 else 0  # Thursday/Monday games
         features['away_short_rest'] = 1 if features['away_rest_days'] <= 4 else 0
         
-        # Matchup features
+        # Enhanced matchup features (offense vs defense efficiency)
+        features['pass_efficiency_matchup'] = (features['home_pass_ypg'] - features['away_pass_yds_allowed']) - (features['away_pass_ypg'] - features['home_pass_yds_allowed'])
+        features['rush_efficiency_matchup'] = (features['home_rush_ypg'] - features['away_rush_yds_allowed']) - (features['away_rush_ypg'] - features['home_rush_yds_allowed'])
+        features['total_yards_matchup'] = features['pass_efficiency_matchup'] + features['rush_efficiency_matchup']
+        
+        # Classic matchup features
         features['off_matchup'] = features['home_pass_ypg'] + features['home_rush_ypg'] - (features['away_pass_yds_allowed'] + features['away_rush_yds_allowed'])
         features['def_matchup'] = (features['away_pass_ypg'] + features['away_rush_ypg']) - (features['home_pass_yds_allowed'] + features['home_rush_yds_allowed'])
         
         return features
+    
+    def _compute_win_pct(self, team_prior: pd.DataFrame, window: int = 5) -> float:
+        """Compute win percentage over last N games"""
+        if 'result' not in team_prior.columns or len(team_prior) == 0:
+            return 0.5  # Default 50% if no data
+        
+        recent_games = team_prior.tail(window)
+        if len(recent_games) == 0:
+            return 0.5
+        
+        wins = (recent_games['result'] == 'W').sum()
+        return wins / len(recent_games)
     
     def _nba_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
         """NBA-specific comprehensive features"""
