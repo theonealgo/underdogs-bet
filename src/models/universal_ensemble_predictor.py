@@ -610,13 +610,18 @@ class UniversalSportsEnsemble:
             
             self.is_trained = True
             
+            # Store training metadata as instance variables
+            self.games_trained = len(features_df)
+            self.logistic_accuracy = float(logistic_score)
+            self.xgboost_accuracy = float(xgb_score)
+            
             results = {
                 'sport': self.sport,
-                'games_trained': len(features_df),
+                'games_trained': self.games_trained,
                 'features_used': len(feature_cols),
                 'feature_names': feature_cols,
-                'logistic_accuracy': float(logistic_score),
-                'xgboost_accuracy': float(xgb_score),
+                'logistic_accuracy': self.logistic_accuracy,
+                'xgboost_accuracy': self.xgboost_accuracy,
                 'teams': len(self.elo_system.ratings)
             }
             
@@ -726,7 +731,11 @@ class UniversalSportsEnsemble:
             'xgb_model': self.xgb_model,
             'scaler': self.scaler,
             'ensemble_weights': self.ensemble_weights,
-            'is_trained': self.is_trained
+            'is_trained': self.is_trained,
+            'feature_cols': getattr(self, 'feature_cols', None),
+            'games_trained': getattr(self, 'games_trained', None),
+            'logistic_accuracy': getattr(self, 'logistic_accuracy', None),
+            'xgboost_accuracy': getattr(self, 'xgboost_accuracy', None)
         }
         
         with open(filepath, 'wb') as f:
@@ -752,6 +761,13 @@ class UniversalSportsEnsemble:
         self.xgb_model = model_data['xgb_model']
         self.scaler = model_data['scaler']
         self.ensemble_weights = model_data['ensemble_weights']
+        self.is_trained = model_data.get('is_trained', True)
+        
+        # Load training metadata
+        self.feature_cols = model_data.get('feature_cols', None)
+        self.games_trained = model_data.get('games_trained', None)
+        self.logistic_accuracy = model_data.get('logistic_accuracy', None)
+        self.xgboost_accuracy = model_data.get('xgboost_accuracy', None)
         
         # Update old ensemble weights if using glmnet key
         if 'glmnet' in self.ensemble_weights:
