@@ -452,94 +452,149 @@ class UniversalSportsEnsemble:
                 pass
         return 7  # Default 1 week rest
     
+    def _extract_metrics(self, team_prior: pd.DataFrame) -> pd.DataFrame:
+        """Extract metrics from JSON column if it exists"""
+        if 'metrics' in team_prior.columns:
+            import json
+            metrics_df = team_prior.copy()
+            # Parse JSON metrics into separate columns
+            for idx, row in metrics_df.iterrows():
+                if pd.notna(row['metrics']):
+                    try:
+                        metrics = json.loads(row['metrics'])
+                        for key, value in metrics.items():
+                            metrics_df.at[idx, key] = value
+                    except:
+                        pass
+            return metrics_df
+        return team_prior
+    
     def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
-        """NFL-specific comprehensive features with advanced momentum and matchup analytics"""
+        """
+        NFL-specific comprehensive features based on actual available data.
+        
+        1.1 Deep Lag Features: 3/5/10-game windows + home/away splits
+        1.2 Advanced Metrics: Point differentials, scoring efficiency
+        1.3 Opponent-Adjusted: Performance vs opponent Elo
+        1.4 Contextual: Rest days, home streaks
+        1.5 Chronological Filtering: Already enforced by parent method
+        """
         features = {}
         
-        # Season averages (all prior games)
-        home_season = home_prior.tail(10)  # Last 10 games max for season stats
-        away_season = away_prior.tail(10)
+        # Extract metrics from JSON column
+        home_data = self._extract_metrics(home_prior)
+        away_data = self._extract_metrics(away_prior)
         
-        # Offensive stats
-        features['home_pass_ypg'] = home_season['passing_yards_per_game'].mean() if 'passing_yards_per_game' in home_season else 250
-        features['away_pass_ypg'] = away_season['passing_yards_per_game'].mean() if 'passing_yards_per_game' in away_season else 250
-        features['home_rush_ypg'] = home_season['rushing_yards_per_game'].mean() if 'rushing_yards_per_game' in home_season else 120
-        features['away_rush_ypg'] = away_season['rushing_yards_per_game'].mean() if 'rushing_yards_per_game' in away_season else 120
+        # ========== 1.1 DEEP LAG FEATURES ==========
+        # Multiple rolling windows (3, 5, 10-game) for points scored/allowed/differential
         
-        # Defensive stats
-        features['home_pass_yds_allowed'] = home_season['pass_yards_allowed_per_game'].mean() if 'pass_yards_allowed_per_game' in home_season else 250
-        features['away_pass_yds_allowed'] = away_season['pass_yards_allowed_per_game'].mean() if 'pass_yards_allowed_per_game' in away_season else 250
-        features['home_rush_yds_allowed'] = home_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in home_season else 120
-        features['away_rush_yds_allowed'] = away_season['rush_yards_allowed_per_game'].mean() if 'rush_yards_allowed_per_game' in away_season else 120
-        
-        # Advanced rolling averages (L3, L5, L8 windows for momentum capture)
-        nfl_stat_cols = ['offensive_epa', 'defensive_epa', 'net_epa']
-        features.update({f'home_{k}': v for k, v in self._compute_rolling_stats(home_prior, nfl_stat_cols, [3, 5, 8]).items()})
-        features.update({f'away_{k}': v for k, v in self._compute_rolling_stats(away_prior, nfl_stat_cols, [3, 5, 8]).items()})
-        
-        # Win percentage rolling averages (momentum indicator)
-        home_win_pct_l3 = self._compute_win_pct(home_prior, window=3)
-        home_win_pct_l5 = self._compute_win_pct(home_prior, window=5)
-        home_win_pct_l8 = self._compute_win_pct(home_prior, window=8)
-        away_win_pct_l3 = self._compute_win_pct(away_prior, window=3)
-        away_win_pct_l5 = self._compute_win_pct(away_prior, window=5)
-        away_win_pct_l8 = self._compute_win_pct(away_prior, window=8)
-        
-        features['home_win_pct_l3'] = home_win_pct_l3
-        features['home_win_pct_l5'] = home_win_pct_l5
-        features['home_win_pct_l8'] = home_win_pct_l8
-        features['away_win_pct_l3'] = away_win_pct_l3
-        features['away_win_pct_l5'] = away_win_pct_l5
-        features['away_win_pct_l8'] = away_win_pct_l8
-        features['win_pct_diff_l3'] = home_win_pct_l3 - away_win_pct_l3
-        features['win_pct_diff_l5'] = home_win_pct_l5 - away_win_pct_l5
-        features['win_pct_diff_l8'] = home_win_pct_l8 - away_win_pct_l8
-        
-        # Point differential rolling averages (captures scoring margin trends)
-        point_diff_cols = ['points_scored', 'points_allowed']
-        if all(col in home_prior.columns for col in point_diff_cols):
-            home_prior['point_differential'] = home_prior['points_scored'] - home_prior['points_allowed']
-            away_prior['point_differential'] = away_prior['points_scored'] - away_prior['points_allowed']
+        if 'points_scored' in home_data.columns and 'points_allowed' in home_data.columns:
+            # Ensure point_differential exists
+            if 'point_differential' not in home_data.columns:
+                home_data['point_differential'] = home_data['points_scored'] - home_data['points_allowed']
+            if 'point_differential' not in away_data.columns:
+                away_data['point_differential'] = away_data['points_scored'] - away_data['points_allowed']
             
-            features['home_pt_diff_l3'] = home_prior['point_differential'].tail(3).mean()
-            features['home_pt_diff_l5'] = home_prior['point_differential'].tail(5).mean()
-            features['home_pt_diff_l8'] = home_prior['point_differential'].tail(8).mean()
-            features['away_pt_diff_l3'] = away_prior['point_differential'].tail(3).mean()
-            features['away_pt_diff_l5'] = away_prior['point_differential'].tail(5).mean()
-            features['away_pt_diff_l8'] = away_prior['point_differential'].tail(8).mean()
-            features['pt_diff_advantage'] = (features['home_pt_diff_l5'] - features['away_pt_diff_l5'])
-        
-        # Turnover margin rolling averages (critical NFL predictor)
-        turnover_cols = ['turnovers_gained', 'turnovers_lost']
-        if all(col in home_prior.columns for col in turnover_cols):
-            home_prior['turnover_margin'] = home_prior['turnovers_gained'] - home_prior['turnovers_lost']
-            away_prior['turnover_margin'] = away_prior['turnovers_gained'] - away_prior['turnovers_lost']
+            # Create win column if not exists
+            if 'win' in home_data.columns:
+                home_data['win_num'] = home_data['win'].astype(float)
+            if 'win' in away_data.columns:
+                away_data['win_num'] = away_data['win'].astype(float)
             
-            features['home_to_margin_l3'] = home_prior['turnover_margin'].tail(3).mean()
-            features['home_to_margin_l5'] = home_prior['turnover_margin'].tail(5).mean()
-            features['away_to_margin_l3'] = away_prior['turnover_margin'].tail(3).mean()
-            features['away_to_margin_l5'] = away_prior['turnover_margin'].tail(5).mean()
-            features['to_margin_diff'] = features.get('home_to_margin_l5', 0) - features.get('away_to_margin_l5', 0)
+            # Rolling windows: 3, 5, 10 games
+            for window in [3, 5, 10]:
+                # Points scored rolling average
+                features[f'home_pts_scored_l{window}'] = home_data['points_scored'].tail(window).mean() if len(home_data) >= window else home_data['points_scored'].mean()
+                features[f'away_pts_scored_l{window}'] = away_data['points_scored'].tail(window).mean() if len(away_data) >= window else away_data['points_scored'].mean()
+                
+                # Points allowed rolling average
+                features[f'home_pts_allowed_l{window}'] = home_data['points_allowed'].tail(window).mean() if len(home_data) >= window else home_data['points_allowed'].mean()
+                features[f'away_pts_allowed_l{window}'] = away_data['points_allowed'].tail(window).mean() if len(away_data) >= window else away_data['points_allowed'].mean()
+                
+                # Point differential rolling average
+                features[f'home_pt_diff_l{window}'] = home_data['point_differential'].tail(window).mean() if len(home_data) >= window else home_data['point_differential'].mean()
+                features[f'away_pt_diff_l{window}'] = away_data['point_differential'].tail(window).mean() if len(away_data) >= window else away_data['point_differential'].mean()
+                
+                # Win percentage rolling
+                if 'win_num' in home_data.columns:
+                    features[f'home_win_pct_l{window}'] = home_data['win_num'].tail(window).mean() if len(home_data) >= window else home_data['win_num'].mean()
+                if 'win_num' in away_data.columns:
+                    features[f'away_win_pct_l{window}'] = away_data['win_num'].tail(window).mean() if len(away_data) >= window else away_data['win_num'].mean()
+            
+            # Home/Away splits (last 5 home games, last 5 away games)
+            if 'is_home' in home_data.columns:
+                home_home_games = home_data[home_data['is_home'] == 1].tail(5)
+                home_away_games = home_data[home_data['is_home'] == 0].tail(5)
+                
+                if not home_home_games.empty:
+                    features['home_pts_scored_l5_home'] = home_home_games['points_scored'].mean()
+                    features['home_pt_diff_l5_home'] = home_home_games['point_differential'].mean()
+                    if 'win_num' in home_home_games.columns:
+                        features['home_win_pct_l5_home'] = home_home_games['win_num'].mean()
+                
+                if not home_away_games.empty:
+                    features['home_pts_scored_l5_away'] = home_away_games['points_scored'].mean()
+            
+            if 'is_home' in away_data.columns:
+                away_home_games = away_data[away_data['is_home'] == 1].tail(5)
+                away_away_games = away_data[away_data['is_home'] == 0].tail(5)
+                
+                if not away_home_games.empty:
+                    features['away_pts_scored_l5_home'] = away_home_games['points_scored'].mean()
+                
+                if not away_away_games.empty:
+                    features['away_pts_scored_l5_away'] = away_away_games['points_scored'].mean()
+                    features['away_pt_diff_l5_away'] = away_away_games['point_differential'].mean()
+                    if 'win_num' in away_away_games.columns:
+                        features['away_win_pct_l5_away'] = away_away_games['win_num'].mean()
+            
+            # Differential features (home advantage over away)
+            features['pt_diff_advantage_l5'] = features.get('home_pt_diff_l5', 0) - features.get('away_pt_diff_l5', 0)
+            features['win_pct_diff_l5'] = features.get('home_win_pct_l5', 0.5) - features.get('away_win_pct_l5', 0.5)
         
-        # Lag features (previous 2 games - immediate momentum)
-        features.update({f'home_{k}': v for k, v in self._compute_lag_features(home_prior, nfl_stat_cols, [1, 2]).items()})
-        features.update({f'away_{k}': v for k, v in self._compute_lag_features(away_prior, nfl_stat_cols, [1, 2]).items()})
+        # ========== 1.3 OPPONENT-ADJUSTED FEATURES ==========
+        # Average opponent Elo from recent games
+        if 'opponent' in home_data.columns:
+            home_recent_opponents = home_data['opponent'].tail(5).tolist()
+            home_opp_elo_avg = np.mean([self.elo_system.get_rating(opp) for opp in home_recent_opponents if pd.notna(opp)])
+            features['home_avg_opp_elo_l5'] = home_opp_elo_avg if not np.isnan(home_opp_elo_avg) else 1500
         
-        # Rest/Fatigue metrics
-        features['home_rest_days'] = self._compute_rest_days(home_prior, game_date)
-        features['away_rest_days'] = self._compute_rest_days(away_prior, game_date)
+        if 'opponent' in away_data.columns:
+            away_recent_opponents = away_data['opponent'].tail(5).tolist()
+            away_opp_elo_avg = np.mean([self.elo_system.get_rating(opp) for opp in away_recent_opponents if pd.notna(opp)])
+            features['away_avg_opp_elo_l5'] = away_opp_elo_avg if not np.isnan(away_opp_elo_avg) else 1500
+        
+        # Strength of schedule differential
+        features['sos_diff'] = features.get('home_avg_opp_elo_l5', 1500) - features.get('away_avg_opp_elo_l5', 1500)
+        
+        # ========== 1.4 CONTEXTUAL FEATURES ==========
+        # Rest days since last game
+        features['home_rest_days'] = self._compute_rest_days(home_data, game_date)
+        features['away_rest_days'] = self._compute_rest_days(away_data, game_date)
         features['rest_advantage'] = features['home_rest_days'] - features['away_rest_days']
         features['home_short_rest'] = 1 if features['home_rest_days'] <= 4 else 0  # Thursday/Monday games
         features['away_short_rest'] = 1 if features['away_rest_days'] <= 4 else 0
         
-        # Enhanced matchup features (offense vs defense efficiency)
-        features['pass_efficiency_matchup'] = (features['home_pass_ypg'] - features['away_pass_yds_allowed']) - (features['away_pass_ypg'] - features['home_pass_yds_allowed'])
-        features['rush_efficiency_matchup'] = (features['home_rush_ypg'] - features['away_rush_yds_allowed']) - (features['away_rush_ypg'] - features['home_rush_yds_allowed'])
-        features['total_yards_matchup'] = features['pass_efficiency_matchup'] + features['rush_efficiency_matchup']
+        # Home win streak (last 5 home games)
+        if 'is_home' in home_data.columns and 'win_num' in home_data.columns:
+            home_home_games = home_data[home_data['is_home'] == 1].tail(5)
+            if not home_home_games.empty and 'win_num' in home_home_games.columns:
+                # Consecutive wins at home
+                home_streak = 0
+                for win in reversed(home_home_games['win_num'].tolist()):
+                    if win == 1:
+                        home_streak += 1
+                    else:
+                        break
+                features['home_home_win_streak'] = home_streak
         
-        # Classic matchup features
-        features['off_matchup'] = features['home_pass_ypg'] + features['home_rush_ypg'] - (features['away_pass_yds_allowed'] + features['away_rush_yds_allowed'])
-        features['def_matchup'] = (features['away_pass_ypg'] + features['away_rush_ypg']) - (features['home_pass_yds_allowed'] + features['home_rush_yds_allowed'])
+        # ========== 1.2 ADVANCED METRICS ==========
+        # Scoring efficiency (points per game differential)
+        features['scoring_efficiency_diff'] = features.get('home_pts_scored_l5', 20) - features.get('away_pts_scored_l5', 20)
+        features['defensive_efficiency_diff'] = features.get('away_pts_allowed_l5', 20) - features.get('home_pts_allowed_l5', 20)
+        
+        # Matchup features (offense vs defense)
+        features['off_def_matchup'] = features.get('home_pts_scored_l5', 20) - features.get('away_pts_allowed_l5', 20) - (features.get('away_pts_scored_l5', 20) - features.get('home_pts_allowed_l5', 20))
         
         return features
     
