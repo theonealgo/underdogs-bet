@@ -31,7 +31,13 @@ def get_historical_games(db_path: str, sport: str) -> pd.DataFrame:
                     ELSE NULL
                 END as result,
                 home_score,
-                away_score
+                away_score,
+                temperature,
+                precipitation,
+                wind_speed,
+                wind_gusts,
+                is_dome,
+                weather_impact_score
             FROM games
             WHERE sport = ?
             AND status = 'final'

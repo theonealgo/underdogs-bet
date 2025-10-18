@@ -439,7 +439,7 @@ class UniversalSportsEnsemble:
         
         # NFL-specific comprehensive features
         if self.sport == 'NFL':
-            features.update(self._nfl_features(home_prior, away_prior, home_team, away_team, game_date))
+            features.update(self._nfl_features(home_prior, away_prior, home_team, away_team, game_date, game_row))
         
         # NBA-specific comprehensive features
         elif self.sport == 'NBA':
@@ -511,7 +511,7 @@ class UniversalSportsEnsemble:
             return metrics_df
         return team_prior
     
-    def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date) -> dict:
+    def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date, game_row: pd.Series = None) -> dict:
         """
         NFL-specific comprehensive features based on actual available data.
         
@@ -645,6 +645,26 @@ class UniversalSportsEnsemble:
         # We just add the interaction term here
         # The 'home_advantage' feature (default 100 rating points ~= 0.64 win prob) exists in base features
         # We'll compute the interaction from the elo_diff which will be available after base features are added
+        
+        # ========== 1.5 WEATHER FEATURES ==========
+        # Weather conditions significantly impact outdoor NFL games
+        # Extract from game_row if available
+        if 'temperature' in game_row:
+            features['temperature'] = game_row.get('temperature', 20.0)  # Celsius
+            features['precipitation'] = game_row.get('precipitation', 0.0)  # mm
+            features['wind_speed'] = game_row.get('wind_speed', 5.0)  # m/s
+            features['wind_gusts'] = game_row.get('wind_gusts', 10.0)  # m/s
+            features['is_dome'] = game_row.get('is_dome', 0)
+            features['weather_impact_score'] = game_row.get('weather_impact_score', 0.0)
+            
+            # Derived weather features
+            # Extreme cold affects ball handling
+            features['extreme_cold'] = 1 if features['temperature'] < 0 else 0
+            # High wind affects passing game
+            wind_mph = features['wind_speed'] * 2.237  # Convert m/s to mph
+            features['high_wind'] = 1 if wind_mph > 15 else 0
+            # Precipitation affects ball control
+            features['wet_conditions'] = 1 if features['precipitation'] > 0.5 else 0
         
         return features
     
