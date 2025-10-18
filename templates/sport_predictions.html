@@ -40,6 +40,8 @@
         padding: 20px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         overflow-x: auto;
+        max-height: 80vh;
+        overflow-y: auto;
     }
     
     .predictions-table {
@@ -51,6 +53,9 @@
     .predictions-table thead {
         background: #667eea;
         color: white;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
     
     .predictions-table th {
@@ -58,6 +63,7 @@
         text-align: left;
         font-weight: 600;
         white-space: nowrap;
+        background: #667eea;
     }
     
     .predictions-table td {
