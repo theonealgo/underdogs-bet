@@ -92,7 +92,7 @@ def get_top_free_pick():
                 logistic = float(pick['logistic_home_prob']) if pick['logistic_home_prob'] else 0.5
                 xgboost = float(pick['xgboost_home_prob']) if pick['xgboost_home_prob'] else 0.5
                 
-                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Consensus% * w3)
+                # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Log% * w3)
                 blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
                 
                 if blended > 0.5:
@@ -236,18 +236,17 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
                 # CompositeHome = (XGB% * w1) + (Elo% * w2) + (Logistic% * w3)
                 blended = (0.50 * xgboost + 0.35 * elo + 0.15 * logistic)
                 
+                # XGB and Elo columns: ALWAYS show HOME team probabilities
+                xgb_pct = xgboost * 100
+                elo_pct = elo * 100
+                
+                # Pick is determined by consensus > 50%
                 if blended > 0.5:
                     pick = row['home_team_id']
-                    # Show pick team's probability
-                    xgb_pct = xgboost * 100
-                    elo_pct = elo * 100
-                    consensus_pct = blended * 100
+                    consensus_pct = blended * 100  # Show home team confidence
                 else:
                     pick = row['away_team_id']
-                    # Show pick team's probability (flip for away team)
-                    xgb_pct = (1 - xgboost) * 100
-                    elo_pct = (1 - elo) * 100
-                    consensus_pct = (1 - blended) * 100
+                    consensus_pct = (1 - blended) * 100  # Show away team confidence
                 
                 # Format date for display as DD/MM/YYYY
                 display_date = game_date.strftime('%d/%m/%Y') if game_date else row['game_date']
