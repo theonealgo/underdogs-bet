@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Dict, Optional
 import pandas as pd
+import pytz
 from src.data.nfl_stadium_locations import get_stadium_info, is_outdoor_stadium
 
 class WeatherCollector:
@@ -46,9 +47,10 @@ class WeatherCollector:
         # Get stadium coordinates
         stadium_info = get_stadium_info(team_name)
         
-        # Parse game datetime
+        # Parse game datetime with stadium timezone
         try:
-            game_datetime = self._parse_game_datetime(game_date, game_time)
+            timezone_str = stadium_info.get('timezone', 'America/New_York')
+            game_datetime = self._parse_game_datetime(game_date, game_time, timezone_str)
         except Exception as e:
             self.logger.warning(f"Could not parse date {game_date} {game_time}: {e}")
             return self._get_default_weather()
@@ -65,8 +67,8 @@ class WeatherCollector:
             self.logger.error(f"Weather API error for {team_name} on {game_date}: {e}")
             return self._get_default_weather()
     
-    def _parse_game_datetime(self, game_date: str, game_time: str) -> datetime:
-        """Parse game date and time into datetime object"""
+    def _parse_game_datetime(self, game_date: str, game_time: str, timezone_str: str = 'America/New_York') -> datetime:
+        """Parse game date and time into timezone-aware datetime object"""
         # Try DD/MM/YYYY format first (our database format)
         try:
             date_part = datetime.strptime(game_date, '%d/%m/%Y')
@@ -86,13 +88,29 @@ class WeatherCollector:
         except:
             hour, minute = 13, 0  # Default 1pm
         
-        return datetime(date_part.year, date_part.month, date_part.day, hour, minute)
+        # Create naive datetime
+        naive_dt = datetime(date_part.year, date_part.month, date_part.day, hour, minute)
+        
+        # Localize to stadium timezone
+        try:
+            tz = pytz.timezone(timezone_str)
+            local_dt = tz.localize(naive_dt)
+            return local_dt
+        except Exception as e:
+            self.logger.warning(f"Timezone error for {timezone_str}: {e}, using naive datetime")
+            return naive_dt
     
     def _fetch_weather_data(self, latitude: float, longitude: float, game_datetime: datetime) -> Dict:
         """Fetch weather data from Open-Meteo API"""
         # Determine if historical or forecast
-        now = datetime.now()
-        is_historical = game_datetime < now - timedelta(days=1)
+        # Convert game_datetime to UTC for comparison
+        if game_datetime.tzinfo is not None:
+            game_datetime_utc = game_datetime.astimezone(pytz.UTC)
+        else:
+            game_datetime_utc = pytz.UTC.localize(game_datetime)
+        
+        now_utc = datetime.now(pytz.UTC)
+        is_historical = game_datetime_utc < now_utc - timedelta(days=1)
         
         if is_historical:
             # Use historical API for past games
@@ -100,9 +118,10 @@ class WeatherCollector:
             params = {
                 "latitude": latitude,
                 "longitude": longitude,
-                "start_date": game_datetime.strftime('%Y-%m-%d'),
-                "end_date": game_datetime.strftime('%Y-%m-%d'),
-                "hourly": ["temperature_2m", "precipitation", "wind_speed_10m", "wind_gusts_10m"]
+                "start_date": game_datetime_utc.strftime('%Y-%m-%d'),
+                "end_date": game_datetime_utc.strftime('%Y-%m-%d'),
+                "hourly": ["temperature_2m", "precipitation", "wind_speed_10m", "wind_gusts_10m"],
+                "timezone": "UTC"  # Request in UTC for consistency
             }
         else:
             # Use forecast API for future games
@@ -110,7 +129,8 @@ class WeatherCollector:
                 "latitude": latitude,
                 "longitude": longitude,
                 "hourly": ["temperature_2m", "precipitation", "wind_speed_10m", "wind_gusts_10m"],
-                "forecast_days": 16
+                "forecast_days": 16,
+                "timezone": "UTC"  # Request in UTC for consistency
             }
         
         # Make API request
@@ -134,10 +154,10 @@ class WeatherCollector:
         
         df = pd.DataFrame(hourly_data)
         
-        # Find closest hour to game time
-        game_hour = game_datetime.replace(tzinfo=None)
-        df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
-        df['time_diff'] = abs(df['time'] - game_hour)
+        # Find closest hour to game time (both in UTC now)
+        df['time'] = pd.to_datetime(df['time'])
+        # game_datetime_utc is already timezone-aware UTC
+        df['time_diff'] = abs(df['time'] - game_datetime_utc)
         closest_idx = df['time_diff'].idxmin()
         
         weather_row = df.loc[closest_idx]
