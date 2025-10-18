@@ -202,13 +202,13 @@ def get_sport_predictions(sport_code, sport_name, sport_emoji):
         with db._get_connection() as conn:
             # Get all predictions for this sport (dates are in DD/MM/YYYY format)
             query = """
-                SELECT 
+                SELECT DISTINCT
                     p.game_id, p.sport, p.game_date,
                     g.home_team_id, g.away_team_id,
                     p.elo_home_prob, p.logistic_home_prob, p.xgboost_home_prob,
                     p.win_probability
                 FROM predictions p
-                JOIN games g ON p.game_id = g.game_id
+                JOIN games g ON p.game_id = g.game_id AND g.sport = p.sport
                 WHERE p.sport = ?
                 ORDER BY p.game_id
             """
