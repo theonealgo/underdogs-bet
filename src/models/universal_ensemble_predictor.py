@@ -511,6 +511,193 @@ class UniversalSportsEnsemble:
             return metrics_df
         return team_prior
     
+    def _get_market_odds_features(self, home_team: str, away_team: str, game_date) -> dict:
+        """
+        Extract betting market meta features (+4-6% accuracy expected)
+        
+        Market odds capture:
+        - Collective wisdom of sharp bettors and bookmakers
+        - Injury/availability information priced into lines
+        - Public perception and betting trends
+        - True probability estimates from profit-seeking markets
+        """
+        import sqlite3
+        from datetime import datetime
+        
+        features = {
+            'market_home_prob': 0.5,  # Default neutral
+            'market_away_prob': 0.5,
+            'spread_line': 0.0,
+            'total_line': 45.0,  # NFL average
+            'market_vig': 0.05,  # Typical 5% overround
+            'bookmaker_count': 0,
+            'market_confidence': 0.0,  # How decisive is the market?
+            'market_favorite_home': 0,  # Initialize derived features
+            'market_prob_diff': 0.0,
+            'spread_abs': 0.0,
+            'large_spread': 0,
+        }
+        
+        try:
+            # Format date to match database (DD/MM/YYYY)
+            if isinstance(game_date, str):
+                try:
+                    dt = datetime.strptime(game_date, '%d/%m/%Y')
+                    date_str = game_date
+                except:
+                    try:
+                        dt = datetime.strptime(game_date, '%Y-%m-%d')
+                        date_str = dt.strftime('%d/%m/%Y')
+                    except:
+                        return features
+            else:
+                try:
+                    date_str = game_date.strftime('%d/%m/%Y')
+                except:
+                    return features
+            
+            # Query market_odds table (if exists)
+            conn = sqlite3.connect('sports_predictions.db')
+            cursor = conn.cursor()
+            
+            # Try market_odds table first (newer format)
+            cursor.execute("""
+                SELECT home_implied_prob, away_implied_prob, spread_line, total_line,
+                       market_vig, bookmaker_count
+                FROM market_odds
+                WHERE sport = ? AND game_date = ? 
+                AND home_team_id = ? AND away_team_id = ?
+            """, (self.sport, date_str, home_team, away_team))
+            
+            result = cursor.fetchone()
+            
+            # Fallback to odds_data table if market_odds doesn't have data
+            if not result:
+                cursor.execute("""
+                    SELECT home_implied_prob, away_implied_prob, home_spread, total_line,
+                           NULL as market_vig, bookmaker_count
+                    FROM odds_data
+                    WHERE sport = ? AND game_date = ?
+                    AND home_team = ? AND away_team = ?
+                """, (self.sport, date_str, home_team, away_team))
+                result = cursor.fetchone()
+            
+            conn.close()
+            
+            if result:
+                features['market_home_prob'] = result[0] if result[0] else 0.5
+                features['market_away_prob'] = result[1] if result[1] else 0.5
+                features['spread_line'] = result[2] if result[2] else 0.0
+                features['total_line'] = result[3] if result[3] else 45.0
+                features['market_vig'] = result[4] if result[4] else 0.05
+                features['bookmaker_count'] = result[5] if result[5] else 0
+                
+                # Market confidence: how far from 50/50?
+                features['market_confidence'] = abs(features['market_home_prob'] - 0.5)
+                
+                # Derived features
+                features['market_favorite_home'] = 1 if features['market_home_prob'] > 0.5 else 0
+                features['market_prob_diff'] = features['market_home_prob'] - features['market_away_prob']
+                
+                # Spread-based features
+                features['spread_abs'] = abs(features['spread_line'])
+                features['large_spread'] = 1 if abs(features['spread_line']) > 7 else 0
+                
+        except Exception as e:
+            self.logger.debug(f"Could not load market odds: {e}")
+        
+        return features
+    
+    def _get_situational_features(self, home_team: str, away_team: str, game_date, game_row: pd.Series = None) -> dict:
+        """
+        Situational/contextual meta features (+1-2% accuracy expected)
+        
+        These capture game context that affects outcomes:
+        - Divisional rivalry intensity
+        - Primetime game pressure
+        - Playoff implications and urgency
+        - Schedule positioning
+        """
+        from datetime import datetime
+        
+        features = {
+            'divisional_game': 0,
+            'primetime_game': 0,
+            'playoff_implications_week': 0,
+            'late_season_game': 0,
+        }
+        
+        # NFL divisions (for divisional game detection)
+        nfl_divisions = {
+            'AFC East': ['Buffalo Bills', 'Miami Dolphins', 'New England Patriots', 'New York Jets'],
+            'AFC North': ['Baltimore Ravens', 'Cincinnati Bengals', 'Cleveland Browns', 'Pittsburgh Steelers'],
+            'AFC South': ['Houston Texans', 'Indianapolis Colts', 'Jacksonville Jaguars', 'Tennessee Titans'],
+            'AFC West': ['Denver Broncos', 'Kansas City Chiefs', 'Las Vegas Raiders', 'Los Angeles Chargers'],
+            'NFC East': ['Dallas Cowboys', 'New York Giants', 'Philadelphia Eagles', 'Washington Commanders'],
+            'NFC North': ['Chicago Bears', 'Detroit Lions', 'Green Bay Packers', 'Minnesota Vikings'],
+            'NFC South': ['Atlanta Falcons', 'Carolina Panthers', 'New Orleans Saints', 'Tampa Bay Buccaneers'],
+            'NFC West': ['Arizona Cardinals', 'Los Angeles Rams', 'San Francisco 49ers', 'Seattle Seahawks']
+        }
+        
+        # Check if divisional game
+        for division, teams in nfl_divisions.items():
+            if home_team in teams and away_team in teams:
+                features['divisional_game'] = 1
+                break
+        
+        # Estimate week number from date (NFL starts early September)
+        try:
+            if isinstance(game_date, str):
+                try:
+                    dt = datetime.strptime(game_date, '%d/%m/%Y')
+                except:
+                    dt = datetime.strptime(game_date, '%Y-%m-%d')
+            else:
+                dt = game_date
+            
+            # NFL week 1 typically starts around Sept 4-10
+            # Rough estimate: week = (day of season) / 7
+            if dt.month >= 9:
+                days_since_season_start = (dt - datetime(dt.year, 9, 1)).days
+            elif dt.month <= 2:  # Playoffs in January/February
+                days_since_season_start = (dt - datetime(dt.year - 1, 9, 1)).days
+            else:
+                days_since_season_start = 0
+            
+            week_num = min(max(1, (days_since_season_start // 7) + 1), 22)  # Weeks 1-22
+            
+            features['playoff_implications_week'] = week_num
+            features['late_season_game'] = 1 if week_num >= 14 else 0  # Weeks 14+ matter for playoffs
+            
+        except:
+            pass
+        
+        # Primetime game detection (if time info available in game_row)
+        # Thursday Night Football, Sunday Night Football, Monday Night Football
+        if game_row is not None and 'game_date' in game_row:
+            try:
+                date_str = str(game_row['game_date'])
+                # Check for evening games (simplified - would need actual kickoff time)
+                # Primetime games typically Thu/Mon or late Sunday
+                dt_check = None
+                if isinstance(game_date, str):
+                    try:
+                        dt_check = datetime.strptime(game_date, '%d/%m/%Y')
+                    except:
+                        pass
+                else:
+                    dt_check = game_date
+                
+                if dt_check:
+                    day_of_week = dt_check.weekday()
+                    # Monday=0, Thursday=3, Sunday=6
+                    if day_of_week in [0, 3]:  # Monday or Thursday
+                        features['primetime_game'] = 1
+            except:
+                pass
+        
+        return features
+    
     def _nfl_features(self, home_prior: pd.DataFrame, away_prior: pd.DataFrame, home_team: str, away_team: str, game_date, game_row: pd.Series = None) -> dict:
         """
         NFL-specific comprehensive features based on actual available data.
@@ -665,6 +852,15 @@ class UniversalSportsEnsemble:
             features['high_wind'] = 1 if wind_mph > 15 else 0
             # Precipitation affects ball control
             features['wet_conditions'] = 1 if features['precipitation'] > 0.5 else 0
+        
+        # ========== 1.6 BETTING MARKET META FEATURES ==========
+        # Market odds provide strong signal of true probability (+4-6% accuracy expected)
+        # These features capture betting market intelligence
+        features.update(self._get_market_odds_features(home_team, away_team, game_date))
+        
+        # ========== 1.7 SITUATIONAL META FEATURES ==========
+        # Game context features (+1-2% accuracy expected)
+        features.update(self._get_situational_features(home_team, away_team, game_date, game_row))
         
         return features
     
