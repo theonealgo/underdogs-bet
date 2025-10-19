@@ -40,12 +40,15 @@ Preferred communication style: Simple, everyday language.
   - NHL: n_estimators=175, max_depth=5, learning_rate=0.04, subsample=0.75 (randomness handling)
   - MLB: n_estimators=250, max_depth=3, learning_rate=0.02, subsample=0.6 (162-game season)
   - NCAAF: n_estimators=160, max_depth=6, learning_rate=0.06, subsample=0.85 (12-game season)
-- **NFL Comprehensive Feature Engineering** (62 features with chronological filtering):
+- **NFL Comprehensive Feature Engineering** (87 features with chronological filtering):
   - **Deep Lag Features**: 3/5/10-game rolling windows for points scored/allowed/differential, win percentage
   - **Home/Away Splits**: Last 5 home games, last 5 away games performance metrics
   - **Opponent-Adjusted Features**: Average opponent Elo (L5 games), strength of schedule differential
   - **Contextual Features**: Rest days, rest advantage, short rest indicators (Thu/Mon games), home win streaks
   - **Advanced Metrics**: Scoring efficiency differential, defensive efficiency differential, matchup features
+  - **Weather Features (Oct 2025)**: Temperature, precipitation, wind speed/gusts, dome games, extreme weather flags (+1.1% accuracy)
+  - **Betting Market Meta (Oct 2025)**: Market probabilities, spreads, totals, bookmaker count, market vig, derived features (11 features; +4-6% expected when odds data populated)
+  - **Situational Meta (Oct 2025)**: Divisional games, primetime games, playoff implications, late-season urgency (4 features; +1-2% expected)
   - **Chronological Filtering**: ONLY uses data from games before prediction date to prevent target leakage
 - **Other Sports Feature Engineering**:
   - **NBA-Specific**: ~20 features (scoring rolling/lag, back-to-back, matchup)
@@ -59,12 +62,13 @@ Preferred communication style: Simple, everyday language.
   - **Default**: 60% Elo / 30% XGB / 10% Log - Standard weighting for other scenarios (36.8% accuracy on 38 games)
   - Improvement: 72.6% vs 72.3% simple weighted (+0.4%)
 - **Other Sports Ensemble Weights**: 50% XGBoost, 35% Elo, 15% Logistic (simple weighted average)
-- **NFL Model Performance (Oct 17, 2025)**: 
-  - **Historical Accuracy**: 72.6% on 285 2024 season games (up from 53% baseline)
-  - **2025 Season Performance**: 68.1% on 94 completed 2025 games (Oct 17, 2025)
-  - **Critical Fix**: Identified temporal data mismatch - model trained only on 2024 data couldn't predict 2025 games well (53.2%). Solution: Imported 2025 game results and retrained model with 379 total games (2024 + 2025), improving 2025 accuracy by +14.9 percentage points (53.2% → 68.1%)
-  - **Training Data**: 379 games (285 from 2024 season, 94 from 2025 season through Oct 17)
-  - **Model Performance**: Elo 70.2%, XGBoost 54.3%, Logistic 34.0%, Ensemble 68.1%
+- **NFL Model Performance (Oct 19, 2025)**: 
+  - **Current Accuracy**: 67.7% on 65 completed 2025 games with meta features (baseline 68.1% before meta)
+  - **Training Data**: 193 games with results (2024-2025 seasons)
+  - **Training Accuracy**: XGBoost 75.5%, Logistic 76.6% on 192 games
+  - **Individual Models (2025)**: Elo 72.3%, XGBoost 60.0%, Logistic 38.5%
+  - **Meta Features Status**: Weather (+1.1%), Betting Market (7/65 games have odds data), Situational (fully operational)
+  - **Target**: 80% professional benchmark (currently 12.3 percentage points below)
 - **Overfitting Prevention**: Discovered and fixed severe overfitting (98.9% training → 44.9% real-world for XGBoost). Applied aggressive regularization and ensemble reweighting, improving to 72.6% real-world accuracy.
 - **Cross-Validation**: Built-in model evaluation and hyperparameter tuning.
 - **Backtesting Framework**: Historical performance evaluation with configurable date ranges and confidence thresholds, validating against actual game results.
