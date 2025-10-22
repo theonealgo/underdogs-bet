@@ -575,17 +575,17 @@ def process_and_split_games(sport_code):
     ].copy()
     
     # Split by date
-    # Training: Before July 1, 2025
-    # Testing: October 1, 2025 onwards
-    training_cutoff = pd.Timestamp('2025-07-01')
-    testing_start = pd.Timestamp('2025-10-01')
+    # Training: October 2024 - February 2025
+    # Testing: March 2025 - April 2025
+    training_cutoff = pd.Timestamp('2025-03-01')
+    testing_start = pd.Timestamp('2025-03-01')
     
     training_df = completed_games[completed_games['date_parsed'] < training_cutoff]
     testing_df = completed_games[completed_games['date_parsed'] >= testing_start]
     
     print(f"\n📊 Data Split for {sport_code}:")
-    print(f"  Training: {len(training_df)} games (2024 - June 2025)")
-    print(f"  Testing: {len(testing_df)} games (October 2025+)")
+    print(f"  Training: {len(training_df)} games (Oct 2024 - Feb 2025)")
+    print(f"  Testing: {len(testing_df)} games (Mar - Apr 2025)")
     
     # Process training games
     training_games = []
@@ -826,8 +826,8 @@ def sport_predictions(sport_code):
             {% if performance %}
             <div class="performance">
                 <h3>🎯 Model Performance - Test Set ({{ performance.date_range }})</h3>
-                <p><strong>Tested on {{ performance.total_games }} games from October 2025 onwards</strong></p>
-                <p><strong>Training: 2024 to June 2025</strong></p>
+                <p><strong>Tested on {{ performance.total_games }} games from March - April 2025</strong></p>
+                <p><strong>Training: October 2024 to February 2025</strong></p>
                 
                 <div class="perf-grid">
                     <div class="perf-card">
@@ -912,6 +912,6 @@ def sport_predictions(sport_code):
 if __name__ == '__main__':
     print("🏒 Advanced Sports Predictor Starting!")
     print("🎯 4-Model System: Elo + XGBoost + CatBoost + Meta Ensemble")
-    print("📊 Training: 2024-June 2025 | Testing: October 2025+")
+    print("📊 Training: Oct 2024-Feb 2025 | Testing: Mar-Apr 2025")
     
     app.run(debug=True, host='0.0.0.0', port=5000)
