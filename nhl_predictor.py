@@ -808,7 +808,45 @@ def sport_results(sport):
         performance=performance
     )
 
+def initialize_goalie_data():
+    """
+    Initialize goalie stats and team mappings on startup
+    Note: Only runs when nhl_predictor.py is executed directly via `python nhl_predictor.py`
+    """
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Check if tables exist
+    tables_exist = cursor.execute('''
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name IN ('goalie_stats', 'team_goalies')
+    ''').fetchall()
+    
+    conn.close()
+    
+    if len(tables_exist) < 2:
+        logger.info("🏒 Initializing NHL goalie data...")
+        try:
+            # Import and run the initialization scripts
+            import subprocess
+            result1 = subprocess.run(['python', 'fetch_nhl_goalies.py'], 
+                                   check=True, capture_output=True, text=True)
+            result2 = subprocess.run(['python', 'map_team_goalies.py'], 
+                                   check=True, capture_output=True, text=True)
+            logger.info("✓ Goalie data initialized successfully")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Goalie initialization failed: {e}")
+            if e.stderr:
+                logger.warning(f"Error details: {e.stderr}")
+            logger.warning("Predictions will use league-average goalie stats (91.0% SV%, 2.80 GAA)")
+        except Exception as e:
+            logger.warning(f"Could not initialize goalie data: {e}")
+            logger.warning("Predictions will use league-average goalie stats (91.0% SV%, 2.80 GAA)")
+
 if __name__ == '__main__':
+    # Initialize goalie data on startup
+    initialize_goalie_data()
+    
     print("🎯 jackpotpicks.bet - Multi-Sport Prediction Platform")
     print("📊 Dashboard + Predictions + Results for All Sports")
     print("🏒 NHL | 🏈 NFL | 🏀 NBA | ⚾ MLB | 🏟️ NCAAF | 🎓 NCAAB")

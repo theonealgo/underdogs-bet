@@ -1,7 +1,7 @@
 # jackpotpicks.bet - Multi-Sport Prediction System
 
 ## Overview
-jackpotpicks.bet is a comprehensive multi-sport game prediction platform (NFL, NBA, NHL, MLB, NCAA Football) that uses machine learning to predict game winners and totals (over/under). It features a dual-source data collection strategy (API for playoffs, Excel for regular season), automated data pipelines, backtesting capabilities, and a Flask web application for visualization and interaction. The platform aims to provide accurate game predictions and insights across various sports.
+jackpotpicks.bet is a multi-sport game prediction platform for NFL, NBA, NHL, MLB, and NCAA Football. It utilizes machine learning to forecast game winners and totals (over/under), employing a dual-source data collection strategy (API for playoffs, Excel for regular season), automated data pipelines, and backtesting capabilities. The platform aims to provide accurate predictions and insights via a Flask web application. The business vision is to deliver a cutting-edge prediction system with high market potential in sports analytics, striving for professional-level accuracy.
 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
@@ -9,198 +9,70 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Frontend Architecture
-- **Flask Web Application**: Professional web app with Jinja2 templates, responsive design, and consistent navigation.
-- **Routes**:
-    - Landing page (/) for 14-day MLB predictions.
-    - Authentication: /login, /signup, /logout.
-    - Dashboard (/dashboard) for sport selection.
-    - Sport-specific pages: /nfl, /nba, /mlb, /nhl, /ncaaf, /ncaab.
-    - Results (/results) for model backtesting performance (admin only).
-- **UI/UX**: Clean, modern UI with gradient accents, mobile-friendly layout, and compact table displays for predictions.
+The platform features a professional Flask web application with Jinja2 templates, offering a responsive and mobile-friendly design with consistent navigation. The UI/UX emphasizes a clean, modern aesthetic with gradient accents and compact table displays for predictions. Key routes include a landing page, authentication flows, a sport-selection dashboard, sport-specific prediction pages, and an admin-only results page for model backtesting.
 
 ### Backend Architecture
-- **Modular Design**: Separation of concerns across data collection, storage, modeling, and API layers.
-- **Object-Oriented Structure**: Encapsulated components (DatabaseManager, MLBPredictor, Scrapers).
-- **Logging System**: Comprehensive logging for debugging and monitoring.
-- **Scheduler Framework**: `schedule` library for automated data collection and model retraining.
-
-### Data Storage Solutions
-- **SQLite Database**: Local database for statcast data, odds data, predictions, and model performance metrics.
-- **Data Persistence**: Models and scalers saved using pickle.
+The backend is built with a modular, object-oriented design, separating concerns across data collection, storage, modeling, and API layers. It includes a comprehensive logging system for monitoring and debugging, and utilizes the `schedule` library for automated data collection and model retraining. SQLite serves as the local database for storing statcast data, odds, predictions, and model performance metrics, with models and scalers persisted using pickle.
 
 ### Machine Learning Pipeline
-- **Sport-Specific Elo K-Factors**: Optimized for each sport (NFL: 35, NBA: 18, NHL: 22, MLB: 14, NCAAF: 30) based on season length and game variance.
-- **Enhanced Elo System (Oct 2025)**: 
-  - **Margin of Victory (MoV) Adjustment**: Weights blowout wins higher using score differential multiplier
-  - **Offensive/Defensive Split Elo**: Separate ratings for offense and defense, enabling better matchup analysis
-  - Fixed critical bug where update_ratings() wasn't receiving game scores, preventing MoV and split Elo from functioning
-- **Sport-Specific XGBoost Hyperparameters**: Heavily regularized to prevent overfitting:
-  - NFL: n_estimators=120, max_depth=3, learning_rate=0.03, subsample=0.6, colsample_bytree=0.6, min_child_weight=5, reg_alpha=1.0, reg_lambda=10.0
-  - NBA: n_estimators=200, max_depth=4, learning_rate=0.03, subsample=0.7 (82-game season optimization)
-  - NHL: n_estimators=175, max_depth=5, learning_rate=0.04, subsample=0.75 (randomness handling)
-  - MLB: n_estimators=250, max_depth=3, learning_rate=0.02, subsample=0.6 (162-game season)
-  - NCAAF: n_estimators=160, max_depth=6, learning_rate=0.06, subsample=0.85 (12-game season)
-- **NFL Comprehensive Feature Engineering** (87 features with chronological filtering):
-  - **Deep Lag Features**: 3/5/10-game rolling windows for points scored/allowed/differential, win percentage
-  - **Home/Away Splits**: Last 5 home games, last 5 away games performance metrics
-  - **Opponent-Adjusted Features**: Average opponent Elo (L5 games), strength of schedule differential
-  - **Contextual Features**: Rest days, rest advantage, short rest indicators (Thu/Mon games), home win streaks
-  - **Advanced Metrics**: Scoring efficiency differential, defensive efficiency differential, matchup features
-  - **Weather Features (Oct 2025)**: Temperature, precipitation, wind speed/gusts, dome games, extreme weather flags (+1.1% accuracy)
-  - **Betting Market Meta (Oct 2025)**: Market probabilities, spreads, totals, bookmaker count, market vig, derived features (11 features; +4-6% expected when odds data populated)
-  - **Situational Meta (Oct 2025)**: Divisional games, primetime games, playoff implications, late-season urgency (4 features; +1-2% expected)
-  - **Chronological Filtering**: ONLY uses data from games before prediction date to prevent target leakage
-- **Other Sports Feature Engineering**:
-  - **NBA-Specific**: ~20 features (scoring rolling/lag, back-to-back, matchup)
-  - **NHL-Specific**: ~20 features (goals rolling/lag, back-to-back, matchup)
-  - **MLB-Specific**: ~18 features (ERA/OPS/runs rolling/lag, pitching/batting matchup)
-  - **NCAAF-Specific**: ~15 features (points/yards rolling/lag, rest, matchup)
-- **Team Stats System (Oct 2025)**: Populated team_stats table with 758 NFL records from 379 completed games, enabling all rolling window features
-- **NFL Confidence-Based Weighting (Oct 2025)**:
-  - **Rule 1 - High Elo Favor** (Elo ≥75%, XGB ≤55%): 85% Elo / 10% XGB / 5% Log - Don't let weak XGB override strong Elo (89.4% accuracy on 113 games)
-  - **Rule 2 - Upset Zone** (Elo 55-75%, XGB 45-55%): 50% Elo / 40% XGB / 10% Log - Let XGB find hidden value (68.7% accuracy on 134 games)
-  - **Default**: 60% Elo / 30% XGB / 10% Log - Standard weighting for other scenarios (36.8% accuracy on 38 games)
-  - Improvement: 72.6% vs 72.3% simple weighted (+0.4%)
-- **Other Sports Ensemble Weights**: 50% XGBoost, 35% Elo, 15% Logistic (simple weighted average)
-- **NFL Model Performance (Oct 19, 2025)**: 
-  - **Current Accuracy**: 67.7% on 65 completed 2025 games with meta features (baseline 68.1% before meta)
-  - **Training Data**: 193 games with results (2024-2025 seasons)
-  - **Training Accuracy**: XGBoost 75.5%, Logistic 76.6% on 192 games
-  - **Individual Models (2025)**: Elo 72.3%, XGBoost 60.0%, Logistic 38.5%
-  - **Meta Features Status**: Weather (+1.1%), Betting Market (7/65 games have odds data), Situational (fully operational)
-  - **Target**: 80% professional benchmark (currently 12.3 percentage points below)
-- **Overfitting Prevention**: Discovered and fixed severe overfitting (98.9% training → 44.9% real-world for XGBoost). Applied aggressive regularization and ensemble reweighting, improving to 72.6% real-world accuracy.
-- **Cross-Validation**: Built-in model evaluation and hyperparameter tuning.
-- **Backtesting Framework**: Historical performance evaluation with configurable date ranges and confidence thresholds, validating against actual game results.
-- **League-Average Fallback**: For sports without historical data, generates balanced 50/50 predictions with 5% home field advantage using balanced dummy training data (5 wins, 5 losses per team). Deterministic and reproducible.
+The core of the system is its machine learning pipeline, featuring sport-specific Elo K-factors optimized for each sport and enhanced with Margin of Victory (MoV) and Offensive/Defensive Split Elo adjustments. XGBoost models are used with heavily regularized, sport-specific hyperparameters to prevent overfitting. Feature engineering is extensive, particularly for NFL, including deep lag features, home/away splits, opponent-adjusted metrics, contextual features (rest days, short rest), advanced metrics, weather data, betting market meta, and situational meta. Other sports also have tailored feature sets, such as NHL goalie differentials. The system employs confidence-based weighting for NFL predictions and dynamic ensemble weighting for other sports, combining XGBoost, Elo, and Logistic Regression models. Overfitting prevention is a priority, addressed through aggressive regularization and ensemble reweighting. The pipeline includes cross-validation for model evaluation and hyperparameter tuning, and a robust backtesting framework for historical performance assessment. A league-average fallback mechanism ensures predictions for sports without extensive historical data.
 
 ### Data Collection Strategy
-- **Dual-Source System**: Automatic switching between Excel files (user-provided in `schedules/`) for regular season and official league APIs for playoffs.
-- **API Integration**: Utilizes MLB Stats API, NHL API, NBA, NFL, WNBA, NCAA collectors with rate limiting and error handling.
-- **Excel Schedule Support**: Multi-format date parsing supporting ISO (YYYY-MM-DD HH:MM), legacy DD/MM/YYYY, NBA text format ("Tue, Oct 21, 2025"), and NCAAF formats.
-- **Date Format Consistency**: All dates stored as DD/MM/YYYY strings in database to prevent automatic pandas date conversion and month/day confusion.
-- **Active Sports**: NFL (207 predictions), NBA (1204 predictions), NHL (1264 predictions), MLB (5 predictions), NCAAF (29 predictions). NCAAB and WNBA schedules pending data.
+A dual-source system automatically switches between user-provided Excel files for the regular season and official league APIs for playoffs. API integrations include MLB Stats API, NHL API, NBA, NFL, WNBA, and NCAA collectors, with rate limiting and error handling. Excel schedule support handles multiple date formats, ensuring consistency.
 
 ### Prediction Generation Workflow
-- **Real Model-Based Predictions**: Uses `generate_real_predictions.py` to load trained ensemble models and generate authentic predictions for all upcoming games.
-- **Model Persistence Fix (Oct 2025)**: Fixed critical bug where training metadata (games_trained, feature_cols, accuracy) wasn't being persisted. Models now properly save/load all training state.
-- **Placeholder Prevention**: Deprecated `generate_missing_predictions.py` (random placeholders) in favor of model-based generation. File renamed to `DEPRECATED_generate_missing_predictions.py.bak` to prevent accidental reuse.
-- **Current Predictions**: 6,167 real predictions across all sports (NFL: 557, NBA: 1,497, NHL: 2,624, MLB: 1,361, NCAAF: 128) based on 3,619 historical games.
-- **Workflow**: After model retraining, run `python generate_real_predictions.py` to repopulate predictions with authentic model outputs.
+The system uses `generate_real_predictions.py` to create authentic predictions from trained ensemble models for all upcoming games. A critical fix ensures training metadata (games_trained, feature_cols, accuracy) is persisted with models. Placeholder generation has been deprecated in favor of model-based outputs.
 
 ### Automation Framework
-- **Scheduled Tasks**: Daily data updates, prediction generation, and weekly model retraining.
-- **Threading Support**: Non-blocking scheduler execution.
-- **Configurable Timing**: Multiple daily update cycles.
+Automated tasks include daily data updates, prediction generation, and weekly model retraining, managed by a configurable, non-blocking scheduler with threading support.
+
+### NHL Goalie Stats Integration (Oct 22, 2025)
+**V1 Implementation (Production)** - The main NHL predictor now includes real goalie stats:
+- **API Source**: NHL Official API (free tier) - fetches goalie save %, GAA, wins, losses
+- **Data**: 63 goalies from 2025-26 season
+- **Team Mappings**: 31/32 NHL teams mapped to primary starting goalies (last names as keys)
+- **Feature**: Goalie differential (save % difference) weighted 0.3 for XGBoost, 0.2 for CatBoost
+- **Accuracy Impact on 76 games (Oct 7-18, 2025)**: CatBoost +4.0% (43.4%→47.4%), Meta +5.3% (43.4%→48.7%), XGBoost 0% (47.4%→47.4%)
+- **Best Model**: Elo at 52.6% (no goalie feature) - all models near coin-flip accuracy
+- **Automation**: Auto-initialization on app startup if tables don't exist (requires `python nhl_predictor.py` direct execution)
+- **Manual Refresh**: `python fetch_nhl_goalies.py` then `python map_team_goalies.py`
+- **Manual Re-init**: Drop tables via `sqlite3 sports_predictions.db "DROP TABLE goalie_stats; DROP TABLE team_goalies;"` then restart
+- **Failure Mode**: Graceful fallback to league-average stats (91.0% SV%, 2.80 GAA)
+- **Data Integrity**: Fixed incorrect mappings (Colorado Avalanche → Georgiev not Wedgewood)
+
+### NHL V2 - API Enhanced Version (Testing - DEPRECATED)
+NHL V2 was an enhanced testing version that integrated real-time API data from the NHL Official API and The Odds API. This approach has been superseded by the V1 goalie stats integration above, which is simpler and production-ready.
 
 ## External Dependencies
 
 ### Core ML/Data Libraries
-- **pandas**: Data manipulation and analysis.
-- **numpy**: Numerical computing.
-- **scikit-learn**: Feature preprocessing, model evaluation.
-- **xgboost**: Primary machine learning algorithm.
+- **pandas**: Data manipulation
+- **numpy**: Numerical computing
+- **scikit-learn**: ML utilities
+- **xgboost**: Machine learning algorithm
 
 ### Data Collection
-- **pybaseball**: Baseball Savant/Statcast data.
-- **openpyxl**: Excel file reading.
-- **requests**: HTTP client for API calls.
-- **beautifulsoup4**: HTML parsing for odds data.
-- **trafilatura**: Web content extraction.
+- **pybaseball**: Baseball data
+- **openpyxl**: Excel file reading
+- **requests**: HTTP client
+- **beautifulsoup4**: HTML parsing
+- **trafilatura**: Web content extraction
 
 ### Web Interface
-- **flask**: Web application framework.
-- **flask-login**: User session management and authentication.
-- **flask-wtf**: Form handling and CSRF protection.
-- **werkzeug**: Password hashing.
+- **flask**: Web framework
+- **flask-login**: User authentication
+- **flask-wtf**: Form handling
+- **werkzeug**: Password hashing
 
 ### Utilities
-- **schedule**: Task scheduling and automation.
-- **sqlite3**: Database connectivity.
-- **logging**: System monitoring and debugging.
+- **schedule**: Task scheduling
+- **sqlite3**: Database connectivity
+- **logging**: System logging
 
 ### Data Sources
-- **MLB Stats API**: Official MLB game data.
-- **NHL API**: Official NHL game data.
-- **NBA, NFL, WNBA, NCAA APIs**: Sport-specific data collectors.
-
-## NHL V2 - API Enhanced Version (October 2025)
-
-### Overview
-NHL V2 is an enhanced testing version that integrates real-time API data to improve prediction accuracy. V1 remains untouched as the stable production version.
-
-### Architecture
-- **V1 (Production)**: backups/v1/ - Schedule-based predictions (53-56% accuracy)
-- **V2 (Testing)**: backups/v2/ - API-enhanced predictions (target: 60-67% accuracy)
-
-### API Integrations (V2)
-
-#### NHL Official API (Free)
-**Module**: `nhl_api_integration.py`
-- **Goalie Stats**: 63 goalies with save %, GAA, wins, losses
-- **Team Stats**: 32 teams with goals for/against, power play %
-- **Starting Goalies**: Day-of-game announcements
-- **Impact**: +3-5% accuracy
-
-#### The Odds API
-**Module**: `odds_api_integration.py`  
-**API Key**: ODDS_API_KEY (500 requests/month free tier)
-- **Betting Odds**: Moneyline, spreads, totals from 9 bookmakers
-- **Market Consensus**: Implied win probabilities
-- **Usage**: 240/500 requests remaining (Oct 2025)
-- **Impact**: +2-3% accuracy
-
-### V2 Database Schema Extensions
-
-**New Tables**:
-- `goalie_stats`: Season-long goalie performance (63 goalies)
-- `game_goalies`: Starting goalie assignments per game
-- `betting_odds`: Market consensus and probabilities (17 games)
-
-### V2 Feature Enhancements
-
-**Goalie Differential**:
-- Weighs save percentage differences (3% SV% diff = ~1% prediction boost)
-- Applied when starting goalies announced
-
-**Betting Market Consensus**:
-- 15% weight to market implied probabilities
-- Incorporates collective wisdom of 9 bookmakers
-
-**Home/Away Splits**:
-- Tracks team-specific home/away performance
-- 10% weight to historical split differentials
-
-**Dynamic Ensemble**:
-- With odds: 40% CatBoost, 30% XGBoost, 20% Elo, 10% Market
-- Without odds: 50% CatBoost, 30% XGBoost, 20% Elo
-
-### Data Collection Automation
-**Script**: `collect_nhl_v2_data.py`
-- Fetches goalie stats (daily)
-- Fetches betting odds (pre-game)
-- Links starting goalies (game day)
-- Modular design for expansion to other sports
-
-### V2 Files
-- `nhl_api_integration.py`: NHL API client
-- `odds_api_integration.py`: Betting odds client
-- `collect_nhl_v2_data.py`: Data collection orchestrator
-- `backups/v2/nhl_predictor_nhl_v2.py`: Enhanced predictor
-- `backups/v2/sports_predictions_nhl_v2.db`: Extended database
-
-### Documentation
-- `API_INTEGRATION_SUMMARY.md`: Full technical documentation
-- `NHL_V2_API_SUMMARY.txt`: Quick reference guide
-- `NHL_V2_STATUS_REPORT.md`: Complete status and activation guide
-
-### Current Status (Oct 2025)
-- ✅ API integrations tested and working
-- ✅ Database schema extended
-- ✅ Predictor enhanced with 4 feature sets
-- ✅ 63 goalies in database
-- ✅ 17 games with betting odds
-- ⏳ Schedule date correction needed for activation
-- ✅ Modular design ready for NFL, NBA, MLB expansion
-- **Baseball Savant/Statcast**: Advanced MLB metrics.
-- **Excel Schedules**: User-provided regular season schedules in `schedules/` directory.
+- **MLB Stats API**: Official MLB data
+- **NHL API**: Official NHL data
+- **NBA, NFL, WNBA, NCAA APIs**: Sport-specific data
+- **The Odds API**: Betting odds data
+- **Baseball Savant/Statcast**: Advanced MLB metrics
+- **Excel Schedules**: User-provided schedules
