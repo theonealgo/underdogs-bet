@@ -64,8 +64,8 @@ def get_sport_summary(sport):
         'SELECT COUNT(*) as cnt FROM games WHERE sport = ? AND home_score IS NOT NULL', (sport,)
     ).fetchone()['cnt']
     
-    # Get upcoming games (next 14 days)
-    today = datetime.now()
+    # Get upcoming games (next 14 days from Oct 7, 2025)
+    today = datetime(2025, 10, 7)
     upcoming_count = 0
     
     games = conn.execute(
@@ -128,8 +128,8 @@ def get_upcoming_predictions(sport, days=14):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
-    # Generate predictions for upcoming games
-    today = datetime.now()
+    # Generate predictions for upcoming games (from Oct 7, 2025)
+    today = datetime(2025, 10, 7)
     predictions = []
     
     for game in upcoming_games:
