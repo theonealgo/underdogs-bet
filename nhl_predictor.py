@@ -11,6 +11,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import subprocess
 import logging
 
 logging.basicConfig(level=logging.INFO)
