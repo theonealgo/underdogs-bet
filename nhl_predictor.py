@@ -39,6 +39,37 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def get_team_offensive_stats(team_name):
+    """Get team offensive metrics from skater aggregates"""
+    conn = get_db_connection()
+    
+    stats = conn.execute('''
+        SELECT avg_game_score, avg_onice_xgoals_pct, avg_onice_corsi_pct,
+               total_goals, total_xgoals
+        FROM team_skater_aggregates tsa
+        WHERE tsa.team_name = ?
+    ''', (team_name,)).fetchone()
+    
+    conn.close()
+    
+    if stats:
+        return {
+            'game_score': stats['avg_game_score'],
+            'xgoals_pct': stats['avg_onice_xgoals_pct'],
+            'corsi_pct': stats['avg_onice_corsi_pct'],
+            'goals': stats['total_goals'],
+            'xgoals': stats['total_xgoals']
+        }
+    else:
+        # League average if no data found
+        return {
+            'game_score': 0.0,
+            'xgoals_pct': 0.5,
+            'corsi_pct': 0.5,
+            'goals': 0,
+            'xgoals': 0.0
+        }
+
 def get_goalie_stats(team_name, use_advanced=True):
     """Get goalie stats for a team's primary goalie (with advanced metrics if available)"""
     conn = get_db_connection()
@@ -202,19 +233,31 @@ def get_upcoming_predictions(sport, days=14):
             away_rating = get_elo(game['away_team_id'])
             elo_prob = expected_score(home_rating, away_rating)
             
-            # Get goalie stats with advanced metrics
+            # Get goalie stats (defensive metrics)
             home_goalie_stats = get_goalie_stats(game['home_team_id'])
             away_goalie_stats = get_goalie_stats(game['away_team_id'])
             
-            # Enhanced goalie differential
+            # Get offensive stats
+            home_offense = get_team_offensive_stats(game['home_team_id'])
+            away_offense = get_team_offensive_stats(game['away_team_id'])
+            
+            # Enhanced goalie differential (defensive strength)
             sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
             gsax_diff = (home_goalie_stats['gsax'] - away_goalie_stats['gsax']) / 100
             hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
             goalie_diff = sv_diff * 0.5 + gsax_diff * 0.3 + hd_diff * 0.2
             
-            # ML models with enhanced goalie differential
-            xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + goalie_diff * 0.3))
-            cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + goalie_diff * 0.2))
+            # Offensive differential (attack strength)
+            xgoals_diff = (home_offense['xgoals_pct'] - away_offense['xgoals_pct']) * 5
+            corsi_diff = (home_offense['corsi_pct'] - away_offense['corsi_pct']) * 3
+            offense_diff = xgoals_diff * 0.6 + corsi_diff * 0.4
+            
+            # Combined differential (defense + offense)
+            total_diff = goalie_diff * 0.5 + offense_diff * 0.5
+            
+            # ML models with comprehensive differential
+            xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
+            cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
             ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
             
             # Add predictions to game dict
@@ -288,21 +331,31 @@ def calculate_model_performance(sport):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
         
-        # Get goalie stats (with advanced metrics if available)
+        # Get goalie stats (defensive metrics)
         home_goalie_stats = get_goalie_stats(game['home_team_id'])
         away_goalie_stats = get_goalie_stats(game['away_team_id'])
         
-        # Enhanced goalie differential with advanced metrics
-        sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
-        gsax_diff = (home_goalie_stats['gsax'] - away_goalie_stats['gsax']) / 100  # Normalize GSAX
-        hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
+        # Get offensive stats
+        home_offense = get_team_offensive_stats(game['home_team_id'])
+        away_offense = get_team_offensive_stats(game['away_team_id'])
         
-        # Combined goalie differential (weighted composite)
+        # Enhanced goalie differential (defensive strength)
+        sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
+        gsax_diff = (home_goalie_stats['gsax'] - away_goalie_stats['gsax']) / 100
+        hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
         goalie_diff = sv_diff * 0.5 + gsax_diff * 0.3 + hd_diff * 0.2
         
-        # ML models with enhanced goalie differential
-        xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + goalie_diff * 0.3))  # Home boost + goalie factor
-        cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + goalie_diff * 0.2))  # Home boost + goalie factor
+        # Offensive differential (attack strength)
+        xgoals_diff = (home_offense['xgoals_pct'] - away_offense['xgoals_pct']) * 5
+        corsi_diff = (home_offense['corsi_pct'] - away_offense['corsi_pct']) * 3
+        offense_diff = xgoals_diff * 0.6 + corsi_diff * 0.4
+        
+        # Combined differential (defense + offense)
+        total_diff = goalie_diff * 0.5 + offense_diff * 0.5
+        
+        # ML models with comprehensive differential
+        xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
+        cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
         
         xgb_pred = 'home' if xgb_prob > 0.5 else 'away'
         cat_pred = 'home' if cat_prob > 0.5 else 'away'
