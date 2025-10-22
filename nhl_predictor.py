@@ -39,13 +39,36 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_goalie_stats(team_name):
-    """Get goalie stats for a team's primary goalie"""
+def get_goalie_stats(team_name, use_advanced=True):
+    """Get goalie stats for a team's primary goalie (with advanced metrics if available)"""
     conn = get_db_connection()
     
-    # Get team's primary goalie stats
+    # Try to get advanced stats first
+    if use_advanced:
+        goalie = conn.execute('''
+            SELECT gs.save_pct, gs.gaa, gs.goalie_name,
+                   ags.goals_saved_above_expected, ags.high_danger_sv_pct, 
+                   ags.rebound_control_pct
+            FROM team_goalies tg
+            JOIN goalie_stats gs ON tg.goalie_name = gs.goalie_name
+            LEFT JOIN advanced_goalie_stats ags ON gs.goalie_name = ags.goalie_name
+            WHERE tg.team_name = ?
+        ''', (team_name,)).fetchone()
+        
+        if goalie and goalie['goals_saved_above_expected'] is not None:
+            conn.close()
+            return {
+                'save_pct': goalie['save_pct'], 
+                'gaa': goalie['gaa'],
+                'gsax': goalie['goals_saved_above_expected'],
+                'high_danger_sv': goalie['high_danger_sv_pct'],
+                'rebound_control': goalie['rebound_control_pct'],
+                'name': goalie['goalie_name']
+            }
+    
+    # Fallback to basic stats
     goalie = conn.execute('''
-        SELECT gs.save_pct, gs.gaa 
+        SELECT gs.save_pct, gs.gaa, gs.goalie_name
         FROM team_goalies tg
         JOIN goalie_stats gs ON tg.goalie_name = gs.goalie_name
         WHERE tg.team_name = ?
@@ -54,10 +77,24 @@ def get_goalie_stats(team_name):
     conn.close()
     
     if goalie:
-        return {'save_pct': goalie['save_pct'], 'gaa': goalie['gaa']}
+        return {
+            'save_pct': goalie['save_pct'], 
+            'gaa': goalie['gaa'],
+            'gsax': 0.0,
+            'high_danger_sv': 0.75,
+            'rebound_control': 0.0,
+            'name': goalie['goalie_name']
+        }
     else:
         # League average if no goalie found
-        return {'save_pct': 0.910, 'gaa': 2.80}
+        return {
+            'save_pct': 0.910, 
+            'gaa': 2.80,
+            'gsax': 0.0,
+            'high_danger_sv': 0.75,
+            'rebound_control': 0.0,
+            'name': 'League Average'
+        }
 
 def parse_date(date_str):
     """Parse MM/DD/YYYY or DD/MM/YYYY date string"""
@@ -165,8 +202,19 @@ def get_upcoming_predictions(sport, days=14):
             away_rating = get_elo(game['away_team_id'])
             elo_prob = expected_score(home_rating, away_rating)
             
-            xgb_prob = min(0.95, elo_prob * 1.05)  # Home advantage
-            cat_prob = min(0.95, elo_prob * 1.03)  # Home advantage
+            # Get goalie stats with advanced metrics
+            home_goalie_stats = get_goalie_stats(game['home_team_id'])
+            away_goalie_stats = get_goalie_stats(game['away_team_id'])
+            
+            # Enhanced goalie differential
+            sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
+            gsax_diff = (home_goalie_stats['gsax'] - away_goalie_stats['gsax']) / 100
+            hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
+            goalie_diff = sv_diff * 0.5 + gsax_diff * 0.3 + hd_diff * 0.2
+            
+            # ML models with enhanced goalie differential
+            xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + goalie_diff * 0.3))
+            cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + goalie_diff * 0.2))
             ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
             
             # Add predictions to game dict
@@ -240,14 +288,19 @@ def calculate_model_performance(sport):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
         
-        # Get goalie stats (simplified - using league average for now)
+        # Get goalie stats (with advanced metrics if available)
         home_goalie_stats = get_goalie_stats(game['home_team_id'])
         away_goalie_stats = get_goalie_stats(game['away_team_id'])
         
-        # Goalie differential (3% SV% difference = ~1% prediction boost)
-        goalie_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
+        # Enhanced goalie differential with advanced metrics
+        sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
+        gsax_diff = (home_goalie_stats['gsax'] - away_goalie_stats['gsax']) / 100  # Normalize GSAX
+        hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
         
-        # ML models with goalie differential
+        # Combined goalie differential (weighted composite)
+        goalie_diff = sv_diff * 0.5 + gsax_diff * 0.3 + hd_diff * 0.2
+        
+        # ML models with enhanced goalie differential
         xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + goalie_diff * 0.3))  # Home boost + goalie factor
         cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + goalie_diff * 0.2))  # Home boost + goalie factor
         
