@@ -1350,8 +1350,8 @@ def get_nhl_2025_schedule():
     """
     nhl_2025_schedule = [
         {'match_id': 1, 'date': '07/10/2025', 'home_team': 'Florida Panthers', 'away_team': 'Chicago Blackhawks'},
-        {'match_id': 2, 'date': '08/10/2025', 'home_team': 'New York Rangers', 'away_team': 'Pittsburgh Penguins'},
-        {'match_id': 3, 'date': '08/10/2025', 'home_team': 'Los Angeles Kings', 'away_team': 'Colorado Avalanche'},
+        {'match_id': 2, 'date': '07/10/2025', 'home_team': 'New York Rangers', 'away_team': 'Pittsburgh Penguins'},
+        {'match_id': 3, 'date': '07/10/2025', 'home_team': 'Los Angeles Kings', 'away_team': 'Colorado Avalanche'},
         {'match_id': 4, 'date': '09/10/2025', 'home_team': 'Toronto Maple Leafs', 'away_team': 'Montréal Canadiens'},
         {'match_id': 5, 'date': '09/10/2025', 'home_team': 'Washington Capitals', 'away_team': 'Boston Bruins'},
         {'match_id': 6, 'date': '09/10/2025', 'home_team': 'Edmonton Oilers', 'away_team': 'Calgary Flames'},
