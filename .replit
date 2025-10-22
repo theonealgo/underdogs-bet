@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Advanced Sports Predictor"
+args = "NHL Predictor"
 
 [[workflows.workflow]]
-name = "Advanced Sports Predictor"
+name = "NHL Predictor"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python advanced_flask_app.py"
+args = "python nhl_predictor.py"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
