@@ -27,21 +27,27 @@ The system uses `generate_real_predictions.py` to create authentic predictions f
 Automated tasks include daily data updates, prediction generation, and weekly model retraining, managed by a configurable, non-blocking scheduler with threading support.
 
 ### NHL Goalie Stats Integration (Oct 22, 2025)
-**V1 Implementation (Production)** - The main NHL predictor now includes real goalie stats:
-- **API Source**: NHL Official API (free tier) - fetches goalie save %, GAA, wins, losses
-- **Data**: 63 goalies from 2025-26 season
-- **Team Mappings**: 31/32 NHL teams mapped to primary starting goalies (last names as keys)
+**Current Implementation (V3 with nhl-api-py)** - Professional library integration with dual-source data collection:
+- **Library**: `nhl-api-py` - Official Python client for NHL APIs (replaces custom integration)
+- **Data Collection**: Dual-source approach for complete coverage
+  - **Stats API**: 25 goalies with actual 2025-26 season stats (SV%, GAA, wins, losses)
+  - **Roster API**: 50 additional goalies from team rosters (league avg stats for those without games)
+  - **Total**: 75 goalies with 32/32 team coverage (up from 31/32)
+- **Team Mapping**: Automated via `map_team_goalies_v2.py`
+  - Selects goalie with most games played from each team's roster
+  - Full name format (first + last) for better data integrity
+  - **Known Limitation**: Some goalies have 0 GP due to trades/roster moves (use league avg stats)
 - **Feature**: Goalie differential (save % difference) weighted 0.3 for XGBoost, 0.2 for CatBoost
-- **Accuracy Impact on 76 games (Oct 7-18, 2025)**: CatBoost +4.0% (43.4%→47.4%), Meta +5.3% (43.4%→48.7%), XGBoost 0% (47.4%→47.4%)
-- **Best Model**: Elo at 52.6% (no goalie feature) - all models near coin-flip accuracy
-- **Automation**: Auto-initialization on app startup if tables don't exist (requires `python nhl_predictor.py` direct execution)
-- **Manual Refresh**: `python fetch_nhl_goalies.py` then `python map_team_goalies.py`
+- **Accuracy Results on 76 games (Oct 7-18, 2025)**:
+  - Elo: 52.6% (unchanged - doesn't use goalie feature)
+  - XGBoost: 44.7% (vs 43.4% baseline without goalies)
+  - CatBoost: 48.7% (vs 43.4% baseline without goalies)
+  - Meta: 47.4% (vs 43.4% baseline without goalies)
+- **Automation**: Auto-initialization on app startup if tables don't exist
+- **Manual Refresh**: `python fetch_nhl_goalies_v3.py` then `python map_team_goalies_v2.py`
 - **Manual Re-init**: Drop tables via `sqlite3 sports_predictions.db "DROP TABLE goalie_stats; DROP TABLE team_goalies;"` then restart
 - **Failure Mode**: Graceful fallback to league-average stats (91.0% SV%, 2.80 GAA)
-- **Data Integrity**: Fixed incorrect mappings (Colorado Avalanche → Georgiev not Wedgewood)
-
-### NHL V2 - API Enhanced Version (Testing - DEPRECATED)
-NHL V2 was an enhanced testing version that integrated real-time API data from the NHL Official API and The Odds API. This approach has been superseded by the V1 goalie stats integration above, which is simpler and production-ready.
+- **Future Enhancement**: Consider storing player IDs to handle mid-season trades and name collisions
 
 ## External Dependencies
 
@@ -52,6 +58,7 @@ NHL V2 was an enhanced testing version that integrated real-time API data from t
 - **xgboost**: Machine learning algorithm
 
 ### Data Collection
+- **nhl-api-py**: Official NHL data client (stats, rosters, schedules)
 - **pybaseball**: Baseball data
 - **openpyxl**: Excel file reading
 - **requests**: HTTP client
@@ -71,7 +78,7 @@ NHL V2 was an enhanced testing version that integrated real-time API data from t
 
 ### Data Sources
 - **MLB Stats API**: Official MLB data
-- **NHL API**: Official NHL data
+- **NHL API (via nhl-api-py)**: Official NHL stats, rosters, schedules
 - **NBA, NFL, WNBA, NCAA APIs**: Sport-specific data
 - **The Odds API**: Betting odds data
 - **Baseball Savant/Statcast**: Advanced MLB metrics
