@@ -129,14 +129,14 @@ def get_goalie_stats(team_name, use_advanced=True):
         }
 
 def parse_date(date_str):
-    """Parse MM/DD/YYYY or DD/MM/YYYY date string"""
+    """Parse DD/MM/YYYY date string (schedule uses European format)"""
     try:
-        # Try MM/DD/YYYY first (American format)
-        return datetime.strptime(date_str, '%m/%d/%Y')
+        # Use DD/MM/YYYY (European format) as primary
+        return datetime.strptime(date_str, '%d/%m/%Y')
     except:
         try:
-            # Fallback to DD/MM/YYYY
-            return datetime.strptime(date_str, '%d/%m/%Y')
+            # Fallback to MM/DD/YYYY for edge cases
+            return datetime.strptime(date_str, '%m/%d/%Y')
         except:
             return None
 
