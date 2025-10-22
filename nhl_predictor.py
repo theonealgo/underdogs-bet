@@ -40,21 +40,24 @@ def get_db_connection():
     return conn
 
 def get_goalie_stats(team_name):
-    """Get average goalie stats for a team (simplified - assumes team's primary goalie)"""
+    """Get goalie stats for a team's primary goalie"""
     conn = get_db_connection()
     
-    # Get goalie stats (for now, return league average if no specific goalie found)
+    # Get team's primary goalie stats
     goalie = conn.execute('''
-        SELECT save_pct, gaa FROM goalie_stats 
-        ORDER BY games_played DESC LIMIT 1
-    ''').fetchone()
+        SELECT gs.save_pct, gs.gaa 
+        FROM team_goalies tg
+        JOIN goalie_stats gs ON tg.goalie_name = gs.goalie_name
+        WHERE tg.team_name = ?
+    ''', (team_name,)).fetchone()
     
     conn.close()
     
     if goalie:
         return {'save_pct': goalie['save_pct'], 'gaa': goalie['gaa']}
     else:
-        return {'save_pct': 0.910, 'gaa': 2.80}  # League average
+        # League average if no goalie found
+        return {'save_pct': 0.910, 'gaa': 2.80}
 
 def parse_date(date_str):
     """Parse MM/DD/YYYY or DD/MM/YYYY date string"""
