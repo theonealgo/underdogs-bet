@@ -95,31 +95,37 @@ def map_teams_to_goalies():
                 logger.warning(f"No goalies found for {team_abbr}")
                 continue
             
-            # Try to find a goalie with stats (starter with most games played)
-            mapped = False
+            # Find the goalie with the most games played from this team's roster
+            best_goalie = None
+            best_gp = -1
+            
             for goalie in goalies:
                 first_name = goalie.get('firstName', {}).get('default', '')
                 last_name = goalie.get('lastName', {}).get('default', '')
                 goalie_full_name = f"{first_name} {last_name}".strip()
                 
-                # Check if this goalie exists in goalie_stats
+                # Check if this goalie exists in goalie_stats and get their games played
                 goalie_stats = cursor.execute(
                     'SELECT games_played FROM goalie_stats WHERE goalie_name = ?',
                     (goalie_full_name,)
                 ).fetchone()
                 
                 if goalie_stats:
-                    cursor.execute('''
-                        INSERT INTO team_goalies (team_name, goalie_name, team_abbr)
-                        VALUES (?, ?, ?)
-                    ''', (team_full_name, goalie_full_name, team_abbr))
-                    
-                    print(f"✓ {team_abbr} ({team_full_name}): {goalie_full_name} ({goalie_stats[0]} GP)")
-                    mapped_count += 1
-                    mapped = True
-                    break
+                    gp = goalie_stats[0]
+                    if gp > best_gp:
+                        best_gp = gp
+                        best_goalie = goalie_full_name
             
-            if not mapped:
+            # Map the best goalie (most games played)
+            if best_goalie:
+                cursor.execute('''
+                    INSERT INTO team_goalies (team_name, goalie_name, team_abbr)
+                    VALUES (?, ?, ?)
+                ''', (team_full_name, best_goalie, team_abbr))
+                
+                print(f"✓ {team_abbr} ({team_full_name}): {best_goalie} ({best_gp} GP)")
+                mapped_count += 1
+            else:
                 logger.warning(f"No goalie with stats found for {team_abbr}")
                 
         except Exception as e:
