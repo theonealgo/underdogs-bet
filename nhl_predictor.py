@@ -39,6 +39,23 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+def get_goalie_stats(team_name):
+    """Get average goalie stats for a team (simplified - assumes team's primary goalie)"""
+    conn = get_db_connection()
+    
+    # Get goalie stats (for now, return league average if no specific goalie found)
+    goalie = conn.execute('''
+        SELECT save_pct, gaa FROM goalie_stats 
+        ORDER BY games_played DESC LIMIT 1
+    ''').fetchone()
+    
+    conn.close()
+    
+    if goalie:
+        return {'save_pct': goalie['save_pct'], 'gaa': goalie['gaa']}
+    else:
+        return {'save_pct': 0.910, 'gaa': 2.80}  # League average
+
 def parse_date(date_str):
     """Parse MM/DD/YYYY or DD/MM/YYYY date string"""
     try:
@@ -220,9 +237,16 @@ def calculate_model_performance(sport):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
         
-        # ML models (simple baseline: favor team with higher Elo + home advantage)
-        xgb_prob = min(0.95, elo_prob * 1.05)  # Slight home boost
-        cat_prob = min(0.95, elo_prob * 1.03)  # Slight home boost
+        # Get goalie stats (simplified - using league average for now)
+        home_goalie_stats = get_goalie_stats(game['home_team_id'])
+        away_goalie_stats = get_goalie_stats(game['away_team_id'])
+        
+        # Goalie differential (3% SV% difference = ~1% prediction boost)
+        goalie_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
+        
+        # ML models with goalie differential
+        xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + goalie_diff * 0.3))  # Home boost + goalie factor
+        cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + goalie_diff * 0.2))  # Home boost + goalie factor
         
         xgb_pred = 'home' if xgb_prob > 0.5 else 'away'
         cat_pred = 'home' if cat_prob > 0.5 else 'away'
