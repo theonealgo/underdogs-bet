@@ -124,6 +124,9 @@ class AdvancedSportPredictor:
         self.feature_columns = []
         self.is_trained = False
         
+        # Initialize ensemble weights (CatBoost 50%, XGBoost 30%, Elo 20%)
+        self.ensemble_weights = {'catboost': 0.5, 'xgboost': 0.3, 'elo': 0.2}
+        
         # Feature engineering storage
         self.team_stats = {}  # Store rolling stats for each team
         
