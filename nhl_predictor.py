@@ -295,8 +295,10 @@ def calculate_model_performance(sport):
     df['date_parsed'] = df['game_date'].apply(parse_date)
     df = df.dropna(subset=['date_parsed'])
     
-    # Use ALL completed games for testing (show actual performance)
-    testing_df = df
+    # Filter to October 7-18, 2025 test period only
+    oct_7 = datetime(2025, 10, 7)
+    oct_18 = datetime(2025, 10, 18, 23, 59, 59)
+    testing_df = df[(df['date_parsed'] >= oct_7) & (df['date_parsed'] <= oct_18)]
     
     # Initialize Elo ratings
     elo_ratings = {}
