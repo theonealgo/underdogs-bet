@@ -827,13 +827,13 @@ def initialize_goalie_data():
     if len(tables_exist) < 2:
         logger.info("🏒 Initializing NHL goalie data...")
         try:
-            # Import and run the initialization scripts
+            # Import and run the initialization scripts (V2 versions use nhl-api-py)
             import subprocess
-            result1 = subprocess.run(['python', 'fetch_nhl_goalies.py'], 
+            result1 = subprocess.run(['python', 'fetch_nhl_goalies_v2.py'], 
                                    check=True, capture_output=True, text=True)
-            result2 = subprocess.run(['python', 'map_team_goalies.py'], 
+            result2 = subprocess.run(['python', 'map_team_goalies_v2.py'], 
                                    check=True, capture_output=True, text=True)
-            logger.info("✓ Goalie data initialized successfully")
+            logger.info("✓ Goalie data initialized successfully using nhl-api-py")
         except subprocess.CalledProcessError as e:
             logger.warning(f"Goalie initialization failed: {e}")
             if e.stderr:
