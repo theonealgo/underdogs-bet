@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "jackpotpicks.bet"
+args = "Advanced Sports Predictor"
 
 [[workflows.workflow]]
-name = "jackpotpicks.bet"
+name = "Advanced Sports Predictor"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python flask_app.py"
+args = "python advanced_flask_app.py"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -85,6 +85,10 @@ externalPort = 3002
 [[ports]]
 localPort = 44159
 externalPort = 8000
+
+[[ports]]
+localPort = 44315
+externalPort = 8099
 
 [[ports]]
 localPort = 45839
