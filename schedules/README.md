@@ -1,7 +1,14 @@
-# Sports Schedule Excel Files
+# Sports Schedule Files
 
-This directory is for **regular season** game schedules in Excel format.
+This directory contains sport-specific schedules in two formats:
 
+## 1. Python Schedule Files (New)
+Sport-specific `.py` files with hardcoded schedule data:
+- `nfl_schedule.py` - NFL 2025 season (94 games)
+- `nhl_schedule.py` - NHL placeholder (uses Excel/API)
+- More sports coming soon...
+
+## 2. Excel Schedule Files (Legacy)
 The system automatically uses:
 - **Excel files** (this directory) for regular season games
 - **API data** for playoff games

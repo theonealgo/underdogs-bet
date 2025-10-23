@@ -20,6 +20,16 @@ The core of the system is its machine learning pipeline, featuring sport-specifi
 ### Data Collection Strategy
 A dual-source system automatically switches between user-provided Excel files for the regular season and official league APIs for playoffs. API integrations include MLB Stats API, NHL API, NBA, NFL, WNBA, and NCAA collectors, with rate limiting and error handling. Excel schedule support handles multiple date formats, ensuring consistency.
 
+### Schedule Architecture (Oct 23, 2025)
+**Modular Sport-Specific Schedules** - Each sport maintains its own schedule configuration:
+- **Location**: `schedules/` directory contains sport-specific Python files
+- **NFL Schedule**: `schedules/nfl_schedule.py` - Complete 2025 season (94 games) hardcoded
+- **NHL Schedule**: `schedules/nhl_schedule.py` - Placeholder (uses existing Excel/API system)
+- **Format**: Each schedule file exports `get_<sport>_schedule()` function returning list of game dictionaries
+- **Structure**: Games include match_id, round, date, venue, home_team, away_team, result
+- **Benefits**: Isolated schedule management per sport while maintaining unified multi-sport platform
+- **Future**: Additional sports (NBA, MLB, NCAAF, NCAAB) will follow same pattern
+
 ### Prediction Generation Workflow
 The system uses `generate_real_predictions.py` to create authentic predictions from trained ensemble models for all upcoming games. A critical fix ensures training metadata (games_trained, feature_cols, accuracy) is persisted with models. Placeholder generation has been deprecated in favor of model-based outputs.
 
