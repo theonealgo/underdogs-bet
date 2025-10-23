@@ -179,17 +179,14 @@ def get_goalie_stats(team_name, use_advanced=True):
         }
 
 def parse_date(date_str):
-    """Parse DD/MM/YYYY date string - handles timestamps like '05/09/2025 00:20'"""
-    # Strip whitespace and get date part only (before any space/time)
-    date_only = date_str.strip().split()[0]
-    
+    """Parse DD/MM/YYYY date string (schedule uses European format)"""
     try:
         # Use DD/MM/YYYY (European format) as primary
-        return datetime.strptime(date_only, '%d/%m/%Y')
+        return datetime.strptime(date_str, '%d/%m/%Y')
     except:
         try:
             # Fallback to MM/DD/YYYY for edge cases
-            return datetime.strptime(date_only, '%m/%d/%Y')
+            return datetime.strptime(date_str, '%m/%d/%Y')
         except:
             return None
 
@@ -233,7 +230,7 @@ def get_sport_summary(sport):
         'upcoming': upcoming_count
     }
 
-def get_upcoming_predictions(sport, days=30):
+def get_upcoming_predictions(sport, days=14):
     """Get upcoming game predictions with REAL model probabilities"""
     conn = get_db_connection()
     
@@ -244,12 +241,10 @@ def get_upcoming_predictions(sport, days=30):
         ORDER BY game_date ASC
     ''', (sport,)).fetchall()
     
-    # Get upcoming games (both completed recent games and future games)
-    # This allows users to see predictions with results for the last 30 days
-    # AND upcoming predictions for the next 30 days
+    # Get upcoming games
     upcoming_games = conn.execute('''
         SELECT * FROM games 
-        WHERE sport = ?
+        WHERE sport = ? AND home_score IS NULL
         ORDER BY game_date ASC
     ''', (sport,)).fetchall()
     
@@ -277,26 +272,13 @@ def get_upcoming_predictions(sport, days=30):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
-    # Generate predictions for games (show ALL from season start)
-    # This shows both completed games (with results) and upcoming games
-    SEASON_STARTS = {
-        'NFL': datetime(2025, 9, 5),    # September 5, 2025
-        'NHL': datetime(2025, 10, 7),   # October 7, 2025
-        'NBA': datetime(2025, 10, 22),  # October 22, 2025
-        'MLB': datetime(2025, 3, 27),   # March 27, 2025
-        'NCAAF': datetime(2025, 8, 30), # August 30, 2025
-        'NCAAB': datetime(2025, 11, 4)  # November 4, 2025
-    }
-    season_start = SEASON_STARTS.get(sport, datetime(2025, 10, 7))
-    today = datetime.now()
-    # Always start from season start to show full history
-    start_date = season_start
-    end_date = today + timedelta(days=days)
+    # Generate predictions for upcoming games (from Oct 7, 2025)
+    today = datetime(2025, 10, 7)
     predictions = []
     
     for game in upcoming_games:
         game_date = parse_date(game['game_date'])
-        if game_date and start_date <= game_date <= end_date:
+        if game_date and today <= game_date <= today + timedelta(days=days):
             # Calculate model probabilities
             home_rating = get_elo(game['home_team_id'])
             away_rating = get_elo(game['away_team_id'])
@@ -321,10 +303,10 @@ def get_upcoming_predictions(sport, days=30):
             corsi_diff = (home_offense['corsi_pct'] - away_offense['corsi_pct']) * 3
             offense_diff = xgoals_diff * 0.6 + corsi_diff * 0.4
             
-            # Combined differential (defense + offense) - SIMPLE MODEL
+            # Combined differential (defense + offense)
             total_diff = goalie_diff * 0.5 + offense_diff * 0.5
             
-            # ML models with comprehensive differential - SIMPLE MODEL
+            # ML models with comprehensive differential
             xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
             cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
             ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
@@ -338,9 +320,6 @@ def get_upcoming_predictions(sport, days=30):
             game_dict['predicted_winner'] = game['home_team_id'] if ensemble_prob > 0.5 else game['away_team_id']
             
             predictions.append(game_dict)
-    
-    # Sort predictions chronologically by date
-    predictions.sort(key=lambda x: parse_date(x['game_date']) or datetime.min)
     
     return predictions
 
@@ -420,10 +399,10 @@ def calculate_model_performance(sport):
         form_diff = home_form - away_form
         
         # NEW: Rest days and back-to-back
-        home_rest = game['home_rest_days'] if 'home_rest_days' in game.keys() else 3
-        away_rest = game['away_rest_days'] if 'away_rest_days' in game.keys() else 3
-        home_b2b = game['home_back_to_back'] if 'home_back_to_back' in game.keys() else 0
-        away_b2b = game['away_back_to_back'] if 'away_back_to_back' in game.keys() else 0
+        home_rest = game.get('home_rest_days', 3)
+        away_rest = game.get('away_rest_days', 3)
+        home_b2b = game.get('home_back_to_back', 0)
+        away_b2b = game.get('away_back_to_back', 0)
         rest_advantage = (home_rest - away_rest) * 0.02  # Small adjustment
         b2b_penalty = (away_b2b - home_b2b) * 0.03  # Penalty for back-to-back
         
@@ -497,16 +476,10 @@ def calculate_model_performance(sport):
         }
     
     # Date range
-    min_date_val = testing_df['date_parsed'].min()
-    max_date_val = testing_df['date_parsed'].max()
+    min_date = testing_df['date_parsed'].min().strftime('%d/%m/%Y')
+    max_date = testing_df['date_parsed'].max().strftime('%d/%m/%Y')
     
-    if pd.notna(min_date_val) and pd.notna(max_date_val):
-        min_date = min_date_val.strftime('%d/%m/%Y')
-        max_date = max_date_val.strftime('%d/%m/%Y')
-        performance['date_range'] = f"{min_date} - {max_date}"
-    else:
-        performance['date_range'] = "No data available"
-    
+    performance['date_range'] = f"{min_date} - {max_date}"
     performance['total_games'] = len(testing_df)
     
     return performance
@@ -820,7 +793,6 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                     <th>CatBoost</th>
                     <th>Ensemble</th>
                     <th>Pick</th>
-                    <th>Result</th>
                 </tr>
             </thead>
             <tbody>
@@ -833,18 +805,6 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                     <td class="model-pred">{{ pred.cat_prob }}%</td>
                     <td class="model-pred {% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}">{{ pred.ensemble_prob }}%</td>
                     <td class="{% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}"><strong>{{ pred.predicted_winner }}</strong></td>
-                    <td>
-                        {% if pred.home_score is not none %}
-                            <strong>{{ pred.home_score }} - {{ pred.away_score }}</strong>
-                            {% if (pred.predicted_winner == pred.home_team_id and pred.home_score > pred.away_score) or (pred.predicted_winner == pred.away_team_id and pred.away_score > pred.home_score) %}
-                                <span style="color: #10b981;">✓</span>
-                            {% else %}
-                                <span style="color: #ef4444;">✗</span>
-                            {% endif %}
-                        {% else %}
-                            <span style="opacity: 0.5;">-</span>
-                        {% endif %}
-                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
