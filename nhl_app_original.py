@@ -254,27 +254,15 @@ def calculate_model_performance(sport):
     df['date_parsed'] = df['game_date'].apply(parse_date)
     df = df.dropna(subset=['date_parsed'])
     
-    # TEST ON ALL COMPLETED GAMES FROM SEASON START (no train/test split)
-    # Constrain to season start to prevent prior-season data contamination
-    from datetime import datetime
-    season_starts = {
-        'NHL': datetime(2025, 10, 7),
-        'NFL': datetime(2025, 9, 5),
-        'NBA': datetime(2025, 10, 22),
-        'MLB': datetime(2025, 3, 27),
-        'NCAAF': datetime(2025, 8, 30),
-        'NCAAB': datetime(2025, 11, 4)
-    }
-    season_start = season_starts.get(sport, df['date_parsed'].min())
-    testing_df = df[df['date_parsed'] >= season_start].copy()
-    
-    # CRITICAL: Sort by date_parsed to preserve chronological Elo updates
-    testing_df = testing_df.sort_values('date_parsed').reset_index(drop=True)
+    # Split training/testing (70% train, 30% test)
+    training_cutoff = df['date_parsed'].quantile(0.7)
+    training_df = df[df['date_parsed'] < training_cutoff]
+    testing_df = df[df['date_parsed'] >= training_cutoff]
     
     if len(testing_df) == 0:
         return None
     
-    # Initialize Elo system (start fresh from season start)
+    # Train simple Elo system on training data
     elo_ratings = {}
     K_FACTORS = {'NHL': 22, 'NFL': 35, 'NBA': 18, 'MLB': 14, 'NCAAF': 30, 'NCAAB': 25}
     k_factor = K_FACTORS.get(sport, 20)
@@ -285,7 +273,18 @@ def calculate_model_performance(sport):
     def expected_score(rating_a, rating_b):
         return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     
-    # Test all models on ALL completed games (starting from season start)
+    # Train Elo on training set
+    for _, game in training_df.iterrows():
+        home_rating = get_elo(game['home_team_id'])
+        away_rating = get_elo(game['away_team_id'])
+        
+        expected_home = expected_score(home_rating, away_rating)
+        actual_home = 1 if game['home_score'] > game['away_score'] else 0
+        
+        elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
+        elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
+    
+    # Test all models on test set
     results = {
         'elo': {'correct': 0, 'total': 0},
         'xgboost': {'correct': 0, 'total': 0},
@@ -296,7 +295,7 @@ def calculate_model_performance(sport):
     for _, game in testing_df.iterrows():
         actual_winner = 'home' if game['home_score'] > game['away_score'] else 'away'
         
-        # Elo prediction (BEFORE updating ratings)
+        # Elo prediction
         home_rating = get_elo(game['home_team_id'])
         away_rating = get_elo(game['away_team_id'])
         elo_prob = expected_score(home_rating, away_rating)
@@ -327,12 +326,6 @@ def calculate_model_performance(sport):
             results['catboost']['correct'] += 1
         if ensemble_pred == actual_winner:
             results['ensemble']['correct'] += 1
-        
-        # Update Elo ratings AFTER making prediction
-        expected_home = elo_prob
-        actual_home = 1 if actual_winner == 'home' else 0
-        elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
-        elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
     # Calculate accuracies
     performance = {}
@@ -668,7 +661,7 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                 {% for pred in predictions %}
                 <tr>
                     <td>{{ pred.game_date }}</td>
-                    <td><strong>{{ pred.away_team_id }} @ {{ pred.home_team_id }}</strong></td>
+                    <td><strong>{{ pred.home_team_id }}</strong> vs {{ pred.away_team_id }}</td>
                     <td class="model-pred">{{ pred.elo_prob }}%</td>
                     <td class="model-pred">{{ pred.xgb_prob }}%</td>
                     <td class="model-pred">{{ pred.cat_prob }}%</td>
