@@ -230,7 +230,7 @@ def get_sport_summary(sport):
         'upcoming': upcoming_count
     }
 
-def get_upcoming_predictions(sport, days=14):
+def get_upcoming_predictions(sport, days=30):
     """Get upcoming game predictions with REAL model probabilities"""
     conn = get_db_connection()
     
@@ -241,10 +241,12 @@ def get_upcoming_predictions(sport, days=14):
         ORDER BY game_date ASC
     ''', (sport,)).fetchall()
     
-    # Get upcoming games
+    # Get upcoming games (both completed recent games and future games)
+    # This allows users to see predictions with results for the last 30 days
+    # AND upcoming predictions for the next 30 days
     upcoming_games = conn.execute('''
         SELECT * FROM games 
-        WHERE sport = ? AND home_score IS NULL
+        WHERE sport = ?
         ORDER BY game_date ASC
     ''', (sport,)).fetchall()
     
@@ -272,13 +274,18 @@ def get_upcoming_predictions(sport, days=14):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
-    # Generate predictions for upcoming games (from Oct 7, 2025)
-    today = datetime(2025, 10, 7)
+    # Generate predictions for games (show 1 month from season start Oct 7, 2025)
+    # This shows both completed games (with results) and upcoming games
+    season_start = datetime(2025, 10, 7)
+    today = datetime.now()
+    # Always start from season start (Oct 7) to show full history
+    start_date = season_start
+    end_date = today + timedelta(days=days)
     predictions = []
     
     for game in upcoming_games:
         game_date = parse_date(game['game_date'])
-        if game_date and today <= game_date <= today + timedelta(days=days):
+        if game_date and start_date <= game_date <= end_date:
             # Calculate model probabilities
             home_rating = get_elo(game['home_team_id'])
             away_rating = get_elo(game['away_team_id'])
@@ -799,6 +806,7 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                     <th>CatBoost</th>
                     <th>Ensemble</th>
                     <th>Pick</th>
+                    <th>Result</th>
                 </tr>
             </thead>
             <tbody>
@@ -811,6 +819,18 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                     <td class="model-pred">{{ pred.cat_prob }}%</td>
                     <td class="model-pred {% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}">{{ pred.ensemble_prob }}%</td>
                     <td class="{% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}"><strong>{{ pred.predicted_winner }}</strong></td>
+                    <td>
+                        {% if pred.home_score is not none %}
+                            <strong>{{ pred.home_score }} - {{ pred.away_score }}</strong>
+                            {% if (pred.predicted_winner == pred.home_team_id and pred.home_score > pred.away_score) or (pred.predicted_winner == pred.away_team_id and pred.away_score > pred.home_score) %}
+                                <span style="color: #10b981;">✓</span>
+                            {% else %}
+                                <span style="color: #ef4444;">✗</span>
+                            {% endif %}
+                        {% else %}
+                            <span style="opacity: 0.5;">-</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
