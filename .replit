@@ -20,19 +20,19 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "NHL Predictor"
+args = "NHL Final 60"
 
 [[workflows.workflow]]
-name = "NHL Predictor"
+name = "NHL Final 60"
 author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python nhl_predictor.py"
+args = "python nhlfinal60.py"
 waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [[ports]]
 localPort = 5000
