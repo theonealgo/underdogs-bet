@@ -10,7 +10,8 @@ Updates once per season.
 
 def get_nfl_schedule():
     """NFL Schedule - 2025 Season"""
-        {'match_id': 1, 'round': 1, 'date': '05/09/2025 00:20', 'venue': 'Lincoln FiNonecial Field', 'home_team': 'Philadelphia Eagles', 'away_team': 'Dallas Cowboys', 'result': '24 - 20'},
+    nfl_schedule = [
+        {'match_id': 1, 'round': 1, 'date': '05/09/2025 00:20', 'venue': 'Lincoln Financial Field', 'home_team': 'Philadelphia Eagles', 'away_team': 'Dallas Cowboys', 'result': '24 - 20'},
         {'match_id': 2, 'round': 1, 'date': '06/09/2025 00:00', 'venue': 'Arena Corinthians', 'home_team': 'Los Angeles Chargers', 'away_team': 'Kansas City Chiefs', 'result': '27 - 21'},
         {'match_id': 3, 'round': 1, 'date': '07/09/2025 17:00', 'venue': 'Mercedes-Benz Stadium', 'home_team': 'Atlanta Falcons', 'away_team': 'Tampa Bay Buccaneers', 'result': '20 - 23'},
         {'match_id': 4, 'round': 1, 'date': '07/09/2025 17:00', 'venue': 'Huntington Bank Field', 'home_team': 'Cleveland Browns', 'away_team': 'Cincinnati Bengals', 'result': '16 - 17'},
@@ -282,9 +283,8 @@ def get_nfl_schedule():
         {'match_id': 270, 'round': 18, 'date': '05/01/2026 00:00', 'venue': 'Acrisure Stadium', 'home_team': 'Pittsburgh Steelers', 'away_team': 'Baltimore Ravens', 'result': None},
         {'match_id': 271, 'round': 18, 'date': '05/01/2026 00:00', 'venue': "Levi's Stadium", 'home_team': 'San Francisco 49ers', 'away_team': 'Seattle Seahawks', 'result': None},
         {'match_id': 272, 'round': 18, 'date': '05/01/2026 00:00', 'venue': 'Raymond James Stadium', 'home_team': 'Tampa Bay Buccaneers', 'away_team': 'Carolina Panthers', 'result': None},
-
+    ]
     
-
     return nfl_schedule
 
 
