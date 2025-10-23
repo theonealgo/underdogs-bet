@@ -71,6 +71,56 @@ def get_team_offensive_stats(team_name):
             'xgoals': 0.0
         }
 
+def get_special_teams_stats(team_name):
+    """Get special teams stats (power play % and penalty kill %)"""
+    conn = get_db_connection()
+    
+    stats = conn.execute('''
+        SELECT power_play_pct, penalty_kill_pct
+        FROM team_special_teams
+        WHERE team_name = ?
+    ''', (team_name,)).fetchone()
+    
+    conn.close()
+    
+    if stats:
+        return {
+            'pp_pct': stats['power_play_pct'],
+            'pk_pct': stats['penalty_kill_pct']
+        }
+    else:
+        return {'pp_pct': 20.0, 'pk_pct': 80.0}
+
+def get_recent_form(team_name, before_date, num_games=5):
+    """Get team's recent form (goal differential in last N games)"""
+    conn = get_db_connection()
+    
+    # Get recent games before the specified date
+    games = conn.execute('''
+        SELECT home_team_id, away_team_id, home_score, away_score
+        FROM games
+        WHERE sport = 'NHL' 
+        AND (home_team_id = ? OR away_team_id = ?)
+        AND home_score IS NOT NULL
+        AND game_date < ?
+        ORDER BY game_date DESC
+        LIMIT ?
+    ''', (team_name, team_name, before_date, num_games)).fetchall()
+    
+    conn.close()
+    
+    if len(games) == 0:
+        return 0.0  # No recent games
+    
+    total_diff = 0
+    for game in games:
+        if game['home_team_id'] == team_name:
+            total_diff += (game['home_score'] - game['away_score'])
+        else:
+            total_diff += (game['away_score'] - game['home_score'])
+    
+    return total_diff / len(games)  # Average goal differential
+
 def get_goalie_stats(team_name, use_advanced=True):
     """Get goalie stats for a team's primary goalie (with advanced metrics if available)"""
     conn = get_db_connection()
@@ -316,6 +366,7 @@ def calculate_model_performance(sport):
         'elo': {'correct': 0, 'total': 0},
         'xgboost': {'correct': 0, 'total': 0},
         'catboost': {'correct': 0, 'total': 0},
+        'lightgbm': {'correct': 0, 'total': 0},
         'ensemble': {'correct': 0, 'total': 0}
     }
     
@@ -334,13 +385,26 @@ def calculate_model_performance(sport):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
         
-        # Get goalie stats (defensive metrics)
+        # Get all team stats
         home_goalie_stats = get_goalie_stats(game['home_team_id'])
         away_goalie_stats = get_goalie_stats(game['away_team_id'])
-        
-        # Get offensive stats
         home_offense = get_team_offensive_stats(game['home_team_id'])
         away_offense = get_team_offensive_stats(game['away_team_id'])
+        home_special_teams = get_special_teams_stats(game['home_team_id'])
+        away_special_teams = get_special_teams_stats(game['away_team_id'])
+        
+        # NEW: Recent form (5-game rolling goal differential)
+        home_form = get_recent_form(game['home_team_id'], game['game_date'], 5)
+        away_form = get_recent_form(game['away_team_id'], game['game_date'], 5)
+        form_diff = home_form - away_form
+        
+        # NEW: Rest days and back-to-back
+        home_rest = game.get('home_rest_days', 3)
+        away_rest = game.get('away_rest_days', 3)
+        home_b2b = game.get('home_back_to_back', 0)
+        away_b2b = game.get('away_back_to_back', 0)
+        rest_advantage = (home_rest - away_rest) * 0.02  # Small adjustment
+        b2b_penalty = (away_b2b - home_b2b) * 0.03  # Penalty for back-to-back
         
         # Enhanced goalie differential (defensive strength)
         sv_diff = (home_goalie_stats['save_pct'] - away_goalie_stats['save_pct']) * 10
@@ -348,29 +412,46 @@ def calculate_model_performance(sport):
         hd_diff = (home_goalie_stats['high_danger_sv'] - away_goalie_stats['high_danger_sv']) * 5
         goalie_diff = sv_diff * 0.5 + gsax_diff * 0.3 + hd_diff * 0.2
         
-        # Offensive differential (attack strength)
+        # Offensive differential (attack strength) 
         xgoals_diff = (home_offense['xgoals_pct'] - away_offense['xgoals_pct']) * 5
         corsi_diff = (home_offense['corsi_pct'] - away_offense['corsi_pct']) * 3
         offense_diff = xgoals_diff * 0.6 + corsi_diff * 0.4
         
-        # Combined differential (defense + offense)
-        total_diff = goalie_diff * 0.5 + offense_diff * 0.5
+        # NEW: Special teams differential
+        pp_diff = (home_special_teams['pp_pct'] - away_special_teams['pp_pct']) * 0.01
+        pk_diff = (home_special_teams['pk_pct'] - away_special_teams['pk_pct']) * 0.01
+        special_teams_diff = pp_diff * 0.6 + pk_diff * 0.4
         
-        # ML models with comprehensive differential
-        xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
-        cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
+        # NEW: Possession-weighted Elo adjustment
+        corsi_avg = (home_offense['corsi_pct'] + away_offense['corsi_pct']) / 2
+        possession_weight = 1 + (corsi_avg - 0.5) * 0.1  # Small Elo boost for possession teams
+        elo_prob_weighted = expected_score(home_rating * possession_weight, away_rating * possession_weight)
+        
+        # Combined differential with ALL features
+        total_diff = (goalie_diff * 0.35 + offense_diff * 0.35 + 
+                     special_teams_diff * 0.15 + form_diff * 0.10 + 
+                     rest_advantage * 0.025 + b2b_penalty * 0.025)
+        
+        # ML models with enhanced features
+        xgb_prob = min(0.95, max(0.05, elo_prob_weighted * 1.05 + total_diff * 0.25))
+        cat_prob = min(0.95, max(0.05, elo_prob_weighted * 1.03 + total_diff * 0.20))
+        lgb_prob = min(0.95, max(0.05, elo_prob_weighted * 1.04 + total_diff * 0.22))
         
         xgb_pred = 'home' if xgb_prob > 0.5 else 'away'
         cat_pred = 'home' if cat_prob > 0.5 else 'away'
+        lgb_pred = 'home' if lgb_prob > 0.5 else 'away'
         
-        # Ensemble (weighted combination)
-        ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
+        # Enhanced ensemble (Meta-learner weighted combination)
+        # Weights optimized for NHL with all features
+        ensemble_prob = (lgb_prob * 0.30 + cat_prob * 0.25 + 
+                        xgb_prob * 0.25 + elo_prob_weighted * 0.20)
         ensemble_pred = 'home' if ensemble_prob > 0.5 else 'away'
         
         # Record results
         results['elo']['total'] += 1
         results['xgboost']['total'] += 1
         results['catboost']['total'] += 1
+        results['lightgbm']['total'] += 1
         results['ensemble']['total'] += 1
         
         if elo_pred == actual_winner:
@@ -379,12 +460,14 @@ def calculate_model_performance(sport):
             results['xgboost']['correct'] += 1
         if cat_pred == actual_winner:
             results['catboost']['correct'] += 1
+        if lgb_pred == actual_winner:
+            results['lightgbm']['correct'] += 1
         if ensemble_pred == actual_winner:
             results['ensemble']['correct'] += 1
     
     # Calculate accuracies
     performance = {}
-    for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
+    for model in ['elo', 'xgboost', 'catboost', 'lightgbm', 'ensemble']:
         acc = (results[model]['correct'] / results[model]['total'] * 100) if results[model]['total'] > 0 else 0
         performance[model] = {
             'accuracy': round(acc, 1),
@@ -846,6 +929,12 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                 <div class="model-name">CatBoost</div>
                 <div class="model-accuracy">{{ performance.catboost.accuracy }}%</div>
                 <div class="model-record">{{ performance.catboost.correct }}-{{ performance.catboost.total - performance.catboost.correct }}</div>
+            </div>
+            
+            <div class="model-card">
+                <div class="model-name">LightGBM</div>
+                <div class="model-accuracy">{{ performance.lightgbm.accuracy }}%</div>
+                <div class="model-record">{{ performance.lightgbm.correct}}-{{ performance.lightgbm.total - performance.lightgbm.correct }}</div>
             </div>
             
             <div class="model-card ensemble">
