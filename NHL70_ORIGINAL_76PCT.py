@@ -1,23 +1,8 @@
-"""
 jackpotpicks.bet - Multi-Sport Prediction Platform
 ==================================================
 Complete platform with Dashboard, Predictions, and Results pages for all sports.
 4-Model System: Elo, XGBoost, CatBoost, Meta Ensemble
 """
-
-from flask import Flask, render_template_string, request
-import sqlite3
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
-
-DATABASE = 'sports_predictions_original.db'
 
 from flask import Flask, render_template_string, request
 import sqlite3
