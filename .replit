@@ -26,13 +26,13 @@ args = "NHL Predictor"
 name = "NHL Predictor"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python nhl_predictor.py"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python nhlnflv1.py"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
