@@ -322,13 +322,51 @@ def get_upcoming_predictions(sport, days=30):
             corsi_diff = (home_offense['corsi_pct'] - away_offense['corsi_pct']) * 3
             offense_diff = xgoals_diff * 0.6 + corsi_diff * 0.4
             
-            # Combined differential (defense + offense)
-            total_diff = goalie_diff * 0.5 + offense_diff * 0.5
-            
-            # ML models with comprehensive differential
-            xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
-            cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
-            ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
+            # NHL 60% ACCURACY SETTINGS
+            if sport == 'NHL':
+                # Get special teams stats
+                home_special_teams = get_special_teams_stats(game['home_team_id'])
+                away_special_teams = get_special_teams_stats(game['away_team_id'])
+                
+                # Recent form (5-game rolling goal differential)
+                home_form = get_recent_form(game['home_team_id'], game['game_date'], 5)
+                away_form = get_recent_form(game['away_team_id'], game['game_date'], 5)
+                form_diff = home_form - away_form
+                
+                # Rest days and back-to-back
+                home_rest = game['home_rest_days'] if 'home_rest_days' in game.keys() else 3
+                away_rest = game['away_rest_days'] if 'away_rest_days' in game.keys() else 3
+                home_b2b = game['home_back_to_back'] if 'home_back_to_back' in game.keys() else 0
+                away_b2b = game['away_back_to_back'] if 'away_back_to_back' in game.keys() else 0
+                rest_advantage = (home_rest - away_rest) * 0.02
+                b2b_penalty = (away_b2b - home_b2b) * 0.03
+                
+                # Special teams differential
+                pp_diff = (home_special_teams['pp_pct'] - away_special_teams['pp_pct']) * 0.01
+                pk_diff = (home_special_teams['pk_pct'] - away_special_teams['pk_pct']) * 0.01
+                special_teams_diff = pp_diff * 0.6 + pk_diff * 0.4
+                
+                # Possession-weighted Elo adjustment
+                corsi_avg = (home_offense['corsi_pct'] + away_offense['corsi_pct']) / 2
+                possession_weight = 1 + (corsi_avg - 0.5) * 0.1
+                elo_prob_weighted = expected_score(home_rating * possession_weight, away_rating * possession_weight)
+                
+                # Combined differential with ALL features (60% formula)
+                total_diff = (goalie_diff * 0.35 + offense_diff * 0.35 + 
+                             special_teams_diff * 0.15 + form_diff * 0.10 + 
+                             rest_advantage * 0.025 + b2b_penalty * 0.025)
+                
+                # ML models with enhanced features (60% formula)
+                xgb_prob = min(0.95, max(0.05, elo_prob_weighted * 1.05 + total_diff * 0.25))
+                cat_prob = min(0.95, max(0.05, elo_prob_weighted * 1.03 + total_diff * 0.20))
+                lgb_prob = min(0.95, max(0.05, elo_prob_weighted * 1.04 + total_diff * 0.22))
+                ensemble_prob = (lgb_prob * 0.30 + cat_prob * 0.25 + xgb_prob * 0.25 + elo_prob_weighted * 0.20)
+            else:
+                # Other sports: use simplified model
+                total_diff = goalie_diff * 0.5 + offense_diff * 0.5
+                xgb_prob = min(0.95, max(0.05, elo_prob * 1.05 + total_diff * 0.3))
+                cat_prob = min(0.95, max(0.05, elo_prob * 1.03 + total_diff * 0.2))
+                ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
             
             # Add predictions to game dict
             game_dict = dict(game)
@@ -421,10 +459,10 @@ def calculate_model_performance(sport):
         form_diff = home_form - away_form
         
         # NEW: Rest days and back-to-back
-        home_rest = game.get('home_rest_days', 3)
-        away_rest = game.get('away_rest_days', 3)
-        home_b2b = game.get('home_back_to_back', 0)
-        away_b2b = game.get('away_back_to_back', 0)
+        home_rest = game['home_rest_days'] if 'home_rest_days' in game.keys() else 3
+        away_rest = game['away_rest_days'] if 'away_rest_days' in game.keys() else 3
+        home_b2b = game['home_back_to_back'] if 'home_back_to_back' in game.keys() else 0
+        away_b2b = game['away_back_to_back'] if 'away_back_to_back' in game.keys() else 0
         rest_advantage = (home_rest - away_rest) * 0.02  # Small adjustment
         b2b_penalty = (away_b2b - home_b2b) * 0.03  # Penalty for back-to-back
         
