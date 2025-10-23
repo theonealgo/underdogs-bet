@@ -476,10 +476,16 @@ def calculate_model_performance(sport):
         }
     
     # Date range
-    min_date = testing_df['date_parsed'].min().strftime('%d/%m/%Y')
-    max_date = testing_df['date_parsed'].max().strftime('%d/%m/%Y')
+    min_date_val = testing_df['date_parsed'].min()
+    max_date_val = testing_df['date_parsed'].max()
     
-    performance['date_range'] = f"{min_date} - {max_date}"
+    if pd.notna(min_date_val) and pd.notna(max_date_val):
+        min_date = min_date_val.strftime('%d/%m/%Y')
+        max_date = max_date_val.strftime('%d/%m/%Y')
+        performance['date_range'] = f"{min_date} - {max_date}"
+    else:
+        performance['date_range'] = "No data available"
+    
     performance['total_games'] = len(testing_df)
     
     return performance
