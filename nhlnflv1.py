@@ -747,6 +747,50 @@ def dashboard():
                     </div>
                     <a href="/sport/NFL" class="view-btn">View Predictions</a>
                 </div>
+                
+                <div class="sport-card" style="opacity: 0.6;">
+                    <div class="sport-icon">🏀</div>
+                    <div class="sport-name" style="color: #dc2626;">NBA</div>
+                    <div class="sport-stats">
+                        <div class="stat-row"><span>Status:</span><span>Coming Soon</span></div>
+                        <div class="stat-row"><span>Models:</span><span>—</span></div>
+                        <div class="stat-row"><span>Season:</span><span>2024-25</span></div>
+                    </div>
+                    <a href="#" class="view-btn" style="background: #ccc; cursor: not-allowed;">Not Available</a>
+                </div>
+                
+                <div class="sport-card" style="opacity: 0.6;">
+                    <div class="sport-icon">⚾</div>
+                    <div class="sport-name" style="color: #9333ea;">MLB</div>
+                    <div class="sport-stats">
+                        <div class="stat-row"><span>Status:</span><span>Coming Soon</span></div>
+                        <div class="stat-row"><span>Models:</span><span>—</span></div>
+                        <div class="stat-row"><span>Season:</span><span>2025</span></div>
+                    </div>
+                    <a href="#" class="view-btn" style="background: #ccc; cursor: not-allowed;">Not Available</a>
+                </div>
+                
+                <div class="sport-card" style="opacity: 0.6;">
+                    <div class="sport-icon">🏟️</div>
+                    <div class="sport-name" style="color: #ea580c;">NCAA Football</div>
+                    <div class="sport-stats">
+                        <div class="stat-row"><span>Status:</span><span>Coming Soon</span></div>
+                        <div class="stat-row"><span>Models:</span><span>—</span></div>
+                        <div class="stat-row"><span>Season:</span><span>2025</span></div>
+                    </div>
+                    <a href="#" class="view-btn" style="background: #ccc; cursor: not-allowed;">Not Available</a>
+                </div>
+                
+                <div class="sport-card" style="opacity: 0.6;">
+                    <div class="sport-icon">🎓</div>
+                    <div class="sport-name" style="color: #0891b2;">NCAA Basketball</div>
+                    <div class="sport-stats">
+                        <div class="stat-row"><span>Status:</span><span>Coming Soon</span></div>
+                        <div class="stat-row"><span>Models:</span><span>—</span></div>
+                        <div class="stat-row"><span>Season:</span><span>2024-25</span></div>
+                    </div>
+                    <a href="#" class="view-btn" style="background: #ccc; cursor: not-allowed;">Not Available</a>
+                </div>
             </div>
         </div>
     </body>
