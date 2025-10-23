@@ -180,13 +180,17 @@ def get_goalie_stats(team_name, use_advanced=True):
 
 def parse_date(date_str):
     """Parse DD/MM/YYYY date string (schedule uses European format)"""
+    # Strip all whitespace and split to handle both regular spaces and non-breaking spaces
+    parts = date_str.strip().split()
+    date_only = parts[0] if parts else date_str
+    
     try:
         # Use DD/MM/YYYY (European format) as primary
-        return datetime.strptime(date_str, '%d/%m/%Y')
+        return datetime.strptime(date_only, '%d/%m/%Y')
     except:
         try:
             # Fallback to MM/DD/YYYY for edge cases
-            return datetime.strptime(date_str, '%m/%d/%Y')
+            return datetime.strptime(date_only, '%m/%d/%Y')
         except:
             return None
 
@@ -335,6 +339,9 @@ def get_upcoming_predictions(sport, days=30):
             game_dict['predicted_winner'] = game['home_team_id'] if ensemble_prob > 0.5 else game['away_team_id']
             
             predictions.append(game_dict)
+    
+    # Sort predictions chronologically by date
+    predictions.sort(key=lambda x: parse_date(x['game_date']) or datetime.min)
     
     return predictions
 
