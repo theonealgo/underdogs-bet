@@ -274,11 +274,19 @@ def get_upcoming_predictions(sport, days=30):
         elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
         elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
-    # Generate predictions for games (show 1 month from season start Oct 7, 2025)
+    # Generate predictions for games (show ALL from season start)
     # This shows both completed games (with results) and upcoming games
-    season_start = datetime(2025, 10, 7)
+    SEASON_STARTS = {
+        'NFL': datetime(2025, 9, 5),    # September 5, 2025
+        'NHL': datetime(2025, 10, 7),   # October 7, 2025
+        'NBA': datetime(2025, 10, 22),  # October 22, 2025
+        'MLB': datetime(2025, 3, 27),   # March 27, 2025
+        'NCAAF': datetime(2025, 8, 30), # August 30, 2025
+        'NCAAB': datetime(2025, 11, 4)  # November 4, 2025
+    }
+    season_start = SEASON_STARTS.get(sport, datetime(2025, 10, 7))
     today = datetime.now()
-    # Always start from season start (Oct 7) to show full history
+    # Always start from season start to show full history
     start_date = season_start
     end_date = today + timedelta(days=days)
     predictions = []
