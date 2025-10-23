@@ -23,10 +23,22 @@ A dual-source system automatically switches between user-provided Excel files fo
 ### Schedule Architecture (Oct 23, 2025)
 **Modular Sport-Specific Schedules** - Each sport maintains its own schedule configuration:
 - **Location**: `schedules/` directory contains sport-specific Python files
-- **NFL Schedule**: `schedules/nfl_schedule.py` - Complete 2025 season (94 games) hardcoded
-- **NHL Schedule**: `schedules/nhl_schedule.py` - Placeholder (uses existing Excel/API system)
+- **NFL Schedule**: `schedules/nfl_schedule.py` - Complete 2025 season (272 games, Sept 5, 2025 - Jan 5, 2026)
+- **NHL Schedule**: `nhlschedules.py` - Complete 2025-26 season (1,312 games, Oct 7, 2025 - Apr 16, 2026)
 - **Format**: Each schedule file exports `get_<sport>_schedule()` function returning list of game dictionaries
-- **Structure**: Games include match_id, round, date, venue, home_team, away_team, result
+- **Structure**: Games include match_id, round/date, venue, home_team, away_team, result (if completed)
+- **Loading Process**: Run `python load_schedules.py ALL` to import all schedules into database
+  - **NFL Only**: `python load_schedules.py NFL`
+  - **NHL Only**: `python load_schedules.py NHL`
+  - **Clears old data**: Automatically removes previous season data before importing
+  - **Yearly Update**: Run once per season to load new schedules
+- **Season Start Dates** (hardcoded in nhl_predictor.py):
+  - NFL: September 5, 2025
+  - NHL: October 7, 2025
+  - NBA: October 22, 2025
+  - MLB: March 27, 2025
+  - NCAAF: August 30, 2025
+  - NCAAB: November 4, 2025
 - **Benefits**: Isolated schedule management per sport while maintaining unified multi-sport platform
 - **Future**: Additional sports (NBA, MLB, NCAAF, NCAAB) will follow same pattern
 
