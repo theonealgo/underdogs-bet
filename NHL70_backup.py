@@ -661,7 +661,7 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                 {% for pred in predictions %}
                 <tr>
                     <td>{{ pred.game_date }}</td>
-                    <td><strong>{{ pred.away_team_id }} @ {{ pred.home_team_id }}</strong></td>
+                    <td><strong>{{ pred.home_team_id }}</strong> vs {{ pred.away_team_id }}</td>
                     <td class="model-pred">{{ pred.elo_prob }}%</td>
                     <td class="model-pred">{{ pred.xgb_prob }}%</td>
                     <td class="model-pred">{{ pred.cat_prob }}%</td>
