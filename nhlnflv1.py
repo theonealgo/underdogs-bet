@@ -446,9 +446,9 @@ def get_goalie_stats(team_name, use_advanced=True):
     
     if use_advanced:
         goalie = conn.execute('''
-            SELECT g.player_name, g.save_pct, g.goals_against_avg
+            SELECT g.goalie_name, g.save_pct, g.gaa
             FROM team_goalies tg
-            JOIN goalie_stats g ON tg.goalie_name = g.player_name
+            JOIN goalie_stats g ON tg.goalie_name = g.goalie_name
             WHERE tg.team_name = ?
         ''', (team_name,)).fetchone()
         
@@ -456,9 +456,9 @@ def get_goalie_stats(team_name, use_advanced=True):
         
         if goalie:
             return {
-                'name': goalie['player_name'],
+                'name': goalie['goalie_name'],
                 'save_pct': goalie['save_pct'],
-                'gaa': goalie['goals_against_avg']
+                'gaa': goalie['gaa']
             }
     
     return {
@@ -589,7 +589,7 @@ def load_nfl_games_for_training():
     return training_games
 
 def load_nfl_upcoming_games():
-    """Load upcoming NFL games for prediction"""
+    """Load NFL games for prediction - ENTIRE SEASON"""
     conn = get_db_connection()
     
     games = conn.execute('''
@@ -597,7 +597,6 @@ def load_nfl_upcoming_games():
         FROM games
         WHERE sport = 'NFL'
         ORDER BY game_date
-        LIMIT 200
     ''').fetchall()
     
     conn.close()
@@ -617,16 +616,30 @@ def load_nfl_upcoming_games():
     return game_list
 
 def load_nhl_games():
-    """Load NHL games for prediction"""
+    """Load NHL games for prediction - ENTIRE SEASON starting 07/10/2025"""
     conn = get_db_connection()
     
     games = conn.execute('''
         SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
         FROM games
         WHERE sport = 'NHL'
-        AND game_date >= '2025-10-07'
-        ORDER BY game_date
-        LIMIT 200
+        AND (
+            substr(game_date, 7, 4) > '2025'
+            OR (
+                substr(game_date, 7, 4) = '2025' 
+                AND (
+                    cast(substr(game_date, 4, 2) as integer) > 10
+                    OR (
+                        cast(substr(game_date, 4, 2) as integer) = 10
+                        AND cast(substr(game_date, 1, 2) as integer) >= 7
+                    )
+                )
+            )
+        )
+        ORDER BY 
+            substr(game_date, 7, 4),
+            cast(substr(game_date, 4, 2) as integer),
+            cast(substr(game_date, 1, 2) as integer)
     ''').fetchall()
     
     conn.close()
