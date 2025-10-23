@@ -31,7 +31,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python nhlnflv1.py"
+args = "python nhl_predictor.py"
 waitForPort = 5000
 
 [[ports]]
