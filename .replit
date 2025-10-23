@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "NHL Predictor"
+args = "NHL + NFL Predictor"
 
 [[workflows.workflow]]
-name = "NHL Predictor"
+name = "NHL + NFL Predictor"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python nhl_predictor.py"
+args = "python nhlnflv1.py"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
