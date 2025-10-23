@@ -26,6 +26,10 @@ DATABASE = 'sports_predictions.db'
 SPORTS = {
     'NHL': {'name': 'NHL', 'icon': '🏒', 'color': '#1e3a8a'},
     'NFL': {'name': 'NFL', 'icon': '🏈', 'color': '#059669'},
+    'NBA': {'name': 'NBA', 'icon': '🏀', 'color': '#dc2626'},
+    'MLB': {'name': 'MLB', 'icon': '⚾', 'color': '#9333ea'},
+    'NCAAF': {'name': 'NCAA Football', 'icon': '🏟️', 'color': '#ea580c'},
+    'NCAAB': {'name': 'NCAA Basketball', 'icon': '🎓', 'color': '#0891b2'},
 }
 
 # ============================================================================
