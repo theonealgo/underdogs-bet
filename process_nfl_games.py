@@ -7,45 +7,81 @@ from datetime import datetime
 import sys
 
 def parse_nfl_games(file_path):
-    """Parse the NFL games data file"""
+    """Parse the NFL games data file - format: Date Visitor VisScore Home HomeScore Box"""
     games = []
+    
+    # Team abbreviation mapping
+    team_map = {
+        'DAL': 'Dallas Cowboys', 'PHI': 'Philadelphia Eagles', 'KC': 'Kansas City Chiefs',
+        'LAC': 'Los Angeles Chargers', 'ARI': 'Arizona Cardinals', 'NO': 'New Orleans Saints',
+        'PIT': 'Pittsburgh Steelers', 'NYJ': 'New York Jets', 'MIA': 'Miami Dolphins',
+        'IND': 'Indianapolis Colts', 'TB': 'Tampa Bay Buccaneers', 'ATL': 'Atlanta Falcons',
+        'NYG': 'New York Giants', 'WAS': 'Washington Commanders', 'CAR': 'Carolina Panthers',
+        'JAX': 'Jacksonville Jaguars', 'CIN': 'Cincinnati Bengals', 'CLE': 'Cleveland Browns',
+        'LV': 'Las Vegas Raiders', 'NE': 'New England Patriots', 'SF': 'San Francisco 49ers',
+        'SEA': 'Seattle Seahawks', 'TEN': 'Tennessee Titans', 'DEN': 'Denver Broncos',
+        'HOU': 'Houston Texans', 'LA': 'Los Angeles Rams', 'DET': 'Detroit Lions',
+        'GB': 'Green Bay Packers', 'BAL': 'Baltimore Ravens', 'BUF': 'Buffalo Bills',
+        'MIN': 'Minnesota Vikings', 'CHI': 'Chicago Bears'
+    }
     
     with open(file_path, 'r') as f:
         for line in f:
+            # Skip header lines
+            if 'Week' in line or 'Date' in line or 'Visitor' in line:
+                continue
+                
             parts = line.strip().split('\t')
-            if len(parts) < 6:
+            if len(parts) < 5:
                 continue
             
             try:
+                # Format: Date Visitor VisScore Home HomeScore [OT] Box
                 date_str = parts[0].strip()
-                away_team = parts[1].strip()
-                home_team = parts[2].strip()
-                away_score = int(parts[3].strip()) if parts[3].strip() else None
-                home_score = int(parts[4].strip()) if parts[4].strip() else None
-                winner = parts[5].strip()
+                visitor_abbr = parts[1].strip()
+                visitor_score = int(parts[2].strip()) if parts[2].strip().isdigit() else None
+                home_abbr = parts[3].strip()
+                home_score = int(parts[4].strip()) if parts[4].strip().isdigit() else None
                 
-                # Parse date - format is DD/MM/YYYY
+                # Skip if we don't have scores
+                if visitor_score is None or home_score is None:
+                    continue
+                
+                # Convert abbreviations to full names
+                away_team = team_map.get(visitor_abbr, visitor_abbr)
+                home_team = team_map.get(home_abbr, home_abbr)
+                
+                # Parse date - format is MM/DD
                 date_parts = date_str.split('/')
-                if len(date_parts) == 3:
-                    day, month, year = date_parts
-                    game_date = datetime(int(year), int(month), int(day))
+                if len(date_parts) == 2:
+                    month, day = date_parts
+                    # Assume 2025 season
+                    game_date = datetime(2025, int(month), int(day))
+                    
+                    # Determine winner
+                    if home_score > visitor_score:
+                        winner = home_team
+                    elif visitor_score > home_score:
+                        winner = away_team
+                    else:
+                        winner = 'Tie'
                     
                     games.append({
                         'date': game_date,
-                        'date_str': date_str,
+                        'date_str': game_date.strftime('%d/%m/%Y'),
                         'away_team': away_team,
                         'home_team': home_team,
-                        'away_score': away_score,
+                        'away_score': visitor_score,
                         'home_score': home_score,
                         'winner': winner
                     })
             except Exception as e:
-                print(f"Error parsing line: {line[:50]}... - {e}")
                 continue
     
     df = pd.DataFrame(games)
     print(f"Parsed {len(df)} NFL games")
-    print(f"Date range: {df['date'].min()} to {df['date'].max()}")
+    if len(df) > 0:
+        print(f"Date range: {df['date'].min()} to {df['date'].max()}")
     return df
 
 def update_database_scores(games_df):
@@ -202,8 +238,8 @@ def run_nfl_models(games_df):
     return pred_df
 
 if __name__ == '__main__':
-    # Parse the NFL games data
-    games_df = parse_nfl_games('attached_assets/Pasted-04-09-2025-Dallas-Cowboys-Philadelphia-Eagles-20-24-Philadelphia-Eagles-Philadelphia-Eagles-80-10-7-1761182347526_1761182347527.txt')
+    # Parse the NFL games data - use the new clearer format file
+    games_df = parse_nfl_games('attached_assets/Pasted-Week-1-Date-Visitor-Home-Box-09-04-DAL-20-PHI-24-Box-09-05-KC-21-LAC-27-Box-09-07-ARI-20-NO-13--1761182874333_1761182874333.txt')
     
     # Update database with scores
     # update_database_scores(games_df)
