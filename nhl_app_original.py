@@ -255,8 +255,21 @@ def calculate_model_performance(sport):
     df = df.dropna(subset=['date_parsed'])
     
     # TEST ON ALL COMPLETED GAMES FROM SEASON START (no train/test split)
-    # User wants to see results for ALL games starting from season start
-    testing_df = df
+    # Constrain to season start to prevent prior-season data contamination
+    from datetime import datetime
+    season_starts = {
+        'NHL': datetime(2025, 10, 7),
+        'NFL': datetime(2025, 9, 5),
+        'NBA': datetime(2025, 10, 22),
+        'MLB': datetime(2025, 3, 27),
+        'NCAAF': datetime(2025, 8, 30),
+        'NCAAB': datetime(2025, 11, 4)
+    }
+    season_start = season_starts.get(sport, df['date_parsed'].min())
+    testing_df = df[df['date_parsed'] >= season_start].copy()
+    
+    # CRITICAL: Sort by date_parsed to preserve chronological Elo updates
+    testing_df = testing_df.sort_values('date_parsed').reset_index(drop=True)
     
     if len(testing_df) == 0:
         return None
