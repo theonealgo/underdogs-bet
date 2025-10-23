@@ -593,14 +593,30 @@ def load_nfl_games_for_training():
     return training_games
 
 def load_nfl_upcoming_games():
-    """Load NFL games for prediction - ENTIRE SEASON"""
+    """Load NFL games for prediction - 2025 SEASON starting 05/09/2025"""
     conn = get_db_connection()
     
     games = conn.execute('''
         SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
         FROM games
         WHERE sport = 'NFL'
-        ORDER BY game_date
+        AND (
+            substr(game_date, 7, 4) > '2025'
+            OR (
+                substr(game_date, 7, 4) = '2025' 
+                AND (
+                    cast(substr(game_date, 4, 2) as integer) > 9
+                    OR (
+                        cast(substr(game_date, 4, 2) as integer) = 9
+                        AND cast(substr(game_date, 1, 2) as integer) >= 5
+                    )
+                )
+            )
+        )
+        ORDER BY 
+            substr(game_date, 7, 4),
+            cast(substr(game_date, 4, 2) as integer),
+            cast(substr(game_date, 1, 2) as integer)
     ''').fetchall()
     
     conn.close()
