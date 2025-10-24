@@ -138,7 +138,7 @@ def get_all_predictions():
     return predictions
 
 def calculate_model_performance():
-    """Calculate performance using STORED predictions from database"""
+    """Calculate performance using STORED predictions from database - 2025 SEASON ONLY"""
     
     conn = get_db_connection()
     results_data = conn.execute('''
@@ -159,6 +159,7 @@ def calculate_model_performance():
             g.home_team_id = p.home_team_id AND
             g.away_team_id = p.away_team_id
         WHERE g.sport = 'NFL' 
+            AND g.season = 2025
             AND g.home_score IS NOT NULL
         ORDER BY g.game_date ASC
     ''').fetchall()
