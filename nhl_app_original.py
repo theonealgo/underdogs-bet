@@ -266,16 +266,13 @@ def calculate_model_performance(sport):
     df = pd.DataFrame(games_list)
     df['date_parsed'] = df['game_date'].apply(parse_date)
     df = df.dropna(subset=['date_parsed'])
+    df = df.sort_values('date_parsed')
     
-    # Split training/testing (70% train, 30% test)
-    training_cutoff = df['date_parsed'].quantile(0.7)
-    training_df = df[df['date_parsed'] < training_cutoff]
-    testing_df = df[df['date_parsed'] >= training_cutoff]
+    # TEST ON ALL COMPLETED GAMES FROM SEASON START (no train/test split)
+    # Use incremental Elo training - update ratings as we go through games chronologically
+    testing_df = df
     
-    if len(testing_df) == 0:
-        return None
-    
-    # Train simple Elo system on training data
+    # Incremental Elo system - start fresh and update as we test each game
     elo_ratings = {}
     K_FACTORS = {'NHL': 22, 'NFL': 35, 'NBA': 18, 'MLB': 14, 'NCAAF': 30, 'NCAAB': 25}
     k_factor = K_FACTORS.get(sport, 20)
@@ -285,17 +282,6 @@ def calculate_model_performance(sport):
     
     def expected_score(rating_a, rating_b):
         return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
-    
-    # Train Elo on training set
-    for _, game in training_df.iterrows():
-        home_rating = get_elo(game['home_team_id'])
-        away_rating = get_elo(game['away_team_id'])
-        
-        expected_home = expected_score(home_rating, away_rating)
-        actual_home = 1 if game['home_score'] > game['away_score'] else 0
-        
-        elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
-        elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
     # Test all models on test set
     results = {
@@ -308,7 +294,7 @@ def calculate_model_performance(sport):
     for _, game in testing_df.iterrows():
         actual_winner = 'home' if game['home_score'] > game['away_score'] else 'away'
         
-        # Elo prediction
+        # Make predictions BEFORE updating Elo (using current ratings)
         home_rating = get_elo(game['home_team_id'])
         away_rating = get_elo(game['away_team_id'])
         elo_prob = expected_score(home_rating, away_rating)
@@ -339,6 +325,12 @@ def calculate_model_performance(sport):
             results['catboost']['correct'] += 1
         if ensemble_pred == actual_winner:
             results['ensemble']['correct'] += 1
+        
+        # Update Elo AFTER making prediction (incremental learning)
+        expected_home = expected_score(home_rating, away_rating)
+        actual_home = 1 if game['home_score'] > game['away_score'] else 0
+        elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
+        elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
     
     # Calculate accuracies
     performance = {}
