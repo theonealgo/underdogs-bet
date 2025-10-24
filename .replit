@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "NHL70"
+args = "NHL70 Backup"
 
 [[workflows.workflow]]
-name = "NHL70"
+name = "NHL70 Backup"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python NHL70.py"
+args = "python NHL70_backup.py"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
