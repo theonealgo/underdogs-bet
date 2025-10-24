@@ -233,43 +233,38 @@ def get_upcoming_predictions(sport, days=365):
     return predictions
 
 def calculate_model_performance(sport):
-    """Calculate performance for all 4 models - TEST ON ALL COMPLETED GAMES"""
+    """Calculate performance using STORED predictions from database"""
     conn = get_db_connection()
     
-    # Get completed games
-    games = conn.execute('''
-        SELECT * FROM games 
-        WHERE sport = ? AND home_score IS NOT NULL
-        ORDER BY game_date ASC
+    # Get completed games WITH their stored predictions
+    results_data = conn.execute('''
+        SELECT 
+            g.game_date,
+            g.home_team_id,
+            g.away_team_id,
+            g.home_score,
+            g.away_score,
+            p.elo_home_prob,
+            p.xgboost_home_prob,
+            p.logistic_home_prob,
+            p.win_probability as ensemble_prob
+        FROM games g
+        LEFT JOIN predictions p ON 
+            g.sport = p.sport AND
+            g.game_date = p.game_date AND
+            g.home_team_id = p.home_team_id AND
+            g.away_team_id = p.away_team_id
+        WHERE g.sport = ? 
+            AND g.home_score IS NOT NULL
+        ORDER BY g.game_date ASC
     ''', (sport,)).fetchall()
     
     conn.close()
     
-    if len(games) == 0:
+    if len(results_data) == 0:
         return None
     
-    # Parse games into DataFrame
-    games_list = [dict(game) for game in games]
-    df = pd.DataFrame(games_list)
-    df['date_parsed'] = df['game_date'].apply(parse_date)
-    df = df.dropna(subset=['date_parsed'])
-    df = df.sort_values('date_parsed')
-    
-    # TEST ON ALL COMPLETED GAMES (no train/test split - incremental Elo)
-    testing_df = df
-    
-    # Incremental Elo - start fresh, update as we test each game
-    elo_ratings = {}
-    K_FACTORS = {'NHL': 22, 'NFL': 35, 'NBA': 18, 'MLB': 14, 'NCAAF': 30, 'NCAAB': 25}
-    k_factor = K_FACTORS.get(sport, 20)
-    
-    def get_elo(team):
-        return elo_ratings.get(team, 1500)
-    
-    def expected_score(rating_a, rating_b):
-        return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
-    
-    # Test all models on test set
+    # Calculate accuracy from stored predictions
     results = {
         'elo': {'correct': 0, 'total': 0},
         'xgboost': {'correct': 0, 'total': 0},
@@ -277,63 +272,68 @@ def calculate_model_performance(sport):
         'ensemble': {'correct': 0, 'total': 0}
     }
     
-    for _, game in testing_df.iterrows():
-        actual_winner = 'home' if game['home_score'] > game['away_score'] else 'away'
+    dates = []
+    
+    for row in results_data:
+        # Actual winner
+        actual_winner = 'home' if row[4] > row[3] else 'away'
         
-        # Make predictions BEFORE updating Elo (using current ratings)
-        home_rating = get_elo(game['home_team_id'])
-        away_rating = get_elo(game['away_team_id'])
-        elo_prob = expected_score(home_rating, away_rating)
-        elo_pred = 'home' if elo_prob > 0.5 else 'away'
+        # Only count if we have stored predictions
+        if row[5] is not None:
+            # Elo prediction
+            elo_winner = 'home' if row[5] > 0.5 else 'away'
+            results['elo']['total'] += 1
+            if elo_winner == actual_winner:
+                results['elo']['correct'] += 1
+            
+            # XGBoost prediction  
+            if row[6] is not None:
+                xgb_winner = 'home' if row[6] > 0.5 else 'away'
+                results['xgboost']['total'] += 1
+                if xgb_winner == actual_winner:
+                    results['xgboost']['correct'] += 1
+            
+            # Logistic/CatBoost prediction
+            if row[7] is not None:
+                cat_winner = 'home' if row[7] > 0.5 else 'away'
+                results['catboost']['total'] += 1
+                if cat_winner == actual_winner:
+                    results['catboost']['correct'] += 1
+            
+            # Ensemble prediction
+            if row[8] is not None:
+                ens_winner = 'home' if row[8] > 0.5 else 'away'
+                results['ensemble']['total'] += 1
+                if ens_winner == actual_winner:
+                    results['ensemble']['correct'] += 1
         
-        # ML models (simple baseline: favor team with higher Elo + home advantage)
-        xgb_prob = min(0.95, elo_prob * 1.05)  # Slight home boost
-        cat_prob = min(0.95, elo_prob * 1.03)  # Slight home boost
-        
-        xgb_pred = 'home' if xgb_prob > 0.5 else 'away'
-        cat_pred = 'home' if cat_prob > 0.5 else 'away'
-        
-        # Ensemble (weighted combination)
-        ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
-        ensemble_pred = 'home' if ensemble_prob > 0.5 else 'away'
-        
-        # Record results
-        results['elo']['total'] += 1
-        results['xgboost']['total'] += 1
-        results['catboost']['total'] += 1
-        results['ensemble']['total'] += 1
-        
-        if elo_pred == actual_winner:
-            results['elo']['correct'] += 1
-        if xgb_pred == actual_winner:
-            results['xgboost']['correct'] += 1
-        if cat_pred == actual_winner:
-            results['catboost']['correct'] += 1
-        if ensemble_pred == actual_winner:
-            results['ensemble']['correct'] += 1
-        
-        # Update Elo AFTER making prediction (incremental learning)
-        expected_home = expected_score(home_rating, away_rating)
-        actual_home = 1 if game['home_score'] > game['away_score'] else 0
-        elo_ratings[game['home_team_id']] = home_rating + k_factor * (actual_home - expected_home)
-        elo_ratings[game['away_team_id']] = away_rating + k_factor * ((1-actual_home) - (1-expected_home))
+        # Track dates
+        dates.append(parse_date(row[0]))
     
     # Calculate accuracies
     performance = {}
     for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
-        acc = (results[model]['correct'] / results[model]['total'] * 100) if results[model]['total'] > 0 else 0
-        performance[model] = {
-            'accuracy': round(acc, 1),
-            'correct': results[model]['correct'],
-            'total': results[model]['total']
-        }
+        total = results[model]['total']
+        if total > 0:
+            acc = (results[model]['correct'] / total * 100)
+            performance[model] = {
+                'accuracy': round(acc, 1),
+                'correct': results[model]['correct'],
+                'total': total
+            }
+        else:
+            performance[model] = {'accuracy': 0.0, 'correct': 0, 'total': 0}
     
     # Date range
-    min_date = testing_df['date_parsed'].min().strftime('%d/%m/%Y')
-    max_date = testing_df['date_parsed'].max().strftime('%d/%m/%Y')
+    valid_dates = [d for d in dates if d is not None]
+    if valid_dates:
+        min_date = min(valid_dates).strftime('%d/%m/%Y')
+        max_date = max(valid_dates).strftime('%d/%m/%Y')
+        performance['date_range'] = f"{min_date} - {max_date}"
+    else:
+        performance['date_range'] = "N/A"
     
-    performance['date_range'] = f"{min_date} - {max_date}"
-    performance['total_games'] = len(testing_df)
+    performance['total_games'] = len(results_data)
     
     return performance
 
