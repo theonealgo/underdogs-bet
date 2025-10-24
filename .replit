@@ -20,15 +20,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Original NHL App"
+args = "NHL70"
 
 [[workflows.workflow]]
-name = "Original NHL App"
+name = "NHL70"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python nhl_app_original.py"
+args = "python NHL70.py"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
