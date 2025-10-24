@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import logging
+from nhlschedules import get_nhl_2025_schedule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,30 +92,59 @@ def get_sport_summary(sport):
 def get_upcoming_predictions(sport, days=365):
     """Get ALL game predictions from season start - both completed and upcoming
     
-    CRITICAL FIX: SQL sorts dates as STRINGS (01/01/2026 < 07/10/2025 alphabetically!)
-    We must parse and sort dates in Python, not SQL.
+    FOR NHL: Loads games from nhlschedules.py
+    FOR OTHER SPORTS: Loads from database
     
     USER REQUIREMENT: Show ALL games from season start (Oct 7 for NHL), not just upcoming!
     """
-    conn = get_db_connection()
     
-    # Get ALL games (completed AND upcoming) with enhanced data
-    all_games_raw = conn.execute('''
-        SELECT g.*, 
-               gg.home_goalie, gg.away_goalie,
-               gg.home_goalie_save_pct, gg.away_goalie_save_pct,
-               gg.home_goalie_gaa, gg.away_goalie_gaa,
-               bo.home_moneyline, bo.away_moneyline,
-               bo.spread, bo.total,
-               bo.home_implied_prob, bo.away_implied_prob,
-               bo.num_bookmakers
-        FROM games g
-        LEFT JOIN game_goalies gg ON g.id = gg.game_id
-        LEFT JOIN betting_odds bo ON g.id = bo.game_id
-        WHERE g.sport = ?
-    ''', (sport,)).fetchall()
-    
-    conn.close()
+    # FOR NHL: Load from nhlschedules.py
+    if sport == 'NHL':
+        nhl_schedule = get_nhl_2025_schedule()
+        all_games_raw = []
+        for game in nhl_schedule:
+            # Convert nhlschedules.py format to database format
+            game_dict = {
+                'sport': 'NHL',
+                'game_date': game['date'],
+                'home_team_id': game['home_team'],
+                'away_team_id': game['away_team'],
+                'home_score': game.get('home_score'),
+                'away_score': game.get('away_score'),
+                'home_goalie': None,
+                'away_goalie': None,
+                'home_goalie_save_pct': None,
+                'away_goalie_save_pct': None,
+                'home_goalie_gaa': None,
+                'away_goalie_gaa': None,
+                'home_moneyline': None,
+                'away_moneyline': None,
+                'spread': None,
+                'total': None,
+                'home_implied_prob': None,
+                'away_implied_prob': None,
+                'num_bookmakers': None
+            }
+            all_games_raw.append(game_dict)
+    else:
+        # FOR OTHER SPORTS: Load from database
+        conn = get_db_connection()
+        all_games_raw = conn.execute('''
+            SELECT g.*, 
+                   gg.home_goalie, gg.away_goalie,
+                   gg.home_goalie_save_pct, gg.away_goalie_save_pct,
+                   gg.home_goalie_gaa, gg.away_goalie_gaa,
+                   bo.home_moneyline, bo.away_moneyline,
+                   bo.spread, bo.total,
+                   bo.home_implied_prob, bo.away_implied_prob,
+                   bo.num_bookmakers
+            FROM games g
+            LEFT JOIN game_goalies gg ON g.id = gg.game_id
+            LEFT JOIN betting_odds bo ON g.id = bo.game_id
+            WHERE g.sport = ?
+        ''', (sport,)).fetchall()
+        all_games_raw = [dict(g) for g in all_games_raw]
+        conn.close()
     
     # PARSE AND SORT ALL games by actual date
     all_games_with_dates = []
@@ -125,7 +155,7 @@ def get_upcoming_predictions(sport, days=365):
     all_games_with_dates.sort(key=lambda x: x[0])  # Sort by parsed date
     
     # Split into completed (for Elo training) and all (for predictions)
-    completed_games = [g for d, g in all_games_with_dates if g['home_score'] is not None]
+    completed_games = [g for d, g in all_games_with_dates if g.get('home_score') is not None]
     
     # Train Elo system on all completed games (with home/away splits tracking)
     elo_ratings = {}
@@ -233,33 +263,68 @@ def get_upcoming_predictions(sport, days=365):
     return predictions
 
 def calculate_model_performance(sport):
-    """Calculate performance using STORED predictions from database"""
-    conn = get_db_connection()
+    """Calculate performance using STORED predictions from database
     
-    # Get completed games WITH their stored predictions
-    results_data = conn.execute('''
-        SELECT 
-            g.game_date,
-            g.home_team_id,
-            g.away_team_id,
-            g.home_score,
-            g.away_score,
-            p.elo_home_prob,
-            p.xgboost_home_prob,
-            p.logistic_home_prob,
-            p.win_probability as ensemble_prob
-        FROM games g
-        LEFT JOIN predictions p ON 
-            g.sport = p.sport AND
-            g.game_date = p.game_date AND
-            g.home_team_id = p.home_team_id AND
-            g.away_team_id = p.away_team_id
-        WHERE g.sport = ? 
-            AND g.home_score IS NOT NULL
-        ORDER BY g.game_date ASC
-    ''', (sport,)).fetchall()
+    FOR NHL: Loads completed games from nhlschedules.py, matches with stored predictions
+    FOR OTHER SPORTS: Loads from database
+    """
     
-    conn.close()
+    # FOR NHL: Get completed games from nhlschedules.py
+    if sport == 'NHL':
+        nhl_schedule = get_nhl_2025_schedule()
+        completed_nhl = [g for g in nhl_schedule if g.get('home_score') is not None]
+        
+        # Get stored predictions from database
+        conn = get_db_connection()
+        results_data = []
+        for game in completed_nhl:
+            pred_row = conn.execute('''
+                SELECT elo_home_prob, xgboost_home_prob, logistic_home_prob, win_probability
+                FROM predictions
+                WHERE sport = 'NHL'
+                  AND game_date = ?
+                  AND home_team_id = ?
+                  AND away_team_id = ?
+            ''', (game['date'], game['home_team'], game['away_team'])).fetchone()
+            
+            if pred_row:
+                results_data.append((
+                    game['date'],
+                    game['home_team'],
+                    game['away_team'],
+                    game['away_score'],
+                    game['home_score'],
+                    pred_row[0],
+                    pred_row[1],
+                    pred_row[2],
+                    pred_row[3]
+                ))
+        conn.close()
+    else:
+        # FOR OTHER SPORTS: Get from database
+        conn = get_db_connection()
+        results_data = conn.execute('''
+            SELECT 
+                g.game_date,
+                g.home_team_id,
+                g.away_team_id,
+                g.away_score,
+                g.home_score,
+                p.elo_home_prob,
+                p.xgboost_home_prob,
+                p.logistic_home_prob,
+                p.win_probability as ensemble_prob
+            FROM games g
+            LEFT JOIN predictions p ON 
+                g.sport = p.sport AND
+                g.game_date = p.game_date AND
+                g.home_team_id = p.home_team_id AND
+                g.away_team_id = p.away_team_id
+            WHERE g.sport = ? 
+                AND g.home_score IS NOT NULL
+            ORDER BY g.game_date ASC
+        ''', (sport,)).fetchall()
+        conn.close()
     
     if len(results_data) == 0:
         return None
