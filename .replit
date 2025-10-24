@@ -24,7 +24,7 @@ args = "NHL70 Backup"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "NFL72 App"
+args = "NFL 2025"
 
 [[workflows.workflow]]
 name = "NHL70 Backup"
@@ -39,15 +39,16 @@ waitForPort = 5000
 outputType = "webview"
 
 [[workflows.workflow]]
-name = "NFL72 App"
+name = "NFL 2025"
 author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python NFL72FINAL.py"
+args = "python NFL_2025.py"
+waitForPort = 5001
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [[ports]]
 localPort = 5000
