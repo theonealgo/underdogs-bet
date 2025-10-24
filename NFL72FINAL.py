@@ -591,6 +591,6 @@ if __name__ == '__main__':
     print("📊 2024 Season Analysis")
     print("🎯 Elo: 72.0% | XGBoost: 53.9% | Ensemble: 67.4%")
     print("\n✓ Platform ready!")
-    print("🌐 Visit http://0.0.0.0:5000\n")
+    print("🌐 Visit http://0.0.0.0:5001\n")
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5001)
