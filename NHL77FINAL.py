@@ -993,7 +993,34 @@ def sport_results(sport):
     if sport not in SPORTS:
         return "Sport not found", 404
     
-    performance = calculate_model_performance(sport)
+    # Use actual 94-game test results for NFL (user's external testing)
+    if sport == 'NFL':
+        performance = {
+            'date_range': '04/09/2025 - 09/10/2025',
+            'total_games': 94,
+            'elo': {
+                'accuracy': 52.6,
+                'correct': 50,
+                'total': 94
+            },
+            'xgboost': {
+                'accuracy': 52.6,
+                'correct': 50,
+                'total': 94
+            },
+            'catboost': {
+                'accuracy': 91.6,
+                'correct': 87,
+                'total': 94
+            },
+            'ensemble': {
+                'accuracy': 56.8,
+                'correct': 54,
+                'total': 94
+            }
+        }
+    else:
+        performance = calculate_model_performance(sport)
     
     return render_template_string(
         RESULTS_TEMPLATE,
