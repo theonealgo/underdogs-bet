@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Restore NFL Predictions for 94 Games
+Generate NFL Predictions for Full 2025 Season (272 Games)
 """
 
 import sqlite3
@@ -9,7 +9,7 @@ import random
 DATABASE = 'sports_predictions_original.db'
 
 def generate_nfl_predictions():
-    """Generate predictions for all 94 NFL games"""
+    """Generate predictions for all NFL 2025 season games"""
     
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()

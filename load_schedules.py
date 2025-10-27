@@ -12,7 +12,7 @@ import sqlite3
 import sys
 from datetime import datetime
 
-DATABASE = 'sports_predictions.db'
+DATABASE = 'sports_predictions_original.db'
 
 def load_nfl_schedule():
     """Load NFL schedule from schedules/nfl_schedule.py"""
