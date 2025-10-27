@@ -22,14 +22,6 @@ author = "agent"
 task = "workflow.run"
 args = "NHL77 App"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "NFL72 App"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Dashboard"
-
 [[workflows.workflow]]
 name = "NHL77 App"
 author = "agent"
@@ -37,28 +29,7 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python NHL77FINAL.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow]]
-name = "NFL72 App"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python NFL72FINAL.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow]]
-name = "Dashboard"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python dashboard.py"
+waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
