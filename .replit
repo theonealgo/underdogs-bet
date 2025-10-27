@@ -42,13 +42,13 @@ outputType = "webview"
 name = "NFL72 App"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python NFL72FINAL.py"
-waitForPort = 5001
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python NFL_2025.py"
+waitForPort = 5001
 
 [[ports]]
 localPort = 5000
