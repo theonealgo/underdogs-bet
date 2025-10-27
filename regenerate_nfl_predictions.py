@@ -35,22 +35,22 @@ def get_team_elo(team_name, elo_ratings):
     """Get Elo rating for a team, default to 1500"""
     return elo_ratings.get(team_name, 1500)
 
-def calculate_elo_probability(home_team, away_team, elo_ratings, home_advantage=65):
+def calculate_elo_probability(home_team, away_team, elo_ratings, home_advantage=85):
     """Calculate Elo-based win probability"""
     home_elo = get_team_elo(home_team, elo_ratings)
     away_elo = get_team_elo(away_team, elo_ratings)
     
-    # Elo formula with home advantage
+    # Elo formula with home advantage (increased to 85 for better accuracy)
     expected_home = 1 / (1 + 10**((away_elo - home_elo - home_advantage) / 400))
     return expected_home
 
-def update_elo_ratings(home_team, away_team, home_score, away_score, elo_ratings, k_factor=32):
+def update_elo_ratings(home_team, away_team, home_score, away_score, elo_ratings, k_factor=40):
     """Update Elo ratings based on game result"""
     home_elo = get_team_elo(home_team, elo_ratings)
     away_elo = get_team_elo(away_team, elo_ratings)
     
-    # Expected scores
-    home_expected = 1 / (1 + 10**((away_elo - home_elo - 65) / 400))
+    # Expected scores (using same home advantage as prediction)
+    home_expected = 1 / (1 + 10**((away_elo - home_elo - 85) / 400))
     
     # Actual result
     if home_score > away_score:
@@ -60,11 +60,11 @@ def update_elo_ratings(home_team, away_team, home_score, away_score, elo_ratings
     else:
         home_actual = 0.5
     
-    # Margin adjustment
+    # Margin adjustment (more aggressive)
     margin = abs(home_score - away_score)
-    margin_multiplier = np.log(max(margin, 1) + 1) / 2.2
+    margin_multiplier = np.log(max(margin, 1) + 1) / 1.8
     
-    # Update ratings
+    # Update ratings with higher K-factor for faster adaptation
     elo_ratings[home_team] = home_elo + k_factor * margin_multiplier * (home_actual - home_expected)
     elo_ratings[away_team] = away_elo + k_factor * margin_multiplier * ((1 - home_actual) - (1 - home_expected))
 
