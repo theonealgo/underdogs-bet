@@ -609,6 +609,8 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
         border-radius: 15px;
         padding: 25px;
         overflow-x: auto;
+        max-height: 800px;
+        overflow-y: auto;
     }
     table {
         width: 100%;
@@ -620,6 +622,9 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
         text-align: left;
         font-weight: 600;
         border-bottom: 2px solid #fbbf24;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
     td {
         padding: 15px;
