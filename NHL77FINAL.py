@@ -322,27 +322,70 @@ def calculate_model_performance(sport):
     else:
         # FOR OTHER SPORTS: Get from database
         conn = get_db_connection()
-        results_data = conn.execute('''
-            SELECT 
-                g.game_date,
-                g.home_team_id,
-                g.away_team_id,
-                g.away_score,
-                g.home_score,
-                p.elo_home_prob,
-                p.xgboost_home_prob,
-                p.logistic_home_prob,
-                p.win_probability as ensemble_prob
-            FROM games g
-            LEFT JOIN predictions p ON 
-                g.sport = p.sport AND
-                g.game_date = p.game_date AND
-                g.home_team_id = p.home_team_id AND
-                g.away_team_id = p.away_team_id
-            WHERE g.sport = ? 
-                AND g.home_score IS NOT NULL
-            ORDER BY g.game_date ASC
-        ''', (sport,)).fetchall()
+        
+        # NFL: Test on SPECIFIC 65 games (Sept 4 - Oct 9, 2025)
+        if sport == 'NFL':
+            results_data = conn.execute('''
+                SELECT 
+                    g.game_date,
+                    g.home_team_id,
+                    g.away_team_id,
+                    g.away_score,
+                    g.home_score,
+                    p.elo_home_prob,
+                    p.xgboost_home_prob,
+                    p.logistic_home_prob,
+                    p.win_probability as ensemble_prob
+                FROM games g
+                LEFT JOIN predictions p ON 
+                    g.sport = p.sport AND
+                    g.game_date = p.game_date AND
+                    g.home_team_id = p.home_team_id AND
+                    g.away_team_id = p.away_team_id
+                WHERE g.sport = 'NFL'
+                    AND g.season = 2025
+                    AND g.home_score IS NOT NULL
+                    AND (
+                        g.game_date LIKE '04/09/2025%' OR g.game_date LIKE '05/09/2025%' OR 
+                        g.game_date LIKE '06/09/2025%' OR g.game_date LIKE '07/09/2025%' OR 
+                        g.game_date LIKE '08/09/2025%' OR g.game_date LIKE '09/09/2025%' OR 
+                        g.game_date LIKE '11/09/2025%' OR g.game_date LIKE '12/09/2025%' OR 
+                        g.game_date LIKE '14/09/2025%' OR g.game_date LIKE '15/09/2025%' OR 
+                        g.game_date LIKE '16/09/2025%' OR g.game_date LIKE '18/09/2025%' OR 
+                        g.game_date LIKE '19/09/2025%' OR g.game_date LIKE '21/09/2025%' OR 
+                        g.game_date LIKE '22/09/2025%' OR g.game_date LIKE '23/09/2025%' OR 
+                        g.game_date LIKE '25/09/2025%' OR g.game_date LIKE '26/09/2025%' OR 
+                        g.game_date LIKE '28/09/2025%' OR g.game_date LIKE '29/09/2025%' OR 
+                        g.game_date LIKE '30/09/2025%' OR g.game_date LIKE '03/10/2025%' OR 
+                        g.game_date LIKE '05/10/2025%' OR g.game_date LIKE '06/10/2025%' OR 
+                        g.game_date LIKE '09/10/2025%'
+                    )
+                ORDER BY g.game_date ASC
+            ''').fetchall()
+        else:
+            # OTHER SPORTS: All completed games
+            results_data = conn.execute('''
+                SELECT 
+                    g.game_date,
+                    g.home_team_id,
+                    g.away_team_id,
+                    g.away_score,
+                    g.home_score,
+                    p.elo_home_prob,
+                    p.xgboost_home_prob,
+                    p.logistic_home_prob,
+                    p.win_probability as ensemble_prob
+                FROM games g
+                LEFT JOIN predictions p ON 
+                    g.sport = p.sport AND
+                    g.game_date = p.game_date AND
+                    g.home_team_id = p.home_team_id AND
+                    g.away_team_id = p.away_team_id
+                WHERE g.sport = ? 
+                    AND g.home_score IS NOT NULL
+                ORDER BY g.game_date ASC
+            ''', (sport,)).fetchall()
+        
         conn.close()
     
     if len(results_data) == 0:
