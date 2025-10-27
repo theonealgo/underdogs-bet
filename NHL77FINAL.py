@@ -829,6 +829,10 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
 
 def get_landing_accuracy(sport):
     """Get ensemble accuracy for landing page display"""
+    # Use 94-game test results for NFL
+    if sport == 'NFL':
+        return 56.8
+    
     try:
         performance = calculate_model_performance(sport)
         if performance and 'ensemble' in performance:
@@ -836,7 +840,7 @@ def get_landing_accuracy(sport):
     except:
         pass
     # Fallback to known values if calculation fails
-    return {'NHL': 77.0, 'NFL': 84.0}.get(sport, 0.0)
+    return {'NHL': 77.0, 'NFL': 56.8}.get(sport, 0.0)
 
 @app.route('/')
 def landing_page():
@@ -967,7 +971,7 @@ def landing_page():
     </div>
 </body>
 </html>
-    """)
+    """, nhl_accuracy=nhl_accuracy, nfl_accuracy=nfl_accuracy)
 
 @app.route('/sport/<sport>')
 def sport_home(sport):
