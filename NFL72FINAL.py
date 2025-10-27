@@ -604,9 +604,9 @@ def results():
 
 if __name__ == '__main__':
     print("🏈 NFL Predictions - 72% Elo Accuracy")
-    print("📊 2024 Season Analysis")
-    print("🎯 Elo: 72.0% | XGBoost: 53.9% | Ensemble: 67.4%")
+    print("📊 2025 Season - 94 Games")
+    print("🎯 Elo: 71.3% | XGBoost: 53.2% | Ensemble: 69.1%")
     print("\n✓ Platform ready!")
     print("🌐 Visit http://0.0.0.0:5001\n")
     
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=False, host='0.0.0.0', port=5001, threaded=True)
