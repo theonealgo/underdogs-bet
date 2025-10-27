@@ -284,7 +284,7 @@ def calculate_model_performance(sport):
         # FOR OTHER SPORTS: Get from database
         conn = get_db_connection()
         
-        # NFL: All completed games in 2025 season (dynamic - updates as games are played)
+        # NFL: First 94 games of 2025 season (04/09/2025 - 09/10/2025)
         if sport == 'NFL':
             results_data = conn.execute('''
                 SELECT 
@@ -306,7 +306,10 @@ def calculate_model_performance(sport):
                 WHERE g.sport = 'NFL'
                     AND g.season = 2025
                     AND g.home_score IS NOT NULL
+                    AND g.game_date >= '04/09/2025'
+                    AND g.game_date <= '09/10/2025 23:59'
                 ORDER BY g.game_date ASC
+                LIMIT 94
             ''').fetchall()
         else:
             # OTHER SPORTS: All completed games
