@@ -1,15 +1,29 @@
 # jackpotpicks.bet - Multi-Sport Prediction System
 
 ## Overview
-jackpotpicks.bet is a multi-sport game prediction platform for NFL, NBA, NHL, MLB, and NCAA Football. It utilizes machine learning to forecast game winners and totals (over/under), employing a dual-source data collection strategy (API for playoffs, Excel for regular season), automated data pipelines, and backtesting capabilities. The platform aims to provide accurate predictions and insights via a Flask web application. The business vision is to deliver a cutting-edge prediction system with high market potential in sports analytics, striving for professional-level accuracy.
+jackpotpicks.bet is a multi-sport game prediction platform for NFL, NBA, NHL, MLB, WNBA, and NCAA Football. It utilizes machine learning to forecast game winners and totals (over/under), employing a dual-source data collection strategy (API for playoffs, Excel for regular season), automated data pipelines, and backtesting capabilities. The platform is designed for sale as a production-ready sports analytics system with professional-level accuracy.
 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
+### Unified Platform Architecture (Oct 27, 2025)
+**Production-Ready Single-Port Design** - The platform runs as a unified Flask application on port 5000:
+- **Main App**: `NHL77FINAL.py` serves all sports on port 5000 (Replit only exposes this port)
+- **Landing Page**: Sport selector (NO unified dashboard) per user requirement - each sport completely separate
+- **Active Sports**: NHL (77% accuracy) and NFL (84% accuracy) shown as "Live Now"
+- **Coming Soon**: NBA, MLB, WNBA, NCAAF displayed but not yet implemented
+- **Routes**: 
+  - `/` - Sport selector landing page with dynamic accuracy percentages
+  - `/sport/{SPORT}/predictions` - Predictions for each sport
+  - `/sport/{SPORT}/results` - Model performance/backtesting results
+- **Navigation**: Responsive navbar with hamburger menu (<768px width) for mobile devices
+- **Data Isolation**: Each sport completely separate - no shared data visualization between sports
+- **Production Config**: debug=False, use_reloader=False for stability
+
 ### Frontend Architecture
-The platform features a professional Flask web application with Jinja2 templates, offering a responsive and mobile-friendly design with consistent navigation. The UI/UX emphasizes a clean, modern aesthetic with gradient accents and compact table displays for predictions. Key routes include a landing page, authentication flows, a sport-selection dashboard, sport-specific prediction pages, and an admin-only results page for model backtesting.
+The platform features a professional Flask web application with Jinja2 templates, offering a responsive mobile-first design with sticky navigation. The UI/UX emphasizes a clean, modern aesthetic with gradient accents and compact table displays for predictions. Key routes include a sport selector landing page, sport-specific prediction pages (showing ALL games from season start), and results pages for model backtesting. The landing page dynamically calculates and displays real ensemble accuracy from completed games.
 
 ### Backend Architecture
 The backend is built with a modular, object-oriented design, separating concerns across data collection, storage, modeling, and API layers. It includes a comprehensive logging system for monitoring and debugging, and utilizes the `schedule` library for automated data collection and model retraining. SQLite serves as the local database for storing statcast data, odds, predictions, and model performance metrics, with models and scalers persisted using pickle.

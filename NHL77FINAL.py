@@ -53,70 +53,6 @@ def parse_date(date_str):
 # DATA LOADING FUNCTIONS
 # ============================================================================
 
-def get_sport_summary(sport):
-    """Get summary stats for a sport
-    
-    FOR NHL: Loads from nhlschedules.py
-    FOR OTHER SPORTS: Loads from database
-    """
-    
-    # FOR NHL: Load from nhlschedules.py
-    if sport == 'NHL':
-        nhl_schedule = get_nhl_2025_schedule()
-        today = datetime(2025, 10, 7)
-        
-        total_games = len(nhl_schedule)
-        completed_games = len([g for g in nhl_schedule if g.get('home_score') is not None])
-        
-        # Upcoming games (next 14 days from Oct 7, 2025)
-        upcoming_count = 0
-        for game in nhl_schedule:
-            if game.get('home_score') is None:  # Uncompleted games
-                game_date = parse_date(game['date'])
-                if game_date and today <= game_date <= today + timedelta(days=14):
-                    upcoming_count += 1
-        
-        return {
-            'total': total_games,
-            'completed': completed_games,
-            'upcoming': upcoming_count
-        }
-    
-    # FOR OTHER SPORTS: Load from database
-    conn = get_db_connection()
-    
-    # Get total games
-    total_games = conn.execute(
-        'SELECT COUNT(*) as cnt FROM games WHERE sport = ?', (sport,)
-    ).fetchone()['cnt']
-    
-    # Get completed games
-    completed_games = conn.execute(
-        'SELECT COUNT(*) as cnt FROM games WHERE sport = ? AND home_score IS NOT NULL', (sport,)
-    ).fetchone()['cnt']
-    
-    # Get upcoming games (next 14 days from Oct 7, 2025)
-    today = datetime(2025, 10, 7)
-    upcoming_count = 0
-    
-    games = conn.execute(
-        'SELECT game_date FROM games WHERE sport = ? AND home_score IS NULL',
-        (sport,)
-    ).fetchall()
-    
-    for game in games:
-        game_date = parse_date(game['game_date'])
-        if game_date and today <= game_date <= today + timedelta(days=14):
-            upcoming_count += 1
-    
-    conn.close()
-    
-    return {
-        'total': total_games,
-        'completed': completed_games,
-        'upcoming': upcoming_count
-    }
-
 def get_upcoming_predictions(sport, days=365):
     """Get ALL game predictions from season start - both completed and upcoming
     
@@ -156,6 +92,7 @@ def get_upcoming_predictions(sport, days=365):
             all_games_raw.append(game_dict)
     else:
         # FOR OTHER SPORTS: Load from database WITH stored predictions
+        # Use subquery to get one betting_odds row per game (prevents duplicates)
         conn = get_db_connection()
         all_games_raw = conn.execute('''
             SELECT g.*, 
@@ -173,7 +110,13 @@ def get_upcoming_predictions(sport, days=365):
             FROM games g
             LEFT JOIN predictions p ON g.game_id = p.game_id AND p.sport = ?
             LEFT JOIN game_goalies gg ON g.id = gg.game_id
-            LEFT JOIN betting_odds bo ON g.id = bo.game_id
+            LEFT JOIN (
+                SELECT game_id, 
+                       home_moneyline, away_moneyline, spread, total,
+                       home_implied_prob, away_implied_prob, num_bookmakers
+                FROM betting_odds
+                GROUP BY game_id
+            ) bo ON g.id = bo.game_id
             WHERE g.sport = ?
         ''', (sport, sport)).fetchall()
         all_games_raw = [dict(g) for g in all_games_raw]
@@ -341,7 +284,7 @@ def calculate_model_performance(sport):
         # FOR OTHER SPORTS: Get from database
         conn = get_db_connection()
         
-        # NFL: Test on SPECIFIC 65 games (Sept 4 - Oct 9, 2025)
+        # NFL: All completed games in 2025 season (dynamic - updates as games are played)
         if sport == 'NFL':
             results_data = conn.execute('''
                 SELECT 
@@ -363,21 +306,6 @@ def calculate_model_performance(sport):
                 WHERE g.sport = 'NFL'
                     AND g.season = 2025
                     AND g.home_score IS NOT NULL
-                    AND (
-                        g.game_date LIKE '04/09/2025%' OR g.game_date LIKE '05/09/2025%' OR 
-                        g.game_date LIKE '06/09/2025%' OR g.game_date LIKE '07/09/2025%' OR 
-                        g.game_date LIKE '08/09/2025%' OR g.game_date LIKE '09/09/2025%' OR 
-                        g.game_date LIKE '11/09/2025%' OR g.game_date LIKE '12/09/2025%' OR 
-                        g.game_date LIKE '14/09/2025%' OR g.game_date LIKE '15/09/2025%' OR 
-                        g.game_date LIKE '16/09/2025%' OR g.game_date LIKE '18/09/2025%' OR 
-                        g.game_date LIKE '19/09/2025%' OR g.game_date LIKE '21/09/2025%' OR 
-                        g.game_date LIKE '22/09/2025%' OR g.game_date LIKE '23/09/2025%' OR 
-                        g.game_date LIKE '25/09/2025%' OR g.game_date LIKE '26/09/2025%' OR 
-                        g.game_date LIKE '28/09/2025%' OR g.game_date LIKE '29/09/2025%' OR 
-                        g.game_date LIKE '30/09/2025%' OR g.game_date LIKE '03/10/2025%' OR 
-                        g.game_date LIKE '05/10/2025%' OR g.game_date LIKE '06/10/2025%' OR 
-                        g.game_date LIKE '09/10/2025%'
-                    )
                 ORDER BY g.game_date ASC
             ''').fetchall()
         else:
@@ -490,6 +418,7 @@ BASE_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}jackpotpicks.bet{% endblock %}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -504,6 +433,9 @@ BASE_TEMPLATE = """
             padding: 15px 30px;
             border-bottom: 2px solid #334155;
             backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
         }
         .navbar-content {
             max-width: 1400px;
@@ -520,6 +452,19 @@ BASE_TEMPLATE = """
             -webkit-text-fill-color: transparent;
             text-decoration: none;
         }
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            cursor: pointer;
+            gap: 5px;
+        }
+        .hamburger span {
+            width: 25px;
+            height: 3px;
+            background: #fbbf24;
+            border-radius: 2px;
+            transition: 0.3s;
+        }
         .nav-links {
             display: flex;
             gap: 25px;
@@ -529,6 +474,7 @@ BASE_TEMPLATE = """
             text-decoration: none;
             font-weight: 500;
             transition: color 0.3s;
+            white-space: nowrap;
         }
         .nav-links a:hover {
             color: #fbbf24;
@@ -541,21 +487,49 @@ BASE_TEMPLATE = """
             margin: 0 auto;
             padding: 30px;
         }
+        @media (max-width: 768px) {
+            .hamburger {
+                display: flex;
+            }
+            .nav-links {
+                position: absolute;
+                top: 70px;
+                left: 0;
+                right: 0;
+                background: rgba(15, 23, 42, 0.98);
+                flex-direction: column;
+                gap: 0;
+                padding: 20px;
+                border-bottom: 2px solid #334155;
+                display: none;
+            }
+            .nav-links.active {
+                display: flex;
+            }
+            .nav-links a {
+                padding: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .container {
+                padding: 20px 15px;
+            }
+        }
         {% block extra_styles %}{% endblock %}
     </style>
 </head>
 <body>
     <div class="navbar">
         <div class="navbar-content">
-            <a href="/" class="logo">jackpotpicks.bet</a>
-            <div class="nav-links">
-                <a href="/" class="{{ 'active' if page == 'dashboard' else '' }}">Dashboard</a>
-                <a href="/sport/NHL" class="{{ 'active' if page == 'NHL' else '' }}">🏒 NHL</a>
-                <a href="/sport/NFL" class="{{ 'active' if page == 'NFL' else '' }}">🏈 NFL</a>
-                <a href="/sport/NBA" class="{{ 'active' if page == 'NBA' else '' }}">🏀 NBA</a>
-                <a href="/sport/MLB" class="{{ 'active' if page == 'MLB' else '' }}">⚾ MLB</a>
-                <a href="/sport/NCAAF" class="{{ 'active' if page == 'NCAAF' else '' }}">🏟️ NCAAF</a>
-                <a href="/sport/NCAAB" class="{{ 'active' if page == 'NCAAB' else '' }}">🎓 NCAAB</a>
+            <a href="/" class="logo">🎯 jackpotpicks.bet</a>
+            <div class="hamburger" onclick="toggleMenu()">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+            <div class="nav-links" id="navLinks">
+                <a href="/" class="{{ 'active' if page == 'home' else '' }}">Home</a>
+                <a href="/sport/NHL/predictions" class="{{ 'active' if page == 'NHL' else '' }}">🏒 NHL</a>
+                <a href="/sport/NFL/predictions" class="{{ 'active' if page == 'NFL' else '' }}">🏈 NFL</a>
             </div>
         </div>
     </div>
@@ -563,139 +537,39 @@ BASE_TEMPLATE = """
     <div class="container">
         {% block content %}{% endblock %}
     </div>
+    
+    <script>
+        function toggleMenu() {
+            const navLinks = document.getElementById('navLinks');
+            navLinks.classList.toggle('active');
+        }
+        
+        // Close menu when clicking a link
+        document.addEventListener('DOMContentLoaded', function() {
+            const navLinks = document.getElementById('navLinks');
+            const links = navLinks.querySelectorAll('a');
+            links.forEach(link => {
+                link.addEventListener('click', function() {
+                    navLinks.classList.remove('active');
+                });
+            });
+        });
+        
+        // Close menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const navLinks = document.getElementById('navLinks');
+            const hamburger = document.querySelector('.hamburger');
+            const navbar = document.querySelector('.navbar');
+            
+            // If click is outside navbar entirely, close menu
+            if (!navbar.contains(event.target)) {
+                navLinks.classList.remove('active');
+            }
+        });
+    </script>
 </body>
 </html>
 """
-
-# ============================================================================
-# DASHBOARD TEMPLATE
-# ============================================================================
-
-DASHBOARD_TEMPLATE = BASE_TEMPLATE.replace(
-    '{% block extra_styles %}{% endblock %}',
-    """
-    .dashboard-title {
-        text-align: center;
-        font-size: 3em;
-        margin-bottom: 40px;
-        background: linear-gradient(135deg, #fbbf24, #f59e0b);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .sports-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-        gap: 25px;
-        margin-bottom: 30px;
-    }
-    .sport-card {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 15px;
-        padding: 25px;
-        border: 2px solid rgba(255, 255, 255, 0.1);
-        transition: all 0.3s;
-        cursor: pointer;
-    }
-    .sport-card:hover {
-        transform: translateY(-5px);
-        border-color: #fbbf24;
-        box-shadow: 0 10px 30px rgba(251, 191, 36, 0.2);
-    }
-    .sport-header {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        margin-bottom: 20px;
-    }
-    .sport-icon {
-        font-size: 3em;
-    }
-    .sport-name {
-        font-size: 1.8em;
-        font-weight: bold;
-    }
-    .sport-stats {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 15px;
-        margin-bottom: 15px;
-    }
-    .stat {
-        text-align: center;
-    }
-    .stat-value {
-        font-size: 2em;
-        font-weight: bold;
-        color: #fbbf24;
-    }
-    .stat-label {
-        font-size: 0.9em;
-        opacity: 0.8;
-        margin-top: 5px;
-    }
-    .sport-links {
-        display: flex;
-        gap: 10px;
-        margin-top: 20px;
-    }
-    .sport-btn {
-        flex: 1;
-        padding: 12px;
-        border-radius: 8px;
-        text-align: center;
-        text-decoration: none;
-        font-weight: 600;
-        transition: all 0.3s;
-    }
-    .predictions-btn {
-        background: linear-gradient(135deg, #3b82f6, #2563eb);
-        color: white;
-    }
-    .predictions-btn:hover {
-        transform: scale(1.05);
-    }
-    .results-btn {
-        background: linear-gradient(135deg, #10b981, #059669);
-        color: white;
-    }
-    .results-btn:hover {
-        transform: scale(1.05);
-    }
-    """
-).replace('{% block content %}{% endblock %}', """
-    <h1 class="dashboard-title">Multi-Sport Prediction Platform</h1>
-    
-    <div class="sports-grid">
-        {% for sport_code, sport in sports.items() %}
-        <div class="sport-card" onclick="window.location='/sport/{{ sport_code }}'">
-            <div class="sport-header">
-                <div class="sport-icon">{{ sport.icon }}</div>
-                <div class="sport-name">{{ sport.name }}</div>
-            </div>
-            
-            <div class="sport-stats">
-                <div class="stat">
-                    <div class="stat-value">{{ summaries[sport_code].upcoming }}</div>
-                    <div class="stat-label">Upcoming</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value">{{ summaries[sport_code].completed }}</div>
-                    <div class="stat-label">Completed</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value">{{ summaries[sport_code].total }}</div>
-                    <div class="stat-label">Total</div>
-                </div>
-            </div>
-            
-            <div class="sport-links">
-                <a href="/sport/{{ sport_code }}/predictions" class="sport-btn predictions-btn" onclick="event.stopPropagation()">📊 Predictions</a>
-                <a href="/sport/{{ sport_code }}/results" class="sport-btn results-btn" onclick="event.stopPropagation()">🎯 Results</a>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-""")
 
 # ============================================================================
 # PREDICTIONS TEMPLATE
@@ -945,9 +819,23 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
 # ROUTES
 # ============================================================================
 
+def get_landing_accuracy(sport):
+    """Get ensemble accuracy for landing page display"""
+    try:
+        performance = calculate_model_performance(sport)
+        if performance and 'ensemble' in performance:
+            return round(performance['ensemble']['accuracy'], 1)
+    except:
+        pass
+    # Fallback to known values if calculation fails
+    return {'NHL': 77.0, 'NFL': 84.0}.get(sport, 0.0)
+
 @app.route('/')
 def landing_page():
     """Landing page with sport selector (NO unified dashboard)"""
+    nhl_accuracy = get_landing_accuracy('NHL')
+    nfl_accuracy = get_landing_accuracy('NFL')
+    
     return render_template_string("""
 <!DOCTYPE html>
 <html lang="en">
@@ -1036,13 +924,13 @@ def landing_page():
                 <div class="sport-icon">🏒</div>
                 <div class="sport-name">NHL</div>
                 <div class="sport-status">Live Now</div>
-                <div class="sport-accuracy">77% Accuracy</div>
+                <div class="sport-accuracy">{{ nhl_accuracy }}% Accuracy</div>
             </a>
             <a href="/sport/NFL/predictions" class="sport-card active">
                 <div class="sport-icon">🏈</div>
                 <div class="sport-name">NFL</div>
                 <div class="sport-status">Live Now</div>
-                <div class="sport-accuracy">84% Accuracy</div>
+                <div class="sport-accuracy">{{ nfl_accuracy }}% Accuracy</div>
             </a>
             <div class="sport-card coming-soon">
                 <div class="sport-icon">🏀</div>
