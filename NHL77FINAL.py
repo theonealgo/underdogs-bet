@@ -946,18 +946,132 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
 # ============================================================================
 
 @app.route('/')
-def dashboard():
-    """Dashboard showing all sports"""
-    summaries = {}
-    for sport_code in SPORTS.keys():
-        summaries[sport_code] = get_sport_summary(sport_code)
-    
-    return render_template_string(
-        DASHBOARD_TEMPLATE,
-        page='dashboard',
-        sports=SPORTS,
-        summaries=summaries
-    )
+def landing_page():
+    """Landing page with sport selector (NO unified dashboard)"""
+    return render_template_string("""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>jackpotpicks.bet - Sports Predictions</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; width: 100%; }
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+            color: white;
+        }
+        .header h1 {
+            font-size: 3.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header p { font-size: 1.3em; opacity: 0.9; }
+        .sports-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        .sport-card {
+            background: white;
+            border-radius: 16px;
+            padding: 35px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            text-decoration: none;
+            color: inherit;
+        }
+        .sport-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
+        .sport-icon { font-size: 4em; margin-bottom: 15px; }
+        .sport-name {
+            font-size: 1.8em;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .sport-status { font-size: 1em; color: #666; margin-bottom: 12px; }
+        .sport-accuracy {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #667eea;
+            margin-top: 10px;
+        }
+        .active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .active .sport-name, .active .sport-status { color: white; }
+        .active .sport-accuracy { color: #fff; font-size: 1.6em; }
+        .coming-soon { opacity: 0.6; cursor: not-allowed; }
+        .coming-soon:hover { transform: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        .footer { text-align: center; color: white; margin-top: 40px; opacity: 0.8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 jackpotpicks.bet</h1>
+            <p>Professional Sports Predictions Powered by Machine Learning</p>
+        </div>
+        <div class="sports-grid">
+            <a href="/sport/NHL/predictions" class="sport-card active">
+                <div class="sport-icon">🏒</div>
+                <div class="sport-name">NHL</div>
+                <div class="sport-status">Live Now</div>
+                <div class="sport-accuracy">77% Accuracy</div>
+            </a>
+            <a href="/sport/NFL/predictions" class="sport-card active">
+                <div class="sport-icon">🏈</div>
+                <div class="sport-name">NFL</div>
+                <div class="sport-status">Live Now</div>
+                <div class="sport-accuracy">84% Accuracy</div>
+            </a>
+            <div class="sport-card coming-soon">
+                <div class="sport-icon">🏀</div>
+                <div class="sport-name">NBA</div>
+                <div class="sport-status">Coming Soon</div>
+            </div>
+            <div class="sport-card coming-soon">
+                <div class="sport-icon">⚾</div>
+                <div class="sport-name">MLB</div>
+                <div class="sport-status">Coming Soon</div>
+            </div>
+            <div class="sport-card coming-soon">
+                <div class="sport-icon">🏀</div>
+                <div class="sport-name">WNBA</div>
+                <div class="sport-status">Coming Soon</div>
+            </div>
+            <div class="sport-card coming-soon">
+                <div class="sport-icon">🏟️</div>
+                <div class="sport-name">NCAAF</div>
+                <div class="sport-status">Coming Soon</div>
+            </div>
+        </div>
+        <div class="footer">
+            <p>Select a sport to view predictions, results, and analysis</p>
+        </div>
+    </div>
+</body>
+</html>
+    """)
 
 @app.route('/sport/<sport>')
 def sport_home(sport):
@@ -999,10 +1113,15 @@ def sport_results(sport):
     )
 
 if __name__ == '__main__':
+    print("\n" + "="*60)
     print("🎯 jackpotpicks.bet - Multi-Sport Prediction Platform")
-    print("📊 Dashboard + Predictions + Results for All Sports")
-    print("🏒 NHL | 🏈 NFL | 🏀 NBA | ⚾ MLB | 🏟️ NCAAF | 🎓 NCAAB")
-    print("\n✓ Platform ready!")
-    print("🌐 Visit http://0.0.0.0:5000\n")
+    print("="*60)
+    print("🏒 NHL Predictions - Live (77% Accuracy)")
+    print("🏈 NFL Predictions - Live (84% Accuracy)")
+    print("🏀 NBA, ⚾ MLB, 🏀 WNBA, 🏟️ NCAAF - Coming Soon")
+    print("="*60)
+    print("✓ Platform ready!")
+    print("🌐 Visit http://0.0.0.0:5000")
+    print("="*60 + "\n")
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000, use_reloader=False, threaded=True)
