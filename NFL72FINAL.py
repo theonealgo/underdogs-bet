@@ -19,7 +19,7 @@ import random
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from src.api.models.schedules import get_nfl_schedule, get_nba_schedule, get_nhl_schedule, get_mlb_schedule, get_ncaaf_schedule, get_ncaab_schedule, get_wnba_schedule
-from weather_service import get_weather_for_game, get_weather_impact
+# from weather_service import get_weather_for_game, get_weather_impact
 import requests
 from datetime import datetime
 app = Flask(__name__)
@@ -220,18 +220,9 @@ class AdvancedSportPredictor:
         features['home_injuries'] = home_stats['injuries']
         features['away_injuries'] = away_stats['injuries']
 
-        # Environmental factors - real weather for NFL, simulated for others
-        if self.sport_code == 'NFL':
-            weather_data = get_weather_for_game(home_team)
-            if weather_data:
-                features['temperature'] = weather_data['temperature']
-                features['wind_speed'] = weather_data['wind_speed']
-            else:
-                features['temperature'] = random.uniform(20, 80)
-                features['wind_speed'] = random.uniform(0, 20)
-        else:
-            features['temperature'] = random.uniform(20, 80)
-            features['wind_speed'] = random.uniform(0, 20)
+        # Environmental factors - simulated for all sports
+        features['temperature'] = random.uniform(20, 80)
+        features['wind_speed'] = random.uniform(0, 20)
         features['travel_distance'] = random.uniform(0, 3000)  # Miles
         features['rest_days_difference'] = random.randint(-3, 3)
 
@@ -805,4 +796,4 @@ if __name__ == '__main__':
     print("📊 Enhanced XGBoost (500 trees, 22 features) + Advanced Elo")
     print("⚡ Features: QB rating, injuries, weather, travel, market data")
 
-    app.run(debug=True, host='0.0.0.0', port=5560)
+    app.run(debug=True, host='0.0.0.0', port=5001)
