@@ -155,10 +155,14 @@ def get_upcoming_predictions(sport, days=365):
             }
             all_games_raw.append(game_dict)
     else:
-        # FOR OTHER SPORTS: Load from database
+        # FOR OTHER SPORTS: Load from database WITH stored predictions
         conn = get_db_connection()
         all_games_raw = conn.execute('''
             SELECT g.*, 
+                   p.elo_home_prob as stored_elo_prob,
+                   p.xgboost_home_prob as stored_xgb_prob,
+                   p.logistic_home_prob as stored_cat_prob,
+                   p.win_probability as stored_ensemble_prob,
                    gg.home_goalie, gg.away_goalie,
                    gg.home_goalie_save_pct, gg.away_goalie_save_pct,
                    gg.home_goalie_gaa, gg.away_goalie_gaa,
@@ -167,10 +171,11 @@ def get_upcoming_predictions(sport, days=365):
                    bo.home_implied_prob, bo.away_implied_prob,
                    bo.num_bookmakers
             FROM games g
+            LEFT JOIN predictions p ON g.game_id = p.game_id AND p.sport = ?
             LEFT JOIN game_goalies gg ON g.id = gg.game_id
             LEFT JOIN betting_odds bo ON g.id = bo.game_id
             WHERE g.sport = ?
-        ''', (sport,)).fetchall()
+        ''', (sport, sport)).fetchall()
         all_games_raw = [dict(g) for g in all_games_raw]
         conn.close()
     
@@ -225,52 +230,61 @@ def get_upcoming_predictions(sport, days=365):
         else:
             away_stats['away_wins'] += 1
     
-    # Generate predictions for ALL games from season start (Oct 7, 2025)
+    # Generate predictions for ALL games from season start (Oct 7, 2025 for NHL, Sept 4 for NFL)
     # Show BOTH completed and upcoming games, sorted chronologically
-    season_start = datetime(2025, 10, 7)
+    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2025, 10, 22), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
+    season_start = season_starts.get(sport, datetime(2025, 1, 1))
     predictions = []
     
     for game_date, game in all_games_with_dates:
         if game_date >= season_start:
-            # Calculate base model probabilities
-            home_rating = get_elo(game['home_team_id'])
-            away_rating = get_elo(game['away_team_id'])
-            elo_prob = expected_score(home_rating, away_rating)
-            
-            # V2 ENHANCEMENTS: Incorporate API data
-            
-            # Feature 1: Goalie differential (if available)
-            goalie_boost = 0.0
-            if game['home_goalie_save_pct'] and game['away_goalie_save_pct']:
-                save_pct_diff = float(game['home_goalie_save_pct']) - float(game['away_goalie_save_pct'])
-                goalie_boost = save_pct_diff * 0.3  # 3% save pct diff = ~1% boost
-            
-            # Feature 2: Betting market consensus (if available)
-            market_boost = 0.0
-            if game['home_implied_prob'] and game['away_implied_prob']:
-                market_home_prob = float(game['home_implied_prob'])
-                market_boost = (market_home_prob - 0.5) * 0.15  # 15% weight to market
-            
-            # Feature 3: Home/Away splits
-            home_stats = get_home_away_stats(game['home_team_id'])
-            away_stats = get_home_away_stats(game['away_team_id'])
-            
-            home_win_pct = home_stats['home_wins'] / home_stats['home_games'] if home_stats['home_games'] > 0 else 0.5
-            away_win_pct = away_stats['away_wins'] / away_stats['away_games'] if away_stats['away_games'] > 0 else 0.5
-            
-            split_boost = (home_win_pct - away_win_pct) * 0.1  # 10% weight to splits
-            
-            # Enhanced model predictions
-            xgb_prob = min(0.95, max(0.05, elo_prob + goalie_boost + market_boost * 0.5 + split_boost))
-            cat_prob = min(0.95, max(0.05, elo_prob + goalie_boost * 0.7 + market_boost * 0.3 + split_boost * 0.5))
-            
-            # V2 Ensemble (including market data when available)
-            if game['home_implied_prob']:
-                # With betting odds: 40% CatBoost, 30% XGBoost, 20% Elo, 10% Market
-                ensemble_prob = (cat_prob * 0.4 + xgb_prob * 0.3 + elo_prob * 0.2 + float(game['home_implied_prob']) * 0.1)
+            # Check if stored predictions exist (for sports with pre-generated predictions)
+            if game.get('stored_elo_prob') is not None:
+                # Use stored predictions from database
+                elo_prob = game['stored_elo_prob']
+                xgb_prob = game['stored_xgb_prob'] if game.get('stored_xgb_prob') else elo_prob
+                cat_prob = game['stored_cat_prob'] if game.get('stored_cat_prob') else elo_prob
+                ensemble_prob = game['stored_ensemble_prob'] if game.get('stored_ensemble_prob') else elo_prob
             else:
-                # Without betting odds: 50% CatBoost, 30% XGBoost, 20% Elo
-                ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
+                # Calculate live predictions using Elo for sports without stored predictions
+                home_rating = get_elo(game['home_team_id'])
+                away_rating = get_elo(game['away_team_id'])
+                elo_prob = expected_score(home_rating, away_rating)
+                
+                # V2 ENHANCEMENTS: Incorporate API data
+                
+                # Feature 1: Goalie differential (if available)
+                goalie_boost = 0.0
+                if game.get('home_goalie_save_pct') and game.get('away_goalie_save_pct'):
+                    save_pct_diff = float(game['home_goalie_save_pct']) - float(game['away_goalie_save_pct'])
+                    goalie_boost = save_pct_diff * 0.3  # 3% save pct diff = ~1% boost
+                
+                # Feature 2: Betting market consensus (if available)
+                market_boost = 0.0
+                if game.get('home_implied_prob') and game.get('away_implied_prob'):
+                    market_home_prob = float(game['home_implied_prob'])
+                    market_boost = (market_home_prob - 0.5) * 0.15  # 15% weight to market
+                
+                # Feature 3: Home/Away splits
+                home_stats = get_home_away_stats(game['home_team_id'])
+                away_stats = get_home_away_stats(game['away_team_id'])
+                
+                home_win_pct = home_stats['home_wins'] / home_stats['home_games'] if home_stats['home_games'] > 0 else 0.5
+                away_win_pct = away_stats['away_wins'] / away_stats['away_games'] if away_stats['away_games'] > 0 else 0.5
+                
+                split_boost = (home_win_pct - away_win_pct) * 0.1  # 10% weight to splits
+                
+                # Enhanced model predictions
+                xgb_prob = min(0.95, max(0.05, elo_prob + goalie_boost + market_boost * 0.5 + split_boost))
+                cat_prob = min(0.95, max(0.05, elo_prob + goalie_boost * 0.7 + market_boost * 0.3 + split_boost * 0.5))
+                
+                # V2 Ensemble (including market data when available)
+                if game.get('home_implied_prob'):
+                    # With betting odds: 40% CatBoost, 30% XGBoost, 20% Elo, 10% Market
+                    ensemble_prob = (cat_prob * 0.4 + xgb_prob * 0.3 + elo_prob * 0.2 + float(game['home_implied_prob']) * 0.1)
+                else:
+                    # Without betting odds: 50% CatBoost, 30% XGBoost, 20% Elo
+                    ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
             
             # Add predictions to game dict
             game_dict = dict(game)
@@ -281,8 +295,12 @@ def get_upcoming_predictions(sport, days=365):
             game_dict['predicted_winner'] = game['home_team_id'] if ensemble_prob > 0.5 else game['away_team_id']
             
             # Add V2 metadata
-            game_dict['has_goalie_data'] = bool(game['home_goalie_save_pct'])
-            game_dict['has_odds_data'] = bool(game['home_implied_prob'])
+            home_stats = get_home_away_stats(game['home_team_id'])
+            away_stats = get_home_away_stats(game['away_team_id'])
+            home_win_pct = home_stats['home_wins'] / home_stats['home_games'] if home_stats['home_games'] > 0 else 0.5
+            away_win_pct = away_stats['away_wins'] / away_stats['away_games'] if away_stats['away_games'] > 0 else 0.5
+            game_dict['has_goalie_data'] = bool(game.get('home_goalie_save_pct'))
+            game_dict['has_odds_data'] = bool(game.get('home_implied_prob'))
             game_dict['home_win_pct_home'] = round(home_win_pct * 100, 1)
             game_dict['away_win_pct_away'] = round(away_win_pct * 100, 1)
             
