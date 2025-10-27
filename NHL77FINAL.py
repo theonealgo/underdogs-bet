@@ -54,7 +54,35 @@ def parse_date(date_str):
 # ============================================================================
 
 def get_sport_summary(sport):
-    """Get summary stats for a sport"""
+    """Get summary stats for a sport
+    
+    FOR NHL: Loads from nhlschedules.py
+    FOR OTHER SPORTS: Loads from database
+    """
+    
+    # FOR NHL: Load from nhlschedules.py
+    if sport == 'NHL':
+        nhl_schedule = get_nhl_2025_schedule()
+        today = datetime(2025, 10, 7)
+        
+        total_games = len(nhl_schedule)
+        completed_games = len([g for g in nhl_schedule if g.get('home_score') is not None])
+        
+        # Upcoming games (next 14 days from Oct 7, 2025)
+        upcoming_count = 0
+        for game in nhl_schedule:
+            if game.get('home_score') is None:  # Uncompleted games
+                game_date = parse_date(game['date'])
+                if game_date and today <= game_date <= today + timedelta(days=14):
+                    upcoming_count += 1
+        
+        return {
+            'total': total_games,
+            'completed': completed_games,
+            'upcoming': upcoming_count
+        }
+    
+    # FOR OTHER SPORTS: Load from database
     conn = get_db_connection()
     
     # Get total games
@@ -263,43 +291,34 @@ def get_upcoming_predictions(sport, days=365):
     return predictions
 
 def calculate_model_performance(sport):
-    """Calculate performance using STORED predictions from database
+    """Calculate performance using LIVE predictions
     
-    FOR NHL: Loads completed games from nhlschedules.py, matches with stored predictions
+    FOR NHL: Generates predictions from nhlschedules.py completed games
     FOR OTHER SPORTS: Loads from database
     """
     
-    # FOR NHL: Get completed games from nhlschedules.py
+    # FOR NHL: Generate live predictions for completed games
     if sport == 'NHL':
-        nhl_schedule = get_nhl_2025_schedule()
-        completed_nhl = [g for g in nhl_schedule if g.get('home_score') is not None]
+        # Get ALL predictions (includes completed games with predictions)
+        all_predictions = get_upcoming_predictions('NHL')
         
-        # Get stored predictions from database
-        conn = get_db_connection()
+        # Filter to only completed games (those with scores)
         results_data = []
-        for game in completed_nhl:
-            pred_row = conn.execute('''
-                SELECT elo_home_prob, xgboost_home_prob, logistic_home_prob, win_probability
-                FROM predictions
-                WHERE sport = 'NHL'
-                  AND game_date = ?
-                  AND home_team_id = ?
-                  AND away_team_id = ?
-            ''', (game['date'], game['home_team'], game['away_team'])).fetchone()
-            
-            if pred_row:
+        for pred in all_predictions:
+            if pred.get('home_score') is not None:
+                # Convert percentages back to probabilities (divide by 100)
                 results_data.append((
-                    game['date'],
-                    game['home_team'],
-                    game['away_team'],
-                    game['away_score'],
-                    game['home_score'],
-                    pred_row[0],
-                    pred_row[1],
-                    pred_row[2],
-                    pred_row[3]
+                    pred['game_date'],
+                    pred['home_team_id'],
+                    pred['away_team_id'],
+                    pred['away_score'],
+                    pred['home_score'],
+                    pred['elo_prob'] / 100.0,
+                    pred['xgb_prob'] / 100.0,
+                    pred['cat_prob'] / 100.0,
+                    pred['ensemble_prob'] / 100.0
                 ))
-        conn.close()
+
     else:
         # FOR OTHER SPORTS: Get from database
         conn = get_db_connection()
