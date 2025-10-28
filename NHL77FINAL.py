@@ -118,7 +118,7 @@ def get_upcoming_predictions(sport, days=365):
                 FROM betting_odds
                 GROUP BY game_id
             ) bo ON g.id = bo.game_id
-            WHERE g.sport = ?
+            WHERE g.sport = ? AND g.home_score IS NULL AND g.away_score IS NULL
         ''', (sport, sport)).fetchall()
         all_games_raw = [dict(g) for g in all_games_raw]
         conn.close()
