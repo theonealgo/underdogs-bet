@@ -182,7 +182,7 @@ def get_upcoming_predictions(sport, days=365):
     
     # Generate predictions for ALL games from season start (Oct 7, 2025 for NHL, Sept 4 for NFL)
     # Show BOTH completed and upcoming games, sorted chronologically
-    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2025, 10, 21), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
+    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2024, 10, 22), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
     season_start = season_starts.get(sport, datetime(2025, 1, 1))
     predictions = []
     
