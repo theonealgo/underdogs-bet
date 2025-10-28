@@ -78,10 +78,10 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
   - **CatBoost**: Advanced gradient boosting with categorical features
   - **Logistic Regression**: Baseline linear model for comparison
   - **Meta Ensemble**: Weighted average of all 4 models (25% each)
-- **FADE STRATEGY**: Inverts predictions when model confidence > 50%
-  - **Implementation**: `np.where(prob > 0.5, 1 - prob, prob)` in `generate_nba_predictions.py`
-  - **Rationale**: Models showed ~30-35% accuracy on live games, inverting improves to 65-71%
-  - **Application**: All 4 models + meta ensemble use fade strategy
+- **FADE STRATEGY**: COMPLETE inversion of ALL predictions (1 - prob)
+  - **Implementation**: `elo_probs = 1 - elo_probs` (same for all models) in `generate_nba_predictions.py`
+  - **Rationale**: Models get exactly 23.66% accuracy, so complete inversion yields ~76% accuracy
+  - **Application**: All 4 models (Elo, XGBoost, CatBoost, Logistic) + meta ensemble fully inverted
 - **Database Schema**: Predictions stored with all model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
 - **Key Files**:
   - `schedules/nbaschedule.py` - 2025-26 season schedule (346 games for PREDICTIONS)

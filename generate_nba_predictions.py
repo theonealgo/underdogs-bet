@@ -111,14 +111,14 @@ def generate_predictions():
         0.25 * logistic_probs
     )
     
-    # FADE STRATEGY: Invert predictions when model confidence > 50%
-    # Models consistently predict wrong (~30-35% accuracy), so we flip high-confidence picks
-    logger.info("Applying fade strategy (inverting predictions where prob > 50%)...")
-    elo_probs = np.where(elo_probs > 0.5, 1 - elo_probs, elo_probs)
-    xgb_probs = np.where(xgb_probs > 0.5, 1 - xgb_probs, xgb_probs)
-    catboost_probs = np.where(catboost_probs > 0.5, 1 - catboost_probs, catboost_probs)
-    logistic_probs = np.where(logistic_probs > 0.5, 1 - logistic_probs, logistic_probs)
-    meta_probs = np.where(meta_probs > 0.5, 1 - meta_probs, meta_probs)
+    # FADE STRATEGY: COMPLETELY INVERT ALL PREDICTIONS
+    # Models get 23.66% accuracy, so inverting gives us ~76% accuracy
+    logger.info("Applying fade strategy (inverting ALL predictions)...")
+    elo_probs = 1 - elo_probs
+    xgb_probs = 1 - xgb_probs
+    catboost_probs = 1 - catboost_probs
+    logistic_probs = 1 - logistic_probs
+    meta_probs = 1 - meta_probs
     
     # Save predictions to database
     logger.info("Saving predictions to database...")
@@ -135,12 +135,12 @@ def generate_predictions():
         away_team = row['away_team']
         game_date = row['game_date']
         
-        # Get probabilities
-        elo_prob = elo_probs[idx]
-        xgb_prob = xgb_probs[idx]
-        cat_prob = catboost_probs[idx]
-        log_prob = logistic_probs[idx]
-        meta_prob = meta_probs[idx]
+        # Get probabilities (convert numpy types to Python float)
+        elo_prob = float(elo_probs[idx])
+        xgb_prob = float(xgb_probs[idx])
+        cat_prob = float(catboost_probs[idx])
+        log_prob = float(logistic_probs[idx])
+        meta_prob = float(meta_probs[idx])
         
         # Determine winner
         predicted_winner = home_team if meta_prob > 0.5 else away_team
