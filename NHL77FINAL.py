@@ -966,6 +966,11 @@ def landing_page():
                 <div class="sport-name">NCAAF</div>
                 <div class="sport-status">Coming Soon</div>
             </div>
+            <div class="sport-card coming-soon">
+                <div class="sport-icon">🎓</div>
+                <div class="sport-name">NCAAB</div>
+                <div class="sport-status">Coming Soon</div>
+            </div>
         </div>
         <div class="footer">
             <p>Select a sport to view predictions, results, and analysis</p>

@@ -13,8 +13,7 @@ Preferred communication style: Simple, everyday language.
 - **Main App**: `NHL77FINAL.py` serves all sports on port 5000 (Replit only exposes this port)
 - **Landing Page**: Sport selector (NO unified dashboard) per user requirement - each sport completely separate
 - **Active Sports**: NHL (77% accuracy), NFL (84% accuracy), and NBA shown as "Live Now"
-- **Coming Soon**: MLB, WNBA, NCAAF displayed but not yet implemented
-- **Note**: NCAAB is defined in SPORTS dictionary but not displayed on landing page (only 6 sports shown)
+- **Coming Soon**: MLB, WNBA, NCAAF, NCAAB displayed but not yet implemented
 - **Routes**: 
   - `/` - Sport selector landing page with dynamic accuracy percentages
   - `/sport/{SPORT}/predictions` - Predictions for each sport
