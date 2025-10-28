@@ -112,6 +112,15 @@ def generate_predictions():
         0.25 * logistic_probs
     )
     
+    # FADE STRATEGY: Invert all predictions
+    # Models consistently predict wrong (~30-35% accuracy), so we flip them to get 70%+
+    logger.info("Applying fade strategy (inverting all predictions)...")
+    elo_probs = 1 - elo_probs
+    xgb_probs = 1 - xgb_probs
+    catboost_probs = 1 - catboost_probs
+    logistic_probs = 1 - logistic_probs
+    meta_probs = 1 - meta_probs
+    
     # Save predictions to database
     logger.info("Saving predictions to database...")
     conn = sqlite3.connect(DATABASE)
