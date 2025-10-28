@@ -687,7 +687,7 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
         border-collapse: collapse;
     }
     th {
-        background: rgba(251, 191, 36, 0.2);
+        background: #1e293b;
         padding: 15px;
         text-align: left;
         font-weight: 600;
@@ -695,6 +695,7 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
         position: sticky;
         top: 0;
         z-index: 10;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
     td {
         padding: 15px;
@@ -1007,19 +1008,16 @@ def landing_page():
                 <div class="sport-icon">🏒</div>
                 <div class="sport-name">NHL</div>
                 <div class="sport-status">Live Now</div>
-                <div class="sport-accuracy">{{ nhl_accuracy }}% Accuracy</div>
             </a>
             <a href="/sport/NFL/predictions" class="sport-card active">
                 <div class="sport-icon">🏈</div>
                 <div class="sport-name">NFL</div>
                 <div class="sport-status">Live Now</div>
-                <div class="sport-accuracy">{{ nfl_accuracy }}% Accuracy</div>
             </a>
             <a href="/sport/NBA/predictions" class="sport-card active">
                 <div class="sport-icon">🏀</div>
                 <div class="sport-name">NBA</div>
                 <div class="sport-status">Live Now</div>
-                <div class="sport-accuracy">{{ nba_accuracy }}% Accuracy</div>
             </a>
             <div class="sport-card coming-soon">
                 <div class="sport-icon">⚾</div>
