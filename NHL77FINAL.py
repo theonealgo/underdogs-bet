@@ -180,14 +180,20 @@ def get_upcoming_predictions(sport, days=365):
         else:
             away_stats['away_wins'] += 1
     
-    # Generate predictions for ALL games from season start (Oct 7, 2025 for NHL, Sept 4 for NFL)
-    # Show BOTH completed and upcoming games, sorted chronologically
-    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2024, 10, 22), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
+    # Display logic: Show ALL past games + future games for ONE MONTH from today
+    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2025, 10, 21), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
     season_start = season_starts.get(sport, datetime(2025, 1, 1))
+    
+    # Calculate cutoff: today + 1 month
+    from datetime import timedelta
+    today = datetime.now()
+    one_month_ahead = today + timedelta(days=30)
+    
     predictions = []
     
     for game_date, game in all_games_with_dates:
-        if game_date >= season_start:
+        # Show games from season start up to one month from today
+        if game_date >= season_start and game_date <= one_month_ahead:
             # Check if stored predictions exist (for sports with pre-generated predictions)
             if game.get('stored_elo_prob') is not None:
                 # Use stored predictions from database with safe conversion
