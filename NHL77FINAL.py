@@ -288,37 +288,13 @@ def get_upcoming_predictions(sport, days=365):
     return predictions
 
 def calculate_model_performance(sport):
-    """Calculate performance using LIVE predictions
+    """Calculate performance using stored predictions from database
     
-    FOR NHL: Generates predictions from nhlschedules.py completed games
-    FOR OTHER SPORTS: Loads from database
+    All sports now use the same method: pre-game predictions stored in database
     """
     
-    # FOR NHL: Generate live predictions for completed games
-    if sport == 'NHL':
-        # Get ALL predictions (includes completed games with predictions)
-        all_predictions = get_upcoming_predictions('NHL')
-        
-        # Filter to only completed games (those with scores)
-        results_data = []
-        for pred in all_predictions:
-            if pred.get('home_score') is not None:
-                # Convert percentages back to probabilities (divide by 100)
-                results_data.append((
-                    pred['game_date'],
-                    pred['home_team_id'],
-                    pred['away_team_id'],
-                    pred['away_score'],
-                    pred['home_score'],
-                    pred['elo_prob'] / 100.0,
-                    pred['xgb_prob'] / 100.0,
-                    pred['cat_prob'] / 100.0,
-                    pred['ensemble_prob'] / 100.0
-                ))
-
-    else:
-        # FOR OTHER SPORTS: Get from database
-        conn = get_db_connection()
+    # All sports now use database predictions (no live generation)
+    conn = get_db_connection()
         
         # NFL: First 94 games of 2025 season (04/09/2025 - 09/10/2025)
         if sport == 'NFL':
