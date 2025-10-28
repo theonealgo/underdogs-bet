@@ -1,8 +1,8 @@
 def get_nba_schedule():
     """NBA Schedule - 2025-2026 Season (Partial)"""
     nba_schedule = [
-        {'match_id': 1, 'round': 1, 'date': 'Tue, Oct 21, 2025 7:30p', 'venue': 'Paycom Center', 'home_team': 'Oklahoma City Thunder', 'away_team': 'Houston Rockets', 'result': ''},
-        {'match_id': 2, 'round': 2, 'date': 'Tue, Oct 21, 2025 10:00p', 'venue': 'Crypto.com Arena', 'home_team': 'Los Angeles Lakers', 'away_team': 'Golden State Warriors', 'result': ''},
+        {'match_id': 1, 'round': 1, 'date': 'Tue, Oct 21, 2025 7:30p', 'venue': 'Paycom Center', 'home_team': 'Oklahoma City Thunder', 'away_team': 'Houston Rockets', 'result': '125-124'},
+        {'match_id': 2, 'round': 2, 'date': 'Tue, Oct 21, 2025 10:00p', 'venue': 'Crypto.com Arena', 'home_team': 'Los Angeles Lakers', 'away_team': 'Golden State Warriors', 'result': '109-119'},
         {'match_id': 3, 'round': 3, 'date': 'Wed, Oct 22, 2025 7:00p', 'venue': 'Spectrum Center', 'home_team': 'Charlotte Hornets', 'away_team': 'Brooklyn Nets', 'result': ''},
         {'match_id': 4, 'round': 4, 'date': 'Wed, Oct 22, 2025 7:00p', 'venue': 'Madison Square Garden (IV)', 'home_team': 'New York Knicks', 'away_team': 'Cleveland Cavaliers', 'result': ''},
         {'match_id': 5, 'round': 5, 'date': 'Wed, Oct 22, 2025 7:00p', 'venue': 'Kia Center', 'home_team': 'Orlando Magic', 'away_team': 'Miami Heat', 'result': ''},

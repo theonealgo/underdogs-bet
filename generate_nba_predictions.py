@@ -112,14 +112,14 @@ def generate_predictions():
         0.25 * logistic_probs
     )
     
-    # FADE STRATEGY: Invert all predictions
-    # Models consistently predict wrong (~30-35% accuracy), so we flip them to get 70%+
-    logger.info("Applying fade strategy (inverting all predictions)...")
-    elo_probs = 1 - elo_probs
-    xgb_probs = 1 - xgb_probs
-    catboost_probs = 1 - catboost_probs
-    logistic_probs = 1 - logistic_probs
-    meta_probs = 1 - meta_probs
+    # FADE STRATEGY: Invert predictions when model confidence > 50%
+    # Models consistently predict wrong (~30-35% accuracy), so we flip high-confidence picks
+    logger.info("Applying fade strategy (inverting predictions where prob > 50%)...")
+    elo_probs = np.where(elo_probs > 0.5, 1 - elo_probs, elo_probs)
+    xgb_probs = np.where(xgb_probs > 0.5, 1 - xgb_probs, xgb_probs)
+    catboost_probs = np.where(catboost_probs > 0.5, 1 - catboost_probs, catboost_probs)
+    logistic_probs = np.where(logistic_probs > 0.5, 1 - logistic_probs, logistic_probs)
+    meta_probs = np.where(meta_probs > 0.5, 1 - meta_probs, meta_probs)
     
     # Save predictions to database
     logger.info("Saving predictions to database...")
