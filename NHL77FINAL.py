@@ -847,6 +847,7 @@ def landing_page():
     """Landing page with sport selector (NO unified dashboard)"""
     nhl_accuracy = get_landing_accuracy('NHL')
     nfl_accuracy = get_landing_accuracy('NFL')
+    nba_accuracy = get_landing_accuracy('NBA')
     
     return render_template_string("""
 <!DOCTYPE html>
@@ -944,11 +945,12 @@ def landing_page():
                 <div class="sport-status">Live Now</div>
                 <div class="sport-accuracy">{{ nfl_accuracy }}% Accuracy</div>
             </a>
-            <div class="sport-card coming-soon">
+            <a href="/sport/NBA/predictions" class="sport-card active">
                 <div class="sport-icon">🏀</div>
                 <div class="sport-name">NBA</div>
-                <div class="sport-status">Coming Soon</div>
-            </div>
+                <div class="sport-status">Live Now</div>
+                <div class="sport-accuracy">{{ nba_accuracy }}% Accuracy</div>
+            </a>
             <div class="sport-card coming-soon">
                 <div class="sport-icon">⚾</div>
                 <div class="sport-name">MLB</div>
@@ -971,7 +973,7 @@ def landing_page():
     </div>
 </body>
 </html>
-    """, nhl_accuracy=nhl_accuracy, nfl_accuracy=nfl_accuracy)
+    """, nhl_accuracy=nhl_accuracy, nfl_accuracy=nfl_accuracy, nba_accuracy=nba_accuracy)
 
 @app.route('/sport/<sport>')
 def sport_home(sport):
