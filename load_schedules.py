@@ -151,12 +151,18 @@ def load_nba_schedule():
 def convert_nba_date(date_str):
     """Convert NBA date format 'Tue, Oct 21, 2025 7:30p' to DD/MM/YYYY"""
     try:
-        # Split on comma and take the date part
-        date_part = date_str.split(',')[1].strip()  # " Oct 21, 2025 7:30p"
-        # Remove time portion
-        date_only = ' '.join(date_part.split()[:3])  # "Oct 21 2025"
-        dt = datetime.strptime(date_only, '%b %d %Y')
-        return dt.strftime('%d/%m/%Y')
+        # "Tue, Oct 21, 2025 7:30p" -> remove day of week and time
+        # Split by comma: ["Tue", " Oct 21", " 2025 7:30p"]
+        parts = date_str.split(',')
+        if len(parts) >= 3:
+            # Take month/day and year parts
+            month_day = parts[1].strip()  # "Oct 21"
+            year_part = parts[2].strip().split()[0]  # "2025"
+            date_only = f"{month_day} {year_part}"  # "Oct 21 2025"
+            dt = datetime.strptime(date_only, '%b %d %Y')
+            return dt.strftime('%d/%m/%Y')
+        else:
+            return date_str
     except Exception as e:
         print(f"   Warning: Could not parse date '{date_str}': {e}")
         return date_str
