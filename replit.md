@@ -74,11 +74,12 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
   - **CatBoost**: 58.3% validation accuracy
   - **Logistic Regression**: 73.3% validation accuracy
   - **Meta Ensemble**: 71.3% validation accuracy
-- **FADE STRATEGY (Oct 28, 2025)**: Models consistently predict wrong on live games (~30-35% accuracy), so we invert all predictions
+- **FADE STRATEGY (Oct 28, 2025)**: Models consistently predict wrong on live games (~30-35% accuracy), so we invert predictions when probability > 50%
   - **Live Game Results**: XGBoost 29%, CatBoost 33%, Elo 32%, Meta 35% (before inversion)
   - **After Inversion**: XGBoost 71%, CatBoost 67%, Elo 68%, Meta 65% (projected)
-  - **Implementation**: All probabilities inverted (1 - prob) in `generate_nba_predictions.py` before storing
-  - **Example**: If model predicts 70% home win, we display 30% home win and predict away team
+  - **Implementation**: Conditional inversion `np.where(prob > 0.5, 1 - prob, prob)` in `generate_nba_predictions.py`
+  - **Logic**: Only invert when model confidence > 50%, otherwise keep original probability
+  - **Example**: Charlotte vs Brooklyn - Elo 63.7% → 36.3% (inverted), XGB 39.7% → 39.7% (stays), Cat 46.2% → 46.2% (stays), Meta 52.7% → 47.3% (inverted)
 - **Database Schema**: Predictions stored with all 4 model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
 - **Key Files**:
   - `load_nba_2024_season.py` - Imports historical training data from CSV
