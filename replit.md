@@ -65,7 +65,7 @@ The system uses `generate_real_predictions.py` to create authentic predictions f
 Automated tasks include daily data updates, prediction generation, and weekly model retraining, managed by a configurable, non-blocking scheduler with threading support.
 
 ### NBA Model Training & Predictions (Oct 28, 2025)
-**Production-Ready NBA 2025-26 Season** - Complete model training with fade strategy:
+**Production-Ready NBA 2025-26 Season** - Complete model training with optimized predictions:
 - **PREDICTION SEASON**: 2025-26 NBA season (346 games, Oct 21 - Dec 7, 2025)
   - **First Game**: October 21, 2025 - Oklahoma City Thunder vs Houston Rockets at Paycom Center
   - **Completed Games**: 53 games with actual results (Oct 21-28, 2025)
@@ -73,21 +73,27 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
   - **ALL Games Displayed**: Shows all 346 games including completed ones with scores
 - **TRAINING DATA**: 2024-25 NBA season (1,231 games) used for model training ONLY, not shown to users
 - **Models**: All 4 models fully trained and operational
-  - **Elo**: K-factor 18 for NBA-specific rating system
-  - **XGBoost**: Regularized with sport-specific hyperparameters
-  - **CatBoost**: Advanced gradient boosting with categorical features
-  - **Logistic Regression**: Baseline linear model for comparison
-  - **Meta Ensemble**: Weighted average of all 4 models (25% each)
-- **FADE STRATEGY**: COMPLETE inversion of ALL predictions (1 - prob)
-  - **Implementation**: `elo_probs = 1 - elo_probs` (same for all models) in `generate_nba_predictions.py`
-  - **Rationale**: Models get exactly 23.66% accuracy, so complete inversion yields ~76% accuracy
-  - **Application**: All 4 models (Elo, XGBoost, CatBoost, Logistic) + meta ensemble fully inverted
-- **Database Schema**: Predictions stored with all model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
+  - **Elo**: K-factor 18 for NBA-specific rating system (56.6% accuracy on 53 completed games)
+  - **XGBoost**: Regularized with sport-specific hyperparameters (58.5% accuracy)
+  - **CatBoost**: Advanced gradient boosting with categorical features (58.5% accuracy)
+  - **Logistic Regression**: Baseline linear model for comparison (54.7% accuracy)
+  - **Meta Ensemble**: Weighted average of all 4 models - 25% each (56.6% accuracy)
+- **PREDICTION STRATEGY**: Direct model predictions (NO inversion/fade)
+  - **Previous Issue**: Fade strategy (1 - prob) was reducing accuracy from 58% to 41%
+  - **Current Implementation**: Raw model probabilities used directly
+  - **Performance**: XGBoost and CatBoost achieve 58.5% accuracy (industry-standard for NBA)
+- **ACCURACY BENCHMARKS** (53 completed games, Oct 21-28, 2025):
+  - **Best Models**: XGBoost 58.5% (31/53), CatBoost 58.5% (31/53)
+  - **Ensemble**: Meta 56.6% (30/53), Elo 56.6% (30/53)
+  - **Baseline**: Logistic 54.7% (29/53)
+  - **Industry Context**: 55-60% is professional-grade accuracy for NBA predictions
+- **Database Schema**: Predictions stored with all model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, meta_home_prob, win_probability)
+- **Display Format**: Column order matches NHL - XGBoost, CatBoost, Elo, Meta (left to right)
 - **Key Files**:
   - `schedules/nbaschedule.py` - 2025-26 season schedule (346 games for PREDICTIONS)
   - `load_schedules.py` - Imports NBA schedule into database with season=2025 (run `python load_schedules.py NBA`)
   - `train_nba_models.py` - Trains models on historical 2024-25 data
-  - `generate_nba_predictions.py` - Generates predictions for 2025-26 season with fade strategy
+  - `generate_nba_predictions.py` - Generates predictions for 2025-26 season (no fade strategy)
 - **Season Configuration**:
   - `NHL77FINAL.py`: Season start set to October 22, 2024 (for training data display logic)
   - Prediction generator pulls `season=2025` games only from database
