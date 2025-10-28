@@ -295,9 +295,9 @@ def calculate_model_performance(sport):
     
     # All sports now use database predictions (no live generation)
     conn = get_db_connection()
-        
-        # NFL: First 94 games of 2025 season (04/09/2025 - 09/10/2025)
-        if sport == 'NFL':
+    
+    # NFL: First 94 games of 2025 season (04/09/2025 - 09/10/2025)
+    if sport == 'NFL':
             results_data = conn.execute('''
                 SELECT 
                     g.game_date,
@@ -323,9 +323,9 @@ def calculate_model_performance(sport):
                 ORDER BY g.game_date ASC
                 LIMIT 94
             ''').fetchall()
-        else:
-            # OTHER SPORTS: All completed games
-            results_data = conn.execute('''
+    else:
+        # OTHER SPORTS: All completed games
+        results_data = conn.execute('''
                 SELECT 
                     g.game_date,
                     g.home_team_id,
