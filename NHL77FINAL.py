@@ -98,7 +98,8 @@ def get_upcoming_predictions(sport, days=365):
             SELECT g.*, 
                    p.elo_home_prob as stored_elo_prob,
                    p.xgboost_home_prob as stored_xgb_prob,
-                   p.logistic_home_prob as stored_cat_prob,
+                   p.catboost_home_prob as stored_cat_prob,
+                   p.logistic_home_prob as stored_log_prob,
                    p.win_probability as stored_ensemble_prob,
                    gg.home_goalie, gg.away_goalie,
                    gg.home_goalie_save_pct, gg.away_goalie_save_pct,
@@ -183,11 +184,34 @@ def get_upcoming_predictions(sport, days=365):
         if game_date >= season_start:
             # Check if stored predictions exist (for sports with pre-generated predictions)
             if game.get('stored_elo_prob') is not None:
-                # Use stored predictions from database
-                elo_prob = game['stored_elo_prob']
-                xgb_prob = game['stored_xgb_prob'] if game.get('stored_xgb_prob') else elo_prob
-                cat_prob = game['stored_cat_prob'] if game.get('stored_cat_prob') else elo_prob
-                ensemble_prob = game['stored_ensemble_prob'] if game.get('stored_ensemble_prob') else elo_prob
+                # Use stored predictions from database with safe conversion
+                import struct
+                
+                def safe_float_convert(value, fallback=0.5):
+                    """Safely convert database value to float, handling bytes/binary data"""
+                    if value is None:
+                        return fallback
+                    try:
+                        # If it's already a float or int, return it
+                        if isinstance(value, (float, int)):
+                            return float(value)
+                        # If it's bytes, try to unpack as float
+                        if isinstance(value, bytes):
+                            if len(value) == 8:
+                                # Double precision float (8 bytes)
+                                return struct.unpack('d', value)[0]
+                            elif len(value) == 4:
+                                # Single precision float (4 bytes)
+                                return struct.unpack('f', value)[0]
+                        # If it's a string, parse it
+                        return float(value)
+                    except (ValueError, struct.error, TypeError):
+                        return fallback
+                
+                elo_prob = safe_float_convert(game['stored_elo_prob'], 0.5)
+                xgb_prob = safe_float_convert(game.get('stored_xgb_prob'), elo_prob)
+                cat_prob = safe_float_convert(game.get('stored_cat_prob'), elo_prob)
+                ensemble_prob = safe_float_convert(game.get('stored_ensemble_prob'), elo_prob)
             else:
                 # Calculate live predictions using Elo for sports without stored predictions
                 home_rating = get_elo(game['home_team_id'])

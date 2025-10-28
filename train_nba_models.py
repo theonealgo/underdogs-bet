@@ -116,9 +116,19 @@ def train_ensemble_models():
         log_preds = (log_probs > 0.5).astype(int)
         log_acc = accuracy_score(y_val, log_preds)
         
-        # Ensemble predictions
+        # Ensemble predictions (use actual Elo probs for Elo weight)
+        # Convert Elo predictions to probabilities
+        elo_probs_array = np.array(elo_preds, dtype=float)  # 0 or 1 predictions
+        # We need actual Elo probabilities, not just 0/1 predictions
+        # Let's get the raw Elo probabilities instead
+        elo_prob_values = []
+        for idx, row in val_data.iterrows():
+            elo_prob = ensemble.elo_system.predict_game(row['home_team'], row['away_team'])
+            elo_prob_values.append(elo_prob)
+        elo_prob_values = np.array(elo_prob_values)
+        
         ensemble_probs = (
-            ensemble.ensemble_weights['elo'] * xgb_probs +  # Note: using XGB probs here is intentional
+            ensemble.ensemble_weights['elo'] * elo_prob_values +
             ensemble.ensemble_weights['logistic'] * log_probs +
             ensemble.ensemble_weights['xgboost'] * xgb_probs
         )
