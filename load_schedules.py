@@ -2,10 +2,10 @@
 """
 Schedule Loader - Import schedules into database
 =================================================
-Loads NFL and NHL schedules from schedules/*.py files into the database.
+Loads NFL, NHL, and NBA schedules from schedules/*.py files into the database.
 Run this once per season to update game schedules.
 
-Usage: python load_schedules.py [--sport NFL|NHL|ALL]
+Usage: python load_schedules.py [--sport NFL|NHL|NBA|ALL]
 """
 
 import sqlite3
@@ -102,6 +102,65 @@ def load_nhl_schedule():
     print(f"   ✓ Inserted {inserted} NHL games")
     return inserted
 
+def load_nba_schedule():
+    """Load NBA schedule from schedules/nbaschedule.py"""
+    print("📥 Loading NBA schedule...")
+    
+    # Import the schedule
+    sys.path.insert(0, 'schedules')
+    from nbaschedule import get_nba_schedule
+    
+    games = get_nba_schedule()
+    print(f"   Found {len(games)} NBA games")
+    
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Clear existing NBA games
+    cursor.execute("DELETE FROM games WHERE sport = 'NBA'")
+    print(f"   Cleared old NBA data")
+    
+    # Insert new games
+    inserted = 0
+    for game in games:
+        # Convert NBA date format: "Tue, Oct 21, 2025 7:30p" to "DD/MM/YYYY"
+        game_date = convert_nba_date(game['date'])
+        
+        cursor.execute('''
+            INSERT INTO games (sport, league, game_id, season, game_date, home_team_id, away_team_id, home_score, away_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            'NBA',
+            'NBA',
+            f"NBA_{game['match_id']}",
+            2025,
+            game_date,
+            game['home_team'],
+            game['away_team'],
+            None,  # No scores yet
+            None
+        ))
+        inserted += 1
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"   ✓ Inserted {inserted} NBA games")
+    return inserted
+
+def convert_nba_date(date_str):
+    """Convert NBA date format 'Tue, Oct 21, 2025 7:30p' to DD/MM/YYYY"""
+    try:
+        # Split on comma and take the date part
+        date_part = date_str.split(',')[1].strip()  # " Oct 21, 2025 7:30p"
+        # Remove time portion
+        date_only = ' '.join(date_part.split()[:3])  # "Oct 21 2025"
+        dt = datetime.strptime(date_only, '%b %d %Y')
+        return dt.strftime('%d/%m/%Y')
+    except Exception as e:
+        print(f"   Warning: Could not parse date '{date_str}': {e}")
+        return date_str
+
 def convert_date_format(date_str):
     """Convert various date formats to DD/MM/YYYY"""
     # Try YYYY-MM-DD format first
@@ -141,7 +200,7 @@ def main():
     """Main loader function"""
     sport = sys.argv[1].upper() if len(sys.argv) > 1 else 'ALL'
     
-    print("\n🏈🏒 jackpotpicks.bet - Schedule Loader")
+    print("\n🏈🏒🏀 jackpotpicks.bet - Schedule Loader")
     print("=" * 50)
     
     total = 0
@@ -151,6 +210,9 @@ def main():
     
     if sport in ['NHL', 'ALL']:
         total += load_nhl_schedule()
+    
+    if sport in ['NBA', 'ALL']:
+        total += load_nba_schedule()
     
     print("=" * 50)
     print(f"✓ Successfully loaded {total} games into database\n")
