@@ -137,8 +137,8 @@ def load_nba_schedule():
             game_date,
             game['home_team'],
             game['away_team'],
-            None,  # No scores yet
-            None
+            parse_score(game.get('result'), 'home') if game.get('result') else None,
+            parse_score(game.get('result'), 'away') if game.get('result') else None
         ))
         inserted += 1
     
