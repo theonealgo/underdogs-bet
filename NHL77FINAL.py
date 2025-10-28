@@ -739,10 +739,10 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                 <tr>
                     <th>Date</th>
                     <th>Matchup</th>
-                    <th>Elo</th>
                     <th>XGBoost</th>
                     <th>CatBoost</th>
-                    <th>Ensemble</th>
+                    <th>Elo</th>
+                    <th>Meta</th>
                     <th>Pick</th>
                 </tr>
             </thead>
@@ -751,9 +751,9 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                 <tr>
                     <td>{{ pred.game_date }}</td>
                     <td>{{ pred.away_team_id }} @ <strong>{{ pred.home_team_id }}</strong></td>
-                    <td class="model-pred">{{ pred.elo_prob }}%</td>
                     <td class="model-pred">{{ pred.xgb_prob }}%</td>
                     <td class="model-pred">{{ pred.cat_prob }}%</td>
+                    <td class="model-pred">{{ pred.elo_prob }}%</td>
                     <td class="model-pred {% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}">{{ pred.ensemble_prob }}%</td>
                     <td class="{% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}"><strong>{{ pred.predicted_winner }}</strong></td>
                 </tr>
