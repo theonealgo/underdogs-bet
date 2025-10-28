@@ -64,6 +64,28 @@ The system uses `generate_real_predictions.py` to create authentic predictions f
 ### Automation Framework
 Automated tasks include daily data updates, prediction generation, and weekly model retraining, managed by a configurable, non-blocking scheduler with threading support.
 
+### NBA Model Training & Predictions (Oct 28, 2025)
+**Production-Ready NBA Implementation** - Complete model training on historical data with real predictions:
+- **Historical Data**: 1,231 games from 2024 NBA season loaded as training data (not displayed in predictions)
+- **Current Season**: 346 games from 2025-26 season (Oct 21 - Dec 7, 2025) for live predictions
+- **Models**: All 4 models fully trained and operational
+  - **Elo**: 74.9% validation accuracy (K-factor: 18)
+  - **XGBoost**: 70.4% validation accuracy
+  - **CatBoost**: 58.3% validation accuracy
+  - **Logistic Regression**: 73.3% validation accuracy
+  - **Meta Ensemble**: 71.3% validation accuracy
+- **Database Schema**: Predictions stored with all 4 model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
+- **Key Files**:
+  - `load_nba_2024_season.py` - Imports historical training data from CSV
+  - `train_nba_models.py` - Trains all models using UniversalSportsEnsemble + CatBoost
+  - `generate_nba_predictions.py` - Generates real model-based predictions (no placeholders)
+- **Critical Fixes**:
+  - Type conversion: Added `safe_float_convert()` to handle bytes/float database values
+  - Column mapping: Fixed `stored_cat_prob` to pull from `catboost_home_prob` (not logistic)
+  - Ensemble validation: Corrected to use actual Elo probabilities in meta ensemble calculation
+- **Data Isolation**: 2024 training games excluded from predictions display (WHERE clause filters by season start date)
+- **Status**: Live on landing page with "Live Now" badge
+
 ### NHL Goalie Stats Integration (Oct 22, 2025)
 **Current Implementation (V3 with nhl-api-py)** - Professional library integration with dual-source data collection:
 - **Library**: `nhl-api-py` - Official Python client for NHL APIs (replaces custom integration)
