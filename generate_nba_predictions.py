@@ -38,7 +38,7 @@ def load_models():
     return ensemble, catboost, feature_names
 
 def get_upcoming_games():
-    """Get 2024-25 season games from complete schedule"""
+    """Get 2025-26 season games for predictions"""
     conn = sqlite3.connect(DATABASE)
     
     query = """
@@ -49,20 +49,20 @@ def get_upcoming_games():
             away_team_id as away_team
         FROM games
         WHERE sport = 'NBA' 
-        AND season = 2024
+        AND season = 2025
         ORDER BY game_date
     """
     
     df = pd.read_sql_query(query, conn)
     conn.close()
     
-    logger.info(f"Loaded {len(df)} games for 2024-25 season")
+    logger.info(f"Loaded {len(df)} games for 2025-26 season")
     return df
 
 def generate_predictions():
     """Generate predictions for all upcoming NBA games"""
     logger.info("=" * 70)
-    logger.info("GENERATING NBA PREDICTIONS FOR 2024-25 SEASON")
+    logger.info("GENERATING NBA PREDICTIONS FOR 2025-26 SEASON")
     logger.info("=" * 70)
     
     # Load models

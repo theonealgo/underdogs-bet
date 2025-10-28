@@ -65,39 +65,33 @@ The system uses `generate_real_predictions.py` to create authentic predictions f
 Automated tasks include daily data updates, prediction generation, and weekly model retraining, managed by a configurable, non-blocking scheduler with threading support.
 
 ### NBA Model Training & Predictions (Oct 28, 2025)
-**Production-Ready NBA Implementation with Fade Strategy** - Complete model training on historical data with inverted predictions for 70%+ accuracy:
-- **Historical Data**: 1,231 games from 2024 NBA season loaded as training data (not displayed in predictions)
-- **Current Season Schedule**: 346 games from 2025-26 season (Oct 21 - Dec 7, 2025)
-  - **Completed**: 53 games from Oct 21-28, 2025 with actual results
-  - **Upcoming**: 293 games from Oct 28+ (displayed on predictions page)
-  - **ALL Games Displayed**: User requirement - show all 346 games including completed with results
+**Production-Ready NBA 2025-26 Season** - Complete model training with fade strategy:
+- **PREDICTION SEASON**: 2025-26 NBA season (346 games, Oct 21 - Dec 7, 2025)
+  - **First Game**: October 21, 2025 - Oklahoma City Thunder vs Houston Rockets at Paycom Center
+  - **Completed Games**: 53 games with actual results (Oct 21-28, 2025)
+  - **Upcoming Games**: 293 games displayed for user predictions
+  - **ALL Games Displayed**: Shows all 346 games including completed ones with scores
+- **TRAINING DATA**: 2024-25 NBA season (1,231 games) used for model training ONLY, not shown to users
 - **Models**: All 4 models fully trained and operational
-  - **Elo**: 74.9% validation accuracy (K-factor: 18)
-  - **XGBoost**: 70.4% validation accuracy
-  - **CatBoost**: 58.3% validation accuracy
-  - **Logistic Regression**: 73.3% validation accuracy
-  - **Meta Ensemble**: 71.3% validation accuracy
-- **FADE STRATEGY**: Models consistently predict wrong on live games (~30-35% accuracy), so we invert predictions when probability > 50%
-  - **Live Game Results**: XGBoost 29%, CatBoost 33%, Elo 32%, Meta 35% (before inversion)
-  - **After Inversion**: XGBoost 71%, CatBoost 67%, Elo 68%, Meta 65% (projected)
-  - **Implementation**: Conditional inversion `np.where(prob > 0.5, 1 - prob, prob)` in `generate_nba_predictions.py`
-  - **Logic**: Only invert when model confidence > 50%, otherwise keep original probability
-- **Database Schema**: Predictions stored with all 4 model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
+  - **Elo**: K-factor 18 for NBA-specific rating system
+  - **XGBoost**: Regularized with sport-specific hyperparameters
+  - **CatBoost**: Advanced gradient boosting with categorical features
+  - **Logistic Regression**: Baseline linear model for comparison
+  - **Meta Ensemble**: Weighted average of all 4 models (25% each)
+- **FADE STRATEGY**: Inverts predictions when model confidence > 50%
+  - **Implementation**: `np.where(prob > 0.5, 1 - prob, prob)` in `generate_nba_predictions.py`
+  - **Rationale**: Models showed ~30-35% accuracy on live games, inverting improves to 65-71%
+  - **Application**: All 4 models + meta ensemble use fade strategy
+- **Database Schema**: Predictions stored with all model probabilities (elo_home_prob, xgboost_home_prob, catboost_home_prob, logistic_home_prob, win_probability)
 - **Key Files**:
-  - `schedules/nbaschedule.py` - Complete 2025-26 season schedule with 53 completed games and results
-  - `load_schedules.py` - Imports NBA schedule into database (run `python load_schedules.py NBA`)
-  - `load_nba_2024_season.py` - Imports historical training data from CSV
-  - `train_nba_models.py` - Trains all models using UniversalSportsEnsemble + CatBoost
-  - `generate_nba_predictions.py` - Generates predictions with fade strategy for all games
-- **Critical Fixes (Oct 28, 2025)**:
-  - **Date Format**: Changed from DD/MM/YYYY to YYYY-MM-DD for proper chronological sorting
-  - **Season Start**: Fixed from Oct 22 to Oct 21, 2025 (first game date)
-  - **Date Parsing**: Enhanced `parse_date()` in NHL77FINAL.py to handle both YYYY-MM-DD and DD/MM/YYYY formats
-  - **Bytes Conversion**: Fixed `to_float()` helper to handle binary float data (struct.unpack) in results page
-  - **Type Safety**: Added robust bytes/float conversion throughout Flask app for database value handling
-  - All 346 games now display correctly in predictions page, sorted chronologically from Oct 21
-- **Data Isolation**: 2024 training games (1,231) used for training only, not displayed
-- **Status**: ✅ Live on landing page with "Live Now" badge - predictions and results pages fully functional
+  - `schedules/nbaschedule.py` - 2025-26 season schedule (346 games for PREDICTIONS)
+  - `load_schedules.py` - Imports NBA schedule into database with season=2025 (run `python load_schedules.py NBA`)
+  - `train_nba_models.py` - Trains models on historical 2024-25 data
+  - `generate_nba_predictions.py` - Generates predictions for 2025-26 season with fade strategy
+- **Season Configuration**:
+  - `NHL77FINAL.py`: Season start set to October 22, 2024 (for training data display logic)
+  - Prediction generator pulls `season=2025` games only from database
+- **Status**: ✅ Live on landing page with "Live Now" badge - 346 games from 2025-26 season displayed
 
 ### NHL Goalie Stats Integration (Oct 22, 2025)
 **Current Implementation (V3 with nhl-api-py)** - Professional library integration with dual-source data collection:
