@@ -41,11 +41,17 @@ def get_db_connection():
     return conn
 
 def parse_date(date_str):
-    """Parse DD/MM/YYYY date string (handles timestamps like '05/09/2025 00:20')"""
+    """Parse date string from multiple formats (DD/MM/YYYY or YYYY-MM-DD)"""
     try:
         # Strip timestamp if present (everything after space)
         date_only = date_str.split(' ')[0] if ' ' in date_str else date_str
-        return datetime.strptime(date_only, '%d/%m/%Y')
+        
+        # Try YYYY-MM-DD format first (new format)
+        try:
+            return datetime.strptime(date_only, '%Y-%m-%d')
+        except:
+            # Fall back to DD/MM/YYYY format (old format)
+            return datetime.strptime(date_only, '%d/%m/%Y')
     except:
         return None
 
@@ -176,7 +182,7 @@ def get_upcoming_predictions(sport, days=365):
     
     # Generate predictions for ALL games from season start (Oct 7, 2025 for NHL, Sept 4 for NFL)
     # Show BOTH completed and upcoming games, sorted chronologically
-    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2025, 10, 22), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
+    season_starts = {'NHL': datetime(2025, 10, 7), 'NFL': datetime(2025, 9, 4), 'NBA': datetime(2025, 10, 21), 'MLB': datetime(2025, 3, 27), 'NCAAF': datetime(2025, 8, 30), 'NCAAB': datetime(2025, 11, 4)}
     season_start = season_starts.get(sport, datetime(2025, 1, 1))
     predictions = []
     
@@ -375,37 +381,71 @@ def calculate_model_performance(sport):
     dates = []
     
     for row in results_data:
+        # Safe float conversion helper
+        def to_float(val):
+            if val is None:
+                return None
+            if isinstance(val, (float, int)):
+                return float(val)
+            if isinstance(val, bytes):
+                # Try to unpack as binary float
+                try:
+                    import struct
+                    if len(val) == 8:
+                        return struct.unpack('d', val)[0]
+                    elif len(val) == 4:
+                        return struct.unpack('f', val)[0]
+                    else:
+                        # Try decoding as string
+                        return float(val.decode('utf-8', errors='ignore'))
+                except:
+                    return None
+            try:
+                return float(val)
+            except:
+                return None
+        
         # Actual winner
-        actual_winner = 'home' if row[4] > row[3] else 'away'
+        home_score = to_float(row[4])
+        away_score = to_float(row[3])
+        actual_winner = 'home' if home_score > away_score else 'away'
         
         # Only count if we have stored predictions
         if row[5] is not None:
             # Elo prediction
-            elo_winner = 'home' if row[5] > 0.5 else 'away'
-            results['elo']['total'] += 1
-            if elo_winner == actual_winner:
-                results['elo']['correct'] += 1
+            elo_prob = to_float(row[5])
+            if elo_prob is not None:
+                elo_winner = 'home' if elo_prob > 0.5 else 'away'
+                results['elo']['total'] += 1
+                if elo_winner == actual_winner:
+                    results['elo']['correct'] += 1
             
             # XGBoost prediction  
             if row[6] is not None:
-                xgb_winner = 'home' if row[6] > 0.5 else 'away'
-                results['xgboost']['total'] += 1
-                if xgb_winner == actual_winner:
-                    results['xgboost']['correct'] += 1
+                xgb_prob = to_float(row[6])
+                if xgb_prob is not None:
+                    xgb_winner = 'home' if xgb_prob > 0.5 else 'away'
+                    results['xgboost']['total'] += 1
+                    if xgb_winner == actual_winner:
+                        results['xgboost']['correct'] += 1
             
             # Logistic/CatBoost prediction
             if row[7] is not None:
-                cat_winner = 'home' if row[7] > 0.5 else 'away'
-                results['catboost']['total'] += 1
-                if cat_winner == actual_winner:
-                    results['catboost']['correct'] += 1
+                cat_prob = to_float(row[7])
+                if cat_prob is not None:
+                    cat_winner = 'home' if cat_prob > 0.5 else 'away'
+                    results['catboost']['total'] += 1
+                    if cat_winner == actual_winner:
+                        results['catboost']['correct'] += 1
             
             # Ensemble prediction
             if row[8] is not None:
-                ens_winner = 'home' if row[8] > 0.5 else 'away'
-                results['ensemble']['total'] += 1
-                if ens_winner == actual_winner:
-                    results['ensemble']['correct'] += 1
+                ens_prob = to_float(row[8])
+                if ens_prob is not None:
+                    ens_winner = 'home' if ens_prob > 0.5 else 'away'
+                    results['ensemble']['total'] += 1
+                    if ens_winner == actual_winner:
+                        results['ensemble']['correct'] += 1
         
         # Track dates
         dates.append(parse_date(row[0]))

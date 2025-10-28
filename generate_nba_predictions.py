@@ -50,7 +50,6 @@ def get_upcoming_games():
         FROM games
         WHERE sport = 'NBA' 
         AND season = 2025
-        AND home_score IS NULL
         ORDER BY game_date
     """
     

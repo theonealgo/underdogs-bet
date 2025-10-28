@@ -149,7 +149,7 @@ def load_nba_schedule():
     return inserted
 
 def convert_nba_date(date_str):
-    """Convert NBA date format 'Tue, Oct 21, 2025 7:30p' to DD/MM/YYYY"""
+    """Convert NBA date format 'Tue, Oct 21, 2025 7:30p' to YYYY-MM-DD"""
     try:
         # "Tue, Oct 21, 2025 7:30p" -> remove day of week and time
         # Split by comma: ["Tue", " Oct 21", " 2025 7:30p"]
@@ -160,7 +160,7 @@ def convert_nba_date(date_str):
             year_part = parts[2].strip().split()[0]  # "2025"
             date_only = f"{month_day} {year_part}"  # "Oct 21 2025"
             dt = datetime.strptime(date_only, '%b %d %Y')
-            return dt.strftime('%d/%m/%Y')
+            return dt.strftime('%Y-%m-%d')  # YYYY-MM-DD for proper sorting
         else:
             return date_str
     except Exception as e:
