@@ -1048,7 +1048,7 @@ if __name__ == '__main__':
     print("🏒 NHL Predictions - Live (77% Accuracy)")
     print("🏈 NFL Predictions - Live (84% Accuracy)")
     print("🏀 NBA Predictions - Live Now!")
-    print("⚾ MLB, 🏀 WNBA, 🏟️ NCAAF, 🏀 NCAAB - Coming Soon")
+    print("⚾ MLB, 🏀 WNBA, 🏟️ NCAAF - Coming Soon")
     print("="*60)
     print("✓ Platform ready!")
     print("🌐 Visit http://0.0.0.0:5000")
