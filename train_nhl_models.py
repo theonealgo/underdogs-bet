@@ -15,30 +15,31 @@ logger = logging.getLogger(__name__)
 DATABASE = 'sports_predictions_original.db'
 
 def load_nhl_training_data():
-    """Load 2024-25 NHL season games for training"""
-    conn = sqlite3.connect(DATABASE)
+    """Load 2024-25 NHL season games for training from nhlschedules.py"""
+    from nhlschedules import get_nhl_2024_schedule
     
-    query = """
-        SELECT 
-            game_id,
-            game_date,
-            home_team_id,
-            away_team_id,
-            home_score,
-            away_score,
-            status
-        FROM games
-        WHERE sport = 'NHL' 
-        AND season = 2024
-        AND home_score IS NOT NULL
-        AND status = 'final'
-        ORDER BY game_date
-    """
+    # Load historical data directly from nhlschedules.py (NOT from database)
+    schedule = get_nhl_2024_schedule()
     
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    # Convert to DataFrame
+    games = []
+    for game in schedule:
+        # Only include completed games with scores
+        if 'home_score' in game and 'away_score' in game:
+            if game['home_score'] is not None and game['away_score'] is not None:
+                games.append({
+                    'game_id': f"nhl_2024_{game['match_id']}",
+                    'game_date': game['date'],
+                    'home_team_id': game['home_team'],
+                    'away_team_id': game['away_team'],
+                    'home_score': game['home_score'],
+                    'away_score': game['away_score'],
+                    'status': 'final'
+                })
     
-    logger.info(f"Loaded {len(df)} training games from 2024-25 NHL season")
+    df = pd.DataFrame(games)
+    
+    logger.info(f"Loaded {len(df)} training games from 2024-25 NHL season (nhlschedules.py)")
     if len(df) > 0:
         logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
     

@@ -30,7 +30,7 @@ def get_nhl_games():
             status
         FROM games
         WHERE sport = 'NHL' 
-        AND season = 2026
+        AND season = 2025
         ORDER BY game_date
     """
     
