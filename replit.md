@@ -99,28 +99,37 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
   - Prediction generator pulls `season=2025` games only from database
 - **Status**: ✅ Live on landing page with "Live Now" badge - 346 games from 2025-26 season displayed
 
-### NHL Goalie Stats Integration (Oct 22, 2025)
-**Current Implementation (V3 with nhl-api-py)** - Professional library integration with dual-source data collection:
-- **Library**: `nhl-api-py` - Official Python client for NHL APIs (replaces custom integration)
-- **Data Collection**: Dual-source approach for complete coverage
-  - **Stats API**: 25 goalies with actual 2025-26 season stats (SV%, GAA, wins, losses)
-  - **Roster API**: 50 additional goalies from team rosters (league avg stats for those without games)
-  - **Total**: 75 goalies with 32/32 team coverage (up from 31/32)
-- **Team Mapping**: Automated via `map_team_goalies_v2.py`
-  - Selects goalie with most games played from each team's roster
-  - Full name format (first + last) for better data integrity
-  - **Known Limitation**: Some goalies have 0 GP due to trades/roster moves (use league avg stats)
-- **Feature**: Goalie differential (save % difference) weighted 0.3 for XGBoost, 0.2 for CatBoost
-- **Accuracy Results on 76 games (Oct 7-18, 2025)**:
-  - Elo: 52.6% (unchanged - doesn't use goalie feature)
-  - XGBoost: 44.7% (vs 43.4% baseline without goalies)
-  - CatBoost: 48.7% (vs 43.4% baseline without goalies)
-  - Meta: 47.4% (vs 43.4% baseline without goalies)
-- **Automation**: Auto-initialization on app startup if tables don't exist
-- **Manual Refresh**: `python fetch_nhl_goalies_v3.py` then `python map_team_goalies_v2.py`
-- **Manual Re-init**: Drop tables via `sqlite3 sports_predictions.db "DROP TABLE goalie_stats; DROP TABLE team_goalies;"` then restart
-- **Failure Mode**: Graceful fallback to league-average stats (91.0% SV%, 2.80 GAA)
-- **Future Enhancement**: Consider storing player IDs to handle mid-season trades and name collisions
+### NHL Advanced Model Implementation (Oct 29, 2025)
+**Production-Ready NHL 2025-26 Season** - Advanced ensemble models with comprehensive feature engineering:
+- **PREDICTION SEASON**: 2025-26 NHL season (1,132 games, Oct 7, 2025 - Apr 16, 2026)
+- **TRAINING DATA**: October 2025 games (92 games) used for model training
+- **Models**: All 3 models fully trained and operational
+  - **XGBoost**: Regularized with NHL-specific hyperparameters (depth=5, lr=0.05, n_estimators=200, reg_alpha=0.5, reg_lambda=1.0)
+  - **CatBoost**: Advanced gradient boosting (depth=6, lr=0.05, iterations=200, l2_leaf_reg=3.0)
+  - **Logistic Regression**: Baseline linear model for comparison
+  - **Meta Ensemble**: Weighted average of all 3 models
+- **ADVANCED FEATURE ENGINEERING** (36 features total):
+  - **Rolling Windows**: Win %, goals for/against in last 5, 10, and 15 games
+  - **Home/Away Splits**: Performance splits for home vs road games
+  - **Rest & Fatigue**: Days since last game, back-to-back game penalties
+  - **Strength of Schedule**: Average opponent strength over recent games
+  - **Head-to-Head History**: Last 5 matchups between teams, average total goals
+  - **Goalie Performance**: Save percentage differential between starting goalies
+  - **Differential Features**: Win % diff, goals diff, defense diff, rest diff, form diff
+- **TRAINING RESULTS** (92 games):
+  - XGBoost: 47.4% accuracy, 1.61 goals MAE
+  - CatBoost: 47.4% accuracy, 1.56 goals MAE
+  - Logistic: 52.6% accuracy
+  - 36 engineered features with multiple time windows
+- **PREDICTION STRATEGY**: Direct model predictions with ensemble averaging
+- **Database Schema**: Predictions stored with all model probabilities (xgboost_home_prob, catboost_home_prob, logistic_home_prob, meta_home_prob)
+- **Display Format**: Column order - XGBoost, CatBoost, Logistic (no Elo), Meta (left to right)
+- **Key Files**:
+  - `src/models/nhl_predictor.py` - Advanced NHL predictor with feature engineering
+  - `train_nhl_models.py` - Trains XGBoost, CatBoost, Logistic models
+  - `generate_nhl_predictions.py` - Generates predictions for 2025-26 season
+  - `import_nhl_october_2025_results.py` - Imports historical results for training
+- **Status**: ✅ All 1,132 predictions generated for 2025-26 season
 
 ## External Dependencies
 

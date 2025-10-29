@@ -237,11 +237,11 @@ class NHLPredictor:
         """Calculate ADVANCED team statistics with multiple windows and splits"""
         # Convert current_date to date object if it's a string
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date).date()
+            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True).date()
         
-        # Ensure game_date column is datetime for comparison
+        # Ensure game_date column is datetime for comparison (DD/MM/YYYY format)
         games_df = games_df.copy()
-        games_df['game_date'] = pd.to_datetime(games_df['game_date'])
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
         
         # Get ALL team's games before current date
         all_team_games = games_df[
@@ -413,10 +413,10 @@ class NHLPredictor:
     def _get_head_to_head_stats(self, home_team: str, away_team: str, current_date, games_df: pd.DataFrame) -> Dict:
         """Calculate head-to-head statistics"""
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date).date()
+            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True).date()
         
         games_df = games_df.copy()
-        games_df['game_date'] = pd.to_datetime(games_df['game_date'])
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
         
         # Get previous matchups
         h2h_games = games_df[
