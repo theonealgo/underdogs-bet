@@ -132,11 +132,10 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
 - **Display Format**: Column order - XGBoost, CatBoost, Elo, Meta (left to right) - matches NBA/NFL
 - **Key Files**:
   - `src/models/nhl_predictor.py` - Advanced NHL predictor with feature engineering and Elo system
-  - `train_nhl_models.py` - Trains XGBoost, CatBoost, builds Elo ratings
+  - `train_nhl_models.py` - Trains XGBoost, CatBoost, builds Elo ratings (loads data directly from nhlschedules.py)
   - `generate_nhl_predictions.py` - Generates predictions for 2025-26 season
-  - `import_nhl_2024_season.py` - Imports full 2024-25 season (1,175 games) from nhlschedules.py
-  - `nhlschedules.py` - Complete 2024-25 season data with actual results
-- **Status**: ✅ All 1,132 predictions generated with 4-model ensemble trained on full season data
+  - `nhlschedules.py` - Complete 2024-25 season data (1,176 games) used for training ONLY (not imported to DB)
+- **Status**: ✅ All 1,132 predictions generated with 4-model ensemble trained on full 2024-25 season data
 
 ## External Dependencies
 
