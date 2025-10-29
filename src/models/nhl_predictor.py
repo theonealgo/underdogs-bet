@@ -31,9 +31,9 @@ class NHLPredictor:
         self.is_trained = False
         self.feature_names = None
         
-        # Elo rating system (K-factor=32 for NHL - higher for faster adaptation to form changes)
+        # Elo rating system (K-factor=45 for NHL - higher for faster adaptation to form changes)
         self.elo_ratings = {}  # team_id -> rating
-        self.elo_k_factor = 32  # Increased from 22 for faster response to recent performance
+        self.elo_k_factor = 45  # Increased for faster response to recent performance
         self.elo_initial_rating = 1500
         
         # XGBoost parameters - AGGRESSIVE regularization to prevent overfitting on small samples
@@ -208,10 +208,8 @@ class NHLPredictor:
                 # Overall performance (multiple windows)
                 'home_win_pct_5': home_stats['win_pct_5'],
                 'home_win_pct_10': home_stats['win_pct_10'],
-                'home_win_pct_15': home_stats['win_pct_15'],
                 'away_win_pct_5': away_stats['win_pct_5'],
                 'away_win_pct_10': away_stats['win_pct_10'],
-                'away_win_pct_15': away_stats['win_pct_15'],
                 
                 # Offensive stats
                 'home_goals_per_game_5': home_stats['goals_per_game_5'],
@@ -299,7 +297,6 @@ class NHLPredictor:
         # Calculate stats for multiple windows
         stats_5 = self._calculate_window_stats(team_id, all_team_games.head(5))
         stats_10 = self._calculate_window_stats(team_id, all_team_games.head(10))
-        stats_15 = self._calculate_window_stats(team_id, all_team_games.head(15))
         
         # Calculate home/away splits
         home_away_stats = self._calculate_home_away_splits(team_id, all_team_games, is_home)
@@ -314,7 +311,6 @@ class NHLPredictor:
             # Multiple window win percentages
             'win_pct_5': stats_5['win_pct'],
             'win_pct_10': stats_10['win_pct'],
-            'win_pct_15': stats_15['win_pct'],
             
             # Multiple window offensive stats
             'goals_per_game_5': stats_5['goals_per_game'],
@@ -347,7 +343,7 @@ class NHLPredictor:
     def _default_team_stats(self) -> Dict:
         """Return default stats for teams without history"""
         return {
-            'win_pct_5': 0.5, 'win_pct_10': 0.5, 'win_pct_15': 0.5,
+            'win_pct_5': 0.5, 'win_pct_10': 0.5,
             'goals_per_game_5': 3.0, 'goals_per_game_10': 3.0,
             'goals_against_5': 3.0, 'goals_against_10': 3.0,
             'recent_form': 0.5,
@@ -552,8 +548,8 @@ class NHLPredictor:
             
             # RECENCY WEIGHTING: Exponential decay giving more weight to recent games
             # Weight formula: weight = exp(alpha * (index / n_samples))
-            # Recent games get weight ~2-3x older games
-            alpha = 1.5  # Controls strength of recency bias
+            # Recent games get weight ~3-4x older games
+            alpha = 2.5  # Controls strength of recency bias
             sample_weights = np.exp(alpha * np.arange(train_size) / train_size)
             sample_weights = sample_weights / sample_weights.mean()  # Normalize to mean=1
             
