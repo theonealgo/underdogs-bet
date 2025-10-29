@@ -31,23 +31,23 @@ class NHLPredictor:
         self.is_trained = False
         self.feature_names = None
         
-        # Elo rating system (K-factor=22 for NHL)
+        # Elo rating system (K-factor=32 for NHL - higher for faster adaptation to form changes)
         self.elo_ratings = {}  # team_id -> rating
-        self.elo_k_factor = 22
+        self.elo_k_factor = 32  # Increased from 22 for faster response to recent performance
         self.elo_initial_rating = 1500
         
-        # XGBoost parameters - optimized with regularization
+        # XGBoost parameters - AGGRESSIVE regularization to prevent overfitting on small samples
         self.xgb_winner_params = {
             'objective': 'binary:logistic',
             'eval_metric': 'logloss',
-            'max_depth': 5,
-            'learning_rate': 0.05,
-            'n_estimators': 200,
-            'min_child_weight': 3,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
-            'reg_alpha': 0.5,
-            'reg_lambda': 1.0,
+            'max_depth': 3,  # Reduced from 5 - shallower trees = less overfitting
+            'learning_rate': 0.03,  # Reduced from 0.05 - slower learning = better generalization
+            'n_estimators': 100,  # Reduced from 200 - fewer trees with small data
+            'min_child_weight': 5,  # Increased from 3 - require more samples per leaf
+            'subsample': 0.7,  # Reduced from 0.8 - more stochasticity
+            'colsample_bytree': 0.7,  # Reduced from 0.8 - prevent feature overfitting
+            'reg_alpha': 2.0,  # Increased from 0.5 - stronger L1 regularization
+            'reg_lambda': 3.0,  # Increased from 1.0 - stronger L2 regularization
             'random_state': 42,
             'verbosity': 0
         }
@@ -55,38 +55,38 @@ class NHLPredictor:
         self.xgb_total_params = {
             'objective': 'reg:squarederror',
             'eval_metric': 'rmse',
-            'max_depth': 5,
-            'learning_rate': 0.05,
-            'n_estimators': 200,
-            'min_child_weight': 3,
-            'subsample': 0.8,
-            'colsample_bytree': 0.8,
-            'reg_alpha': 0.5,
-            'reg_lambda': 1.0,
+            'max_depth': 3,  # Reduced from 5
+            'learning_rate': 0.03,  # Reduced from 0.05
+            'n_estimators': 100,  # Reduced from 200
+            'min_child_weight': 5,  # Increased from 3
+            'subsample': 0.7,  # Reduced from 0.8
+            'colsample_bytree': 0.7,  # Reduced from 0.8
+            'reg_alpha': 2.0,  # Increased from 0.5
+            'reg_lambda': 3.0,  # Increased from 1.0
             'random_state': 42,
             'verbosity': 0
         }
         
-        # CatBoost parameters - optimized for NHL
+        # CatBoost parameters - AGGRESSIVE regularization for small sample sizes
         self.catboost_winner_params = {
-            'iterations': 200,
-            'depth': 6,
-            'learning_rate': 0.05,
-            'l2_leaf_reg': 3.0,
-            'random_strength': 1.0,
-            'bagging_temperature': 0.5,
+            'iterations': 100,  # Reduced from 200 - fewer iterations with small data
+            'depth': 4,  # Reduced from 6 - shallower trees
+            'learning_rate': 0.03,  # Reduced from 0.05 - slower learning
+            'l2_leaf_reg': 5.0,  # Increased from 3.0 - stronger regularization
+            'random_strength': 1.5,  # Increased - more randomization
+            'bagging_temperature': 0.7,  # Increased - more Bayesian bootstrap randomness
             'random_state': 42,
             'verbose': False,
             'loss_function': 'Logloss'
         }
         
         self.catboost_total_params = {
-            'iterations': 200,
-            'depth': 6,
-            'learning_rate': 0.05,
-            'l2_leaf_reg': 3.0,
-            'random_strength': 1.0,
-            'bagging_temperature': 0.5,
+            'iterations': 100,  # Reduced from 200
+            'depth': 4,  # Reduced from 6
+            'learning_rate': 0.03,  # Reduced from 0.05
+            'l2_leaf_reg': 5.0,  # Increased from 3.0
+            'random_strength': 1.5,  # Increased
+            'bagging_temperature': 0.7,  # Increased
             'random_state': 42,
             'verbose': False,
             'loss_function': 'RMSE'
@@ -532,7 +532,7 @@ class NHLPredictor:
                 return {'success': False, 'error': 'Insufficient training data'}
             
             # Prepare features and targets
-            feature_cols = [col for col in complete_games.columns if col not in ['home_win', 'total_goals']]
+            feature_cols = [col for col in complete_games.columns if col not in ['home_win', 'total_goals', 'game_date_rank']]
             X = complete_games[feature_cols]
             y_winner = complete_games['home_win']
             y_total = complete_games['total_goals']
@@ -540,33 +540,50 @@ class NHLPredictor:
             self.feature_names = feature_cols
             self.logger.info(f"Training with {len(feature_cols)} features")
             
-            # Split data
-            X_train, X_test, y_train_winner, y_test_winner = train_test_split(X, y_winner, test_size=0.2, random_state=42)
+            # TIME-BASED SPLIT: Train on earlier games, test on most recent games
+            # Sort games chronologically (already should be sorted from query)
+            n_samples = len(X)
+            train_size = int(0.8 * n_samples)
             
-            # Train XGBoost winner model
+            X_train = X.iloc[:train_size]
+            X_test = X.iloc[train_size:]
+            y_train_winner = y_winner.iloc[:train_size]
+            y_test_winner = y_winner.iloc[train_size:]
+            
+            # RECENCY WEIGHTING: Exponential decay giving more weight to recent games
+            # Weight formula: weight = exp(alpha * (index / n_samples))
+            # Recent games get weight ~2-3x older games
+            alpha = 1.5  # Controls strength of recency bias
+            sample_weights = np.exp(alpha * np.arange(train_size) / train_size)
+            sample_weights = sample_weights / sample_weights.mean()  # Normalize to mean=1
+            
+            self.logger.info(f"Recency weighting: oldest game weight={sample_weights[0]:.2f}, newest game weight={sample_weights[-1]:.2f}")
+            
+            # Train XGBoost winner model with recency weighting
             self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
-            self.xgb_winner_model.fit(X_train, y_train_winner)
+            self.xgb_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
             xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
-            self.logger.info(f"XGBoost winner accuracy: {xgb_acc:.3f}")
+            self.logger.info(f"XGBoost winner accuracy (time-based test): {xgb_acc:.3f}")
             
-            # Train CatBoost winner model
+            # Train CatBoost winner model with recency weighting
             self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
-            self.catboost_winner_model.fit(X_train, y_train_winner)
+            self.catboost_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
             catboost_acc = accuracy_score(y_test_winner, self.catboost_winner_model.predict(X_test))
-            self.logger.info(f"CatBoost winner accuracy: {catboost_acc:.3f}")
+            self.logger.info(f"CatBoost winner accuracy (time-based test): {catboost_acc:.3f}")
             
-            # Train totals models
-            X_train, X_test, y_train_total, y_test_total = train_test_split(X, y_total, test_size=0.2, random_state=42)
+            # Train totals models with same time-based split and recency weighting
+            y_train_total = y_total.iloc[:train_size]
+            y_test_total = y_total.iloc[train_size:]
             
             self.xgb_total_model = xgb.XGBRegressor(**self.xgb_total_params)
-            self.xgb_total_model.fit(X_train, y_train_total)
+            self.xgb_total_model.fit(X_train, y_train_total, sample_weight=sample_weights)
             xgb_mae = mean_absolute_error(y_test_total, self.xgb_total_model.predict(X_test))
-            self.logger.info(f"XGBoost total MAE: {xgb_mae:.3f}")
+            self.logger.info(f"XGBoost total MAE (time-based test): {xgb_mae:.3f}")
             
             self.catboost_total_model = CatBoostRegressor(**self.catboost_total_params)
-            self.catboost_total_model.fit(X_train, y_train_total)
+            self.catboost_total_model.fit(X_train, y_train_total, sample_weight=sample_weights)
             catboost_mae = mean_absolute_error(y_test_total, self.catboost_total_model.predict(X_test))
-            self.logger.info(f"CatBoost total MAE: {catboost_mae:.3f}")
+            self.logger.info(f"CatBoost total MAE (time-based test): {catboost_mae:.3f}")
             
             self.is_trained = True
             self._save_models()
