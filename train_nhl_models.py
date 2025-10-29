@@ -15,35 +15,46 @@ logger = logging.getLogger(__name__)
 DATABASE = 'sports_predictions_original.db'
 
 def load_nhl_training_data():
-    """Load 2024-25 NHL season games for training from nhlschedules.py"""
-    from nhlschedules import get_nhl_2024_schedule
+    """Load 3 seasons of NHL historical data (2022-25) from API"""
+    import pickle
+    import os
     
-    # Load historical data directly from nhlschedules.py (NOT from database)
-    schedule = get_nhl_2024_schedule()
-    
-    # Convert to DataFrame
-    games = []
-    for game in schedule:
-        # Only include completed games with scores
-        if 'home_score' in game and 'away_score' in game:
-            if game['home_score'] is not None and game['away_score'] is not None:
-                games.append({
-                    'game_id': f"nhl_2024_{game['match_id']}",
-                    'game_date': game['date'],
-                    'home_team_id': game['home_team'],
-                    'away_team_id': game['away_team'],
-                    'home_score': game['home_score'],
-                    'away_score': game['away_score'],
-                    'status': 'final'
-                })
-    
-    df = pd.DataFrame(games)
-    
-    logger.info(f"Loaded {len(df)} training games from 2024-25 NHL season (nhlschedules.py)")
-    if len(df) > 0:
-        logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-    
-    return df
+    # Check if historical data exists
+    if os.path.exists('nhl_historical_data.pkl'):
+        with open('nhl_historical_data.pkl', 'rb') as f:
+            all_games = pickle.load(f)
+        
+        # Convert to DataFrame with date format conversion (YYYY-MM-DD -> DD/MM/YYYY)
+        from datetime import datetime
+        games = []
+        for game in all_games:
+            # Convert ISO date format to DD/MM/YYYY
+            try:
+                date_obj = datetime.strptime(game['date'], '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%d/%m/%Y')
+            except:
+                formatted_date = game['date']
+            
+            games.append({
+                'game_id': f"nhl_{game['match_id']}",
+                'game_date': formatted_date,
+                'home_team_id': game['home_team'],
+                'away_team_id': game['away_team'],
+                'home_score': game['home_score'],
+                'away_score': game['away_score'],
+                'status': 'final'
+            })
+        
+        df = pd.DataFrame(games)
+        
+        logger.info(f"Loaded {len(df)} training games from 3 NHL seasons (2022-25) - API data")
+        if len(df) > 0:
+            logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+        
+        return df
+    else:
+        logger.error("Historical data file not found. Run 'python fetch_nhl_historical_data.py' first")
+        return pd.DataFrame()
 
 def main():
     """Main training function"""

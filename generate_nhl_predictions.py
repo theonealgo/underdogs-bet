@@ -41,30 +41,42 @@ def get_nhl_games():
     return df
 
 def get_historical_games():
-    """Get historical games for feature engineering"""
-    conn = sqlite3.connect(DATABASE)
+    """Get historical games for feature engineering from API data"""
+    import pickle
+    import os
     
-    query = """
-        SELECT 
-            game_id,
-            game_date,
-            home_team_id,
-            away_team_id,
-            home_score,
-            away_score,
-            status
-        FROM games
-        WHERE sport = 'NHL' 
-        AND home_score IS NOT NULL
-        AND status = 'final'
-        ORDER BY game_date
-    """
-    
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    logger.info(f"Loaded {len(df)} historical games for feature engineering")
-    return df
+    # Load from pickle file (same as training)
+    if os.path.exists('nhl_historical_data.pkl'):
+        with open('nhl_historical_data.pkl', 'rb') as f:
+            all_games = pickle.load(f)
+        
+        # Convert to DataFrame with date format conversion
+        from datetime import datetime
+        games = []
+        for game in all_games:
+            # Convert ISO date format to DD/MM/YYYY
+            try:
+                date_obj = datetime.strptime(game['date'], '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%d/%m/%Y')
+            except:
+                formatted_date = game['date']
+            
+            games.append({
+                'game_id': f"nhl_{game['match_id']}",
+                'game_date': formatted_date,
+                'home_team_id': game['home_team'],
+                'away_team_id': game['away_team'],
+                'home_score': game['home_score'],
+                'away_score': game['away_score'],
+                'status': 'final'
+            })
+        
+        df = pd.DataFrame(games)
+        logger.info(f"Loaded {len(df)} historical games for feature engineering")
+        return df
+    else:
+        logger.warning("Historical data file not found")
+        return pd.DataFrame()
 
 def main():
     """Main prediction generation function"""
