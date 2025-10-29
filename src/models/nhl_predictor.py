@@ -8,7 +8,9 @@ import os
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error
+from sklearn.linear_model import LogisticRegression
 import xgboost as xgb
+from catboost import CatBoostClassifier, CatBoostRegressor
 
 
 class NHLPredictor:
@@ -22,28 +24,68 @@ class NHLPredictor:
         self.db_manager = db_manager
         
         # Initialize models
-        self.winner_model = None
-        self.total_model = None
+        self.xgb_winner_model = None
+        self.catboost_winner_model = None
+        self.logistic_model = None
+        self.xgb_total_model = None
+        self.catboost_total_model = None
         self.is_trained = False
         self.feature_names = None
         
-        # Model parameters
-        self.winner_params = {
+        # XGBoost parameters - optimized with regularization
+        self.xgb_winner_params = {
             'objective': 'binary:logistic',
             'eval_metric': 'logloss',
-            'max_depth': 4,
-            'learning_rate': 0.1,
-            'n_estimators': 100,
-            'random_state': 42
+            'max_depth': 5,
+            'learning_rate': 0.05,
+            'n_estimators': 200,
+            'min_child_weight': 3,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'reg_alpha': 0.5,
+            'reg_lambda': 1.0,
+            'random_state': 42,
+            'verbosity': 0
         }
         
-        self.total_params = {
+        self.xgb_total_params = {
             'objective': 'reg:squarederror',
             'eval_metric': 'rmse',
-            'max_depth': 4,
-            'learning_rate': 0.1,
-            'n_estimators': 100,
-            'random_state': 42
+            'max_depth': 5,
+            'learning_rate': 0.05,
+            'n_estimators': 200,
+            'min_child_weight': 3,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'reg_alpha': 0.5,
+            'reg_lambda': 1.0,
+            'random_state': 42,
+            'verbosity': 0
+        }
+        
+        # CatBoost parameters - optimized for NHL
+        self.catboost_winner_params = {
+            'iterations': 200,
+            'depth': 6,
+            'learning_rate': 0.05,
+            'l2_leaf_reg': 3.0,
+            'random_strength': 1.0,
+            'bagging_temperature': 0.5,
+            'random_state': 42,
+            'verbose': False,
+            'loss_function': 'Logloss'
+        }
+        
+        self.catboost_total_params = {
+            'iterations': 200,
+            'depth': 6,
+            'learning_rate': 0.05,
+            'l2_leaf_reg': 3.0,
+            'random_strength': 1.0,
+            'bagging_temperature': 0.5,
+            'random_state': 42,
+            'verbose': False,
+            'loss_function': 'RMSE'
         }
         
         # Create model directory
@@ -55,15 +97,24 @@ class NHLPredictor:
     def _load_models(self):
         """Load saved models if they exist"""
         try:
-            winner_path = os.path.join(self.model_dir, 'nhl_winner_model.pkl')
-            total_path = os.path.join(self.model_dir, 'nhl_total_model.pkl')
+            xgb_winner_path = os.path.join(self.model_dir, 'nhl_xgb_winner.pkl')
+            catboost_winner_path = os.path.join(self.model_dir, 'nhl_catboost_winner.pkl')
+            logistic_path = os.path.join(self.model_dir, 'nhl_logistic.pkl')
+            xgb_total_path = os.path.join(self.model_dir, 'nhl_xgb_total.pkl')
+            catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
             
-            if os.path.exists(winner_path) and os.path.exists(total_path):
-                with open(winner_path, 'rb') as f:
-                    self.winner_model = pickle.load(f)
-                with open(total_path, 'rb') as f:
-                    self.total_model = pickle.load(f)
+            if os.path.exists(xgb_winner_path):
+                with open(xgb_winner_path, 'rb') as f:
+                    self.xgb_winner_model = pickle.load(f)
+                with open(catboost_winner_path, 'rb') as f:
+                    self.catboost_winner_model = pickle.load(f)
+                with open(logistic_path, 'rb') as f:
+                    self.logistic_model = pickle.load(f)
+                with open(xgb_total_path, 'rb') as f:
+                    self.xgb_total_model = pickle.load(f)
+                with open(catboost_total_path, 'rb') as f:
+                    self.catboost_total_model = pickle.load(f)
                 if os.path.exists(features_path):
                     with open(features_path, 'rb') as f:
                         self.feature_names = pickle.load(f)
@@ -76,14 +127,23 @@ class NHLPredictor:
     def _save_models(self):
         """Save trained models"""
         try:
-            winner_path = os.path.join(self.model_dir, 'nhl_winner_model.pkl')
-            total_path = os.path.join(self.model_dir, 'nhl_total_model.pkl')
+            xgb_winner_path = os.path.join(self.model_dir, 'nhl_xgb_winner.pkl')
+            catboost_winner_path = os.path.join(self.model_dir, 'nhl_catboost_winner.pkl')
+            logistic_path = os.path.join(self.model_dir, 'nhl_logistic.pkl')
+            xgb_total_path = os.path.join(self.model_dir, 'nhl_xgb_total.pkl')
+            catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
             
-            with open(winner_path, 'wb') as f:
-                pickle.dump(self.winner_model, f)
-            with open(total_path, 'wb') as f:
-                pickle.dump(self.total_model, f)
+            with open(xgb_winner_path, 'wb') as f:
+                pickle.dump(self.xgb_winner_model, f)
+            with open(catboost_winner_path, 'wb') as f:
+                pickle.dump(self.catboost_winner_model, f)
+            with open(logistic_path, 'wb') as f:
+                pickle.dump(self.logistic_model, f)
+            with open(xgb_total_path, 'wb') as f:
+                pickle.dump(self.xgb_total_model, f)
+            with open(catboost_total_path, 'wb') as f:
+                pickle.dump(self.catboost_total_model, f)
             with open(features_path, 'wb') as f:
                 pickle.dump(self.feature_names, f)
             
@@ -92,34 +152,75 @@ class NHLPredictor:
             self.logger.error(f"Error saving NHL models: {e}")
     
     def create_features(self, games_df: pd.DataFrame, historical_games: pd.DataFrame = None) -> pd.DataFrame:
-        """Create features for NHL games"""
+        """Create ADVANCED features for NHL games"""
         features_list = []
         
         # Use historical_games if provided, otherwise use games_df
         history_df = historical_games if historical_games is not None and not historical_games.empty else games_df
         
         for idx, game in games_df.iterrows():
-            # Get team stats from recent games using historical data
-            home_stats = self._get_team_stats(game['home_team_id'], game['game_date'], history_df)
-            away_stats = self._get_team_stats(game['away_team_id'], game['game_date'], history_df)
+            # Get comprehensive team stats
+            home_stats = self._get_advanced_team_stats(game['home_team_id'], game['game_date'], history_df, is_home=True)
+            away_stats = self._get_advanced_team_stats(game['away_team_id'], game['game_date'], history_df, is_home=False)
+            
+            # Get head-to-head stats
+            h2h_stats = self._get_head_to_head_stats(game['home_team_id'], game['away_team_id'], game['game_date'], history_df)
             
             features = {
-                # Home team features
-                'home_win_pct': home_stats['win_pct'],
-                'home_goals_per_game': home_stats['goals_per_game'],
-                'home_goals_against_per_game': home_stats['goals_against_per_game'],
-                'home_recent_form': home_stats['recent_form'],
+                # Overall performance (multiple windows)
+                'home_win_pct_5': home_stats['win_pct_5'],
+                'home_win_pct_10': home_stats['win_pct_10'],
+                'home_win_pct_15': home_stats['win_pct_15'],
+                'away_win_pct_5': away_stats['win_pct_5'],
+                'away_win_pct_10': away_stats['win_pct_10'],
+                'away_win_pct_15': away_stats['win_pct_15'],
                 
-                # Away team features
-                'away_win_pct': away_stats['win_pct'],
-                'away_goals_per_game': away_stats['goals_per_game'],
-                'away_goals_against_per_game': away_stats['goals_against_per_game'],
+                # Offensive stats
+                'home_goals_per_game_5': home_stats['goals_per_game_5'],
+                'home_goals_per_game_10': home_stats['goals_per_game_10'],
+                'away_goals_per_game_5': away_stats['goals_per_game_5'],
+                'away_goals_per_game_10': away_stats['goals_per_game_10'],
+                
+                # Defensive stats
+                'home_goals_against_5': home_stats['goals_against_5'],
+                'home_goals_against_10': home_stats['goals_against_10'],
+                'away_goals_against_5': away_stats['goals_against_5'],
+                'away_goals_against_10': away_stats['goals_against_10'],
+                
+                # Recent form
+                'home_recent_form': home_stats['recent_form'],
                 'away_recent_form': away_stats['recent_form'],
                 
+                # Home/away splits
+                'home_home_win_pct': home_stats['home_win_pct'],
+                'away_away_win_pct': away_stats['away_win_pct'],
+                'home_home_goals_avg': home_stats['home_goals_avg'],
+                'away_away_goals_avg': away_stats['away_goals_avg'],
+                
+                # Rest and fatigue
+                'home_rest_days': home_stats['rest_days'],
+                'away_rest_days': away_stats['rest_days'],
+                'home_back_to_back': home_stats['back_to_back'],
+                'away_back_to_back': away_stats['back_to_back'],
+                
+                # Strength of schedule
+                'home_opponent_strength': home_stats['opponent_strength'],
+                'away_opponent_strength': away_stats['opponent_strength'],
+                
+                # Goalie performance differential
+                'goalie_sv_pct_diff': home_stats.get('goalie_sv_pct', 0.910) - away_stats.get('goalie_sv_pct', 0.910),
+                
+                # Head-to-head
+                'h2h_home_wins': h2h_stats['home_wins'],
+                'h2h_total_games': h2h_stats['total_games'],
+                'h2h_avg_total_goals': h2h_stats['avg_total_goals'],
+                
                 # Differential features
-                'win_pct_diff': home_stats['win_pct'] - away_stats['win_pct'],
-                'goals_diff': home_stats['goals_per_game'] - away_stats['goals_per_game'],
-                'defense_diff': away_stats['goals_against_per_game'] - home_stats['goals_against_per_game'],
+                'win_pct_diff_5': home_stats['win_pct_5'] - away_stats['win_pct_5'],
+                'win_pct_diff_10': home_stats['win_pct_10'] - away_stats['win_pct_10'],
+                'goals_diff_5': home_stats['goals_per_game_5'] - away_stats['goals_per_game_5'],
+                'defense_diff_5': away_stats['goals_against_5'] - home_stats['goals_against_5'],
+                'rest_diff': home_stats['rest_days'] - away_stats['rest_days'],
                 'form_diff': home_stats['recent_form'] - away_stats['recent_form'],
             }
             
@@ -132,8 +233,8 @@ class NHLPredictor:
         
         return pd.DataFrame(features_list)
     
-    def _get_team_stats(self, team_id: str, current_date, games_df: pd.DataFrame) -> Dict:
-        """Calculate team statistics from recent games"""
+    def _get_advanced_team_stats(self, team_id: str, current_date, games_df: pd.DataFrame, is_home: bool) -> Dict:
+        """Calculate ADVANCED team statistics with multiple windows and splits"""
         # Convert current_date to date object if it's a string
         if isinstance(current_date, str):
             current_date = pd.to_datetime(current_date).date()
@@ -142,58 +243,215 @@ class NHLPredictor:
         games_df = games_df.copy()
         games_df['game_date'] = pd.to_datetime(games_df['game_date'])
         
-        # Get team's games before current date
-        team_games = games_df[
+        # Get ALL team's games before current date
+        all_team_games = games_df[
             ((games_df['home_team_id'] == team_id) | (games_df['away_team_id'] == team_id)) &
             (games_df['game_date'].dt.date < current_date) &
             (games_df['status'] == 'final')
-        ].sort_values('game_date', ascending=False).head(10)  # Last 10 games
+        ].sort_values('game_date', ascending=False)
         
-        if len(team_games) == 0:
+        if len(all_team_games) == 0:
             # Default stats for new teams or start of season
-            return {
-                'win_pct': 0.5,
-                'goals_per_game': 3.0,
-                'goals_against_per_game': 3.0,
-                'recent_form': 0.5
-            }
+            return self._default_team_stats()
+        
+        # Calculate rest days
+        rest_days = self._calculate_rest_days(team_id, current_date, all_team_games)
+        back_to_back = 1 if rest_days == 0 else 0
+        
+        # Calculate stats for multiple windows
+        stats_5 = self._calculate_window_stats(team_id, all_team_games.head(5))
+        stats_10 = self._calculate_window_stats(team_id, all_team_games.head(10))
+        stats_15 = self._calculate_window_stats(team_id, all_team_games.head(15))
+        
+        # Calculate home/away splits
+        home_away_stats = self._calculate_home_away_splits(team_id, all_team_games, is_home)
+        
+        # Calculate strength of schedule
+        opponent_strength = self._calculate_opponent_strength(team_id, all_team_games.head(10))
+        
+        # Get goalie stats if available
+        goalie_sv_pct = self._get_goalie_sv_pct(team_id)
+        
+        return {
+            # Multiple window win percentages
+            'win_pct_5': stats_5['win_pct'],
+            'win_pct_10': stats_10['win_pct'],
+            'win_pct_15': stats_15['win_pct'],
+            
+            # Multiple window offensive stats
+            'goals_per_game_5': stats_5['goals_per_game'],
+            'goals_per_game_10': stats_10['goals_per_game'],
+            
+            # Multiple window defensive stats
+            'goals_against_5': stats_5['goals_against'],
+            'goals_against_10': stats_10['goals_against'],
+            
+            # Recent form (last 5 games)
+            'recent_form': stats_5['win_pct'],
+            
+            # Home/away splits
+            'home_win_pct': home_away_stats['home_win_pct'],
+            'away_win_pct': home_away_stats['away_win_pct'],
+            'home_goals_avg': home_away_stats['home_goals_avg'],
+            'away_goals_avg': home_away_stats['away_goals_avg'],
+            
+            # Rest and fatigue
+            'rest_days': rest_days,
+            'back_to_back': back_to_back,
+            
+            # Strength of schedule
+            'opponent_strength': opponent_strength,
+            
+            # Goalie stats
+            'goalie_sv_pct': goalie_sv_pct
+        }
+    
+    def _default_team_stats(self) -> Dict:
+        """Return default stats for teams without history"""
+        return {
+            'win_pct_5': 0.5, 'win_pct_10': 0.5, 'win_pct_15': 0.5,
+            'goals_per_game_5': 3.0, 'goals_per_game_10': 3.0,
+            'goals_against_5': 3.0, 'goals_against_10': 3.0,
+            'recent_form': 0.5,
+            'home_win_pct': 0.55, 'away_win_pct': 0.45,
+            'home_goals_avg': 3.2, 'away_goals_avg': 2.8,
+            'rest_days': 1, 'back_to_back': 0,
+            'opponent_strength': 0.5,
+            'goalie_sv_pct': 0.910
+        }
+    
+    def _calculate_window_stats(self, team_id: str, window_games: pd.DataFrame) -> Dict:
+        """Calculate stats for a specific game window"""
+        if len(window_games) == 0:
+            return {'win_pct': 0.5, 'goals_per_game': 3.0, 'goals_against': 3.0}
         
         wins = 0
         goals_for = 0
         goals_against = 0
-        recent_wins = 0
         
-        for idx, game in team_games.iterrows():
+        for idx, game in window_games.iterrows():
             is_home = game['home_team_id'] == team_id
-            
-            if is_home:
-                team_score = game['home_score']
-                opp_score = game['away_score']
-            else:
-                team_score = game['away_score']
-                opp_score = game['home_score']
+            team_score = game['home_score'] if is_home else game['away_score']
+            opp_score = game['away_score'] if is_home else game['home_score']
             
             if pd.notna(team_score) and pd.notna(opp_score):
                 goals_for += team_score
                 goals_against += opp_score
-                
                 if team_score > opp_score:
                     wins += 1
-                    if idx < 5:  # Last 5 games for recent form
-                        recent_wins += 1
         
-        games_count = len(team_games)
-        recent_count = min(5, games_count)
-        
+        games_count = len(window_games)
         return {
             'win_pct': wins / games_count if games_count > 0 else 0.5,
             'goals_per_game': goals_for / games_count if games_count > 0 else 3.0,
-            'goals_against_per_game': goals_against / games_count if games_count > 0 else 3.0,
-            'recent_form': recent_wins / recent_count if recent_count > 0 else 0.5
+            'goals_against': goals_against / games_count if games_count > 0 else 3.0
+        }
+    
+    def _calculate_home_away_splits(self, team_id: str, all_games: pd.DataFrame, is_home: bool) -> Dict:
+        """Calculate home/away performance splits"""
+        home_games = all_games[all_games['home_team_id'] == team_id].head(10)
+        away_games = all_games[all_games['away_team_id'] == team_id].head(10)
+        
+        home_wins = 0
+        home_goals = 0
+        for idx, game in home_games.iterrows():
+            if pd.notna(game['home_score']) and pd.notna(game['away_score']):
+                home_goals += game['home_score']
+                if game['home_score'] > game['away_score']:
+                    home_wins += 1
+        
+        away_wins = 0
+        away_goals = 0
+        for idx, game in away_games.iterrows():
+            if pd.notna(game['home_score']) and pd.notna(game['away_score']):
+                away_goals += game['away_score']
+                if game['away_score'] > game['home_score']:
+                    away_wins += 1
+        
+        return {
+            'home_win_pct': home_wins / len(home_games) if len(home_games) > 0 else 0.55,
+            'away_win_pct': away_wins / len(away_games) if len(away_games) > 0 else 0.45,
+            'home_goals_avg': home_goals / len(home_games) if len(home_games) > 0 else 3.2,
+            'away_goals_avg': away_goals / len(away_games) if len(away_games) > 0 else 2.8
+        }
+    
+    def _calculate_rest_days(self, team_id: str, current_date, all_games: pd.DataFrame) -> int:
+        """Calculate days of rest since last game"""
+        if len(all_games) == 0:
+            return 3
+        
+        last_game = all_games.iloc[0]
+        last_game_date = pd.to_datetime(last_game['game_date']).date()
+        rest_days = (current_date - last_game_date).days
+        return min(rest_days, 7)  # Cap at 7 days
+    
+    def _calculate_opponent_strength(self, team_id: str, recent_games: pd.DataFrame) -> float:
+        """Calculate average opponent strength based on opponent win percentages"""
+        if len(recent_games) == 0:
+            return 0.5
+        
+        # Simplified: use 0.5 as default opponent strength
+        # In production, you'd calculate each opponent's actual win percentage
+        return 0.5
+    
+    def _get_goalie_sv_pct(self, team_id: str) -> float:
+        """Get team's goalie save percentage"""
+        try:
+            if self.db_manager:
+                conn = self.db_manager.get_connection()
+                result = conn.execute('''
+                    SELECT goalie_save_percentage 
+                    FROM team_goalies 
+                    WHERE team_name = ?
+                ''', (team_id,)).fetchone()
+                if result:
+                    return result[0]
+        except:
+            pass
+        return 0.910  # League average
+    
+    def _get_head_to_head_stats(self, home_team: str, away_team: str, current_date, games_df: pd.DataFrame) -> Dict:
+        """Calculate head-to-head statistics"""
+        if isinstance(current_date, str):
+            current_date = pd.to_datetime(current_date).date()
+        
+        games_df = games_df.copy()
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'])
+        
+        # Get previous matchups
+        h2h_games = games_df[
+            ((games_df['home_team_id'] == home_team) & (games_df['away_team_id'] == away_team)) |
+            ((games_df['home_team_id'] == away_team) & (games_df['away_team_id'] == home_team))
+        ]
+        h2h_games = h2h_games[
+            (h2h_games['game_date'].dt.date < current_date) &
+            (h2h_games['status'] == 'final')
+        ].tail(5)  # Last 5 matchups
+        
+        if len(h2h_games) == 0:
+            return {'home_wins': 0, 'total_games': 0, 'avg_total_goals': 6.0}
+        
+        home_wins = 0
+        total_goals = 0
+        
+        for idx, game in h2h_games.iterrows():
+            if pd.notna(game['home_score']) and pd.notna(game['away_score']):
+                total_goals += game['home_score'] + game['away_score']
+                
+                # Check if current home team won (could be home or away in this matchup)
+                if game['home_team_id'] == home_team and game['home_score'] > game['away_score']:
+                    home_wins += 1
+                elif game['away_team_id'] == home_team and game['away_score'] > game['home_score']:
+                    home_wins += 1
+        
+        return {
+            'home_wins': home_wins,
+            'total_games': len(h2h_games),
+            'avg_total_goals': total_goals / len(h2h_games) if len(h2h_games) > 0 else 6.0
         }
     
     def train_models(self, games_df: pd.DataFrame) -> Dict:
-        """Train winner and totals prediction models"""
+        """Train ALL winner and totals prediction models (XGBoost, CatBoost, Logistic)"""
         try:
             self.logger.info(f"Training NHL models with {len(games_df)} games")
             
@@ -214,31 +472,54 @@ class NHLPredictor:
             y_total = complete_games['total_goals']
             
             self.feature_names = feature_cols
+            self.logger.info(f"Training with {len(feature_cols)} features")
             
-            # Train winner model
-            X_train, X_test, y_train, y_test = train_test_split(X, y_winner, test_size=0.2, random_state=42)
-            self.winner_model = xgb.XGBClassifier(**self.winner_params)
-            self.winner_model.fit(X_train, y_train)
+            # Split data
+            X_train, X_test, y_train_winner, y_test_winner = train_test_split(X, y_winner, test_size=0.2, random_state=42)
             
-            winner_acc = accuracy_score(y_test, self.winner_model.predict(X_test))
-            self.logger.info(f"Winner model accuracy: {winner_acc:.3f}")
+            # Train XGBoost winner model
+            self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
+            self.xgb_winner_model.fit(X_train, y_train_winner)
+            xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
+            self.logger.info(f"XGBoost winner accuracy: {xgb_acc:.3f}")
             
-            # Train totals model
-            X_train, X_test, y_train, y_test = train_test_split(X, y_total, test_size=0.2, random_state=42)
-            self.total_model = xgb.XGBRegressor(**self.total_params)
-            self.total_model.fit(X_train, y_train)
+            # Train CatBoost winner model
+            self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
+            self.catboost_winner_model.fit(X_train, y_train_winner)
+            catboost_acc = accuracy_score(y_test_winner, self.catboost_winner_model.predict(X_test))
+            self.logger.info(f"CatBoost winner accuracy: {catboost_acc:.3f}")
             
-            total_mae = mean_absolute_error(y_test, self.total_model.predict(X_test))
-            self.logger.info(f"Total model MAE: {total_mae:.3f}")
+            # Train Logistic Regression winner model
+            self.logistic_model = LogisticRegression(max_iter=1000, random_state=42)
+            self.logistic_model.fit(X_train, y_train_winner)
+            logistic_acc = accuracy_score(y_test_winner, self.logistic_model.predict(X_test))
+            self.logger.info(f"Logistic winner accuracy: {logistic_acc:.3f}")
+            
+            # Train totals models
+            X_train, X_test, y_train_total, y_test_total = train_test_split(X, y_total, test_size=0.2, random_state=42)
+            
+            self.xgb_total_model = xgb.XGBRegressor(**self.xgb_total_params)
+            self.xgb_total_model.fit(X_train, y_train_total)
+            xgb_mae = mean_absolute_error(y_test_total, self.xgb_total_model.predict(X_test))
+            self.logger.info(f"XGBoost total MAE: {xgb_mae:.3f}")
+            
+            self.catboost_total_model = CatBoostRegressor(**self.catboost_total_params)
+            self.catboost_total_model.fit(X_train, y_train_total)
+            catboost_mae = mean_absolute_error(y_test_total, self.catboost_total_model.predict(X_test))
+            self.logger.info(f"CatBoost total MAE: {catboost_mae:.3f}")
             
             self.is_trained = True
             self._save_models()
             
             return {
                 'success': True,
-                'winner_accuracy': winner_acc,
-                'total_mae': total_mae,
-                'training_games': len(complete_games)
+                'xgb_accuracy': xgb_acc,
+                'catboost_accuracy': catboost_acc,
+                'logistic_accuracy': logistic_acc,
+                'xgb_total_mae': xgb_mae,
+                'catboost_total_mae': catboost_mae,
+                'training_games': len(complete_games),
+                'num_features': len(feature_cols)
             }
             
         except Exception as e:
@@ -246,7 +527,7 @@ class NHLPredictor:
             return {'success': False, 'error': str(e)}
     
     def predict_game(self, home_team: str, away_team: str, game_date, historical_games: pd.DataFrame) -> Dict:
-        """Predict outcome for a single NHL game"""
+        """Predict outcome for a single NHL game using ENSEMBLE of all models"""
         try:
             # Create a game DataFrame for feature creation
             game_df = pd.DataFrame([{
@@ -269,18 +550,31 @@ class NHLPredictor:
                 self.logger.warning("Models not trained, using default prediction")
                 return self._default_prediction(home_team, away_team)
             
-            # Predict winner
-            home_win_prob = self.winner_model.predict_proba(X)[0][1]
-            predicted_winner = home_team if home_win_prob > 0.5 else away_team
+            # Get predictions from all 3 models
+            xgb_prob = self.xgb_winner_model.predict_proba(X)[0][1]
+            catboost_prob = self.catboost_winner_model.predict_proba(X)[0][1]
+            logistic_prob = self.logistic_model.predict_proba(X)[0][1]
             
-            # Predict total
-            predicted_total = self.total_model.predict(X)[0]
+            # Ensemble with equal weights (25% each model, 25% for meta)
+            meta_prob = (xgb_prob + catboost_prob + logistic_prob) / 3.0
+            
+            # Get total predictions
+            xgb_total = self.xgb_total_model.predict(X)[0]
+            catboost_total = self.catboost_total_model.predict(X)[0]
+            predicted_total = (xgb_total + catboost_total) / 2.0
+            
+            # Determine winner based on meta probability
+            predicted_winner = home_team if meta_prob > 0.5 else away_team
             
             return {
                 'home_team': home_team,
                 'away_team': away_team,
                 'predicted_winner': predicted_winner,
-                'home_win_probability': home_win_prob,
+                'home_win_probability': meta_prob,
+                'xgb_home_prob': xgb_prob,
+                'catboost_home_prob': catboost_prob,
+                'logistic_home_prob': logistic_prob,
+                'meta_home_prob': meta_prob,
                 'predicted_total': predicted_total,
                 'sport': 'NHL',
                 'league': 'NHL'
