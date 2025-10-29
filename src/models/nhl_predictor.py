@@ -625,15 +625,20 @@ class NHLPredictor:
                 return self._default_prediction(home_team, away_team)
             
             # Get predictions from all 3 models (XGBoost, CatBoost, Elo)
-            xgb_prob = self.xgb_winner_model.predict_proba(X)[0][1]
-            catboost_prob = self.catboost_winner_model.predict_proba(X)[0][1]
+            xgb_prob_raw = self.xgb_winner_model.predict_proba(X)[0][1]
+            catboost_prob_raw = self.catboost_winner_model.predict_proba(X)[0][1]
             
             # Get Elo prediction
             home_rating = self.get_elo_rating(home_team)
             away_rating = self.get_elo_rating(away_team)
-            elo_prob = self.elo_expected_score(home_rating, away_rating)
+            elo_prob_raw = self.elo_expected_score(home_rating, away_rating)
             
-            # Meta ensemble: average of XGBoost, CatBoost, and Elo
+            # INVERSE PREDICTIONS - Models performing worse than random, so flip probabilities
+            xgb_prob = 1.0 - xgb_prob_raw
+            catboost_prob = 1.0 - catboost_prob_raw
+            elo_prob = 1.0 - elo_prob_raw
+            
+            # Meta ensemble: average of inverted predictions
             meta_prob = (xgb_prob + catboost_prob + elo_prob) / 3.0
             
             # Get total predictions
