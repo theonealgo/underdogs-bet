@@ -103,11 +103,11 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
 **Production-Ready NHL 2025-26 Season** - Advanced ensemble models with comprehensive feature engineering:
 - **PREDICTION SEASON**: 2025-26 NHL season (1,132 games, Oct 7, 2025 - Apr 16, 2026)
 - **TRAINING DATA**: October 2025 games (92 games) used for model training
-- **Models**: All 3 models fully trained and operational
-  - **XGBoost**: Regularized with NHL-specific hyperparameters (depth=5, lr=0.05, n_estimators=200, reg_alpha=0.5, reg_lambda=1.0)
-  - **CatBoost**: Advanced gradient boosting (depth=6, lr=0.05, iterations=200, l2_leaf_reg=3.0)
-  - **Logistic Regression**: Baseline linear model for comparison
-  - **Meta Ensemble**: Weighted average of all 3 models
+- **Models**: All 4 models fully trained and operational (matching NBA/NFL architecture)
+  - **XGBoost**: Regularized with NHL-specific hyperparameters (depth=5, lr=0.05, n_estimators=200, reg_alpha=0.5, reg_lambda=1.0) - 47.4% accuracy
+  - **CatBoost**: Advanced gradient boosting (depth=6, lr=0.05, iterations=200, l2_leaf_reg=3.0) - 47.4% accuracy
+  - **Elo**: Rating system with K-factor=22 for NHL - 50.0% accuracy on 92 training games
+  - **Meta Ensemble**: Average of XGBoost, CatBoost, and Elo (equal weights)
 - **ADVANCED FEATURE ENGINEERING** (36 features total):
   - **Rolling Windows**: Win %, goals for/against in last 5, 10, and 15 games
   - **Home/Away Splits**: Performance splits for home vs road games
@@ -119,17 +119,17 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
 - **TRAINING RESULTS** (92 games):
   - XGBoost: 47.4% accuracy, 1.61 goals MAE
   - CatBoost: 47.4% accuracy, 1.56 goals MAE
-  - Logistic: 52.6% accuracy
+  - Elo: 50.0% accuracy (32 teams tracked)
   - 36 engineered features with multiple time windows
 - **PREDICTION STRATEGY**: Direct model predictions with ensemble averaging
-- **Database Schema**: Predictions stored with all model probabilities (xgboost_home_prob, catboost_home_prob, logistic_home_prob, meta_home_prob)
-- **Display Format**: Column order - XGBoost, CatBoost, Logistic (no Elo), Meta (left to right)
+- **Database Schema**: Predictions stored with all model probabilities (xgboost_home_prob, catboost_home_prob, elo_home_prob, meta_home_prob)
+- **Display Format**: Column order - XGBoost, CatBoost, Elo, Meta (left to right) - matches NBA/NFL
 - **Key Files**:
-  - `src/models/nhl_predictor.py` - Advanced NHL predictor with feature engineering
-  - `train_nhl_models.py` - Trains XGBoost, CatBoost, Logistic models
+  - `src/models/nhl_predictor.py` - Advanced NHL predictor with feature engineering and Elo system
+  - `train_nhl_models.py` - Trains XGBoost, CatBoost, builds Elo ratings
   - `generate_nhl_predictions.py` - Generates predictions for 2025-26 season
   - `import_nhl_october_2025_results.py` - Imports historical results for training
-- **Status**: ✅ All 1,132 predictions generated for 2025-26 season
+- **Status**: ✅ All 1,132 predictions generated for 2025-26 season with 4-model ensemble
 
 ## External Dependencies
 

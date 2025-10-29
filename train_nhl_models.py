@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Train NHL Ensemble Models (XGBoost, CatBoost, Logistic)
+Train NHL Ensemble Models (XGBoost, CatBoost, Elo, Meta)
 Uses 2024-25 season historical data for training
 """
 
@@ -63,8 +63,8 @@ def main():
     # Initialize NHL predictor
     predictor = NHLPredictor(model_dir='models')
     
-    # Train all models (XGBoost, CatBoost, Logistic)
-    logger.info("\nTraining XGBoost, CatBoost, and Logistic Regression models...")
+    # Train all models (XGBoost, CatBoost, Elo)
+    logger.info("\nTraining XGBoost, CatBoost, and Elo models...")
     results = predictor.train_models(training_data)
     
     if results['success']:
@@ -73,9 +73,10 @@ def main():
         logger.info("="*70)
         logger.info(f"  Training Games:        {results['training_games']}")
         logger.info(f"  Number of Features:    {results['num_features']}")
+        logger.info(f"  Elo Teams:             {results['elo_teams']}")
         logger.info(f"  XGBoost Accuracy:      {results['xgb_accuracy']:.1%}")
         logger.info(f"  CatBoost Accuracy:     {results['catboost_accuracy']:.1%}")
-        logger.info(f"  Logistic Accuracy:     {results['logistic_accuracy']:.1%}")
+        logger.info(f"  Elo Accuracy:          {results['elo_accuracy']:.1%}")
         logger.info(f"  XGBoost Total MAE:     {results['xgb_total_mae']:.2f} goals")
         logger.info(f"  CatBoost Total MAE:    {results['catboost_total_mae']:.2f} goals")
         logger.info("="*70)
@@ -84,7 +85,8 @@ def main():
         logger.info("Models trained and saved:")
         logger.info("  1. XGBoost (winner + totals)")
         logger.info("  2. CatBoost (winner + totals)")
-        logger.info("  3. Logistic Regression (winner)")
+        logger.info("  3. Elo (winner ratings)")
+        logger.info("  4. Meta Ensemble (average of all 3)")
         logger.info("\nNext step: Run 'python generate_nhl_predictions.py' to generate predictions")
     else:
         logger.error(f"Training failed: {results.get('error', 'Unknown error')}")

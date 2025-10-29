@@ -111,7 +111,7 @@ def main():
         # Get probabilities
         xgb_prob = float(pred['xgb_home_prob'])
         cat_prob = float(pred['catboost_home_prob'])
-        log_prob = float(pred['logistic_home_prob'])
+        elo_prob = float(pred['elo_home_prob'])
         meta_prob = float(pred['meta_home_prob'])
         predicted_winner = pred['predicted_winner']
         
@@ -121,13 +121,13 @@ def main():
                 sport, league, game_id, game_date, home_team_id, away_team_id,
                 predicted_winner, win_probability, 
                 elo_home_prob, xgboost_home_prob, 
-                catboost_home_prob, logistic_home_prob, meta_home_prob,
+                catboost_home_prob, meta_home_prob,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             'NHL', 'NHL', game_id, game_date, home_team, away_team,
             predicted_winner, meta_prob,
-            0.50, xgb_prob, cat_prob, log_prob, meta_prob,  # elo_home_prob = 0.50 (not used for NHL)
+            elo_prob, xgb_prob, cat_prob, meta_prob,
             datetime.now().isoformat()
         ))
         
@@ -147,7 +147,7 @@ def main():
         logger.info(f"\n{pred['home_team']} vs {pred['away_team']}")
         logger.info(f"  XGBoost:  {pred['xgb_home_prob']:.1%}")
         logger.info(f"  CatBoost: {pred['catboost_home_prob']:.1%}")
-        logger.info(f"  Logistic: {pred['logistic_home_prob']:.1%}")
+        logger.info(f"  Elo:      {pred['elo_home_prob']:.1%}")
         logger.info(f"  Meta:     {pred['meta_home_prob']:.1%} → {pred['predicted_winner']}")
     
     logger.info("\n" + "=" * 70)
