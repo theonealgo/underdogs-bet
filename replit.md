@@ -159,9 +159,10 @@ Automated tasks include daily data updates, prediction generation, and weekly mo
 - **logging**: System logging
 
 ### Data Sources
-- **MLB Stats API**: Official MLB data
-- **NHL API (via nhl-api-py)**: Official NHL stats, rosters, schedules
-- **NBA, NFL, WNBA, NCAA APIs**: Sport-specific data
-- **The Odds API**: Betting odds data
-- **Baseball Savant/Statcast**: Advanced MLB metrics
-- **Excel Schedules**: User-provided schedules
+- **NHL API (via nhl-api-py)**: Official NHL stats, rosters, schedules, goalie data
+- **NBA API**: Official NBA game data and statistics
+- **NFL API**: Official NFL game data and statistics
+- **MLB Stats API**: Official MLB data (Baseball Savant/Statcast for advanced metrics)
+- **WNBA, NCAA APIs**: Additional sport-specific data (coming soon)
+- **The Odds API**: Betting odds data (currently unused)
+- **Excel Schedules**: User-provided schedules for all sports
