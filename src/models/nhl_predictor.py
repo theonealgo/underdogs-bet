@@ -878,10 +878,26 @@ class NHLPredictor:
                 xgb_prob = xgb_prob_raw
                 catboost_prob = catboost_prob_raw
             
-            # USE ELO-ONLY: Automated backtest shows Elo at 67.6% vs XGB 50% / Cat 44%
-            # Elo is the best model by far, so use it directly
+            # ADVANCED ENSEMBLE: Combine all 3 models with confidence-based weighting
+            # Strategy: Weight models based on their prediction confidence
             
-            meta_prob_raw = elo_prob
+            # Calculate confidence scores (distance from 50%)
+            xgb_confidence = abs(xgb_prob - 0.5)
+            cat_confidence = abs(catboost_prob - 0.5)
+            elo_confidence = abs(elo_prob - 0.5)
+            
+            # Normalize confidences to weights (models with higher confidence get more weight)
+            total_confidence = xgb_confidence + cat_confidence + elo_confidence
+            if total_confidence > 0:
+                xgb_weight = xgb_confidence / total_confidence
+                cat_weight = cat_confidence / total_confidence
+                elo_weight = elo_confidence / total_confidence
+            else:
+                # Fallback if all models at 50%
+                xgb_weight, cat_weight, elo_weight = 0.40, 0.30, 0.30
+            
+            # Weighted ensemble
+            meta_prob_raw = (xgb_weight * xgb_prob + cat_weight * catboost_prob + elo_weight * elo_prob)
             
             # Apply meta calibration
             if self.meta_calibrator is not None:
@@ -889,9 +905,8 @@ class NHLPredictor:
             else:
                 meta_prob = meta_prob_raw
             
-            # HOME ICE BIAS CORRECTION: Models over-predict home wins (62% vs 54% historical)
-            # Shift probabilities away from home team to match NHL reality
-            home_bias_adjustment = -0.04  # Reduce home win prob by 4 percentage points
+            # HOME ICE BIAS CORRECTION: Reduce home advantage overestimation
+            home_bias_adjustment = -0.03  # Reduce by 3%
             meta_prob = np.clip(meta_prob + home_bias_adjustment, 0.0, 1.0)
             
             # Get total predictions
