@@ -105,10 +105,30 @@ def main():
     
     predictions_saved = 0
     for pred in predictions:
-        game_id = pred['game_id']
         home_team = pred['home_team']
         away_team = pred['away_team']
         game_date = pred['game_date']
+        
+        # Convert DD/MM/YYYY to YYYY-MM-DD for matching with games table
+        try:
+            date_obj = datetime.strptime(game_date, '%d/%m/%Y')
+            db_date = date_obj.strftime('%Y-%m-%d')
+        except:
+            db_date = game_date
+        
+        # Lookup correct game_id from games table using date+teams
+        cursor.execute("""
+            SELECT game_id FROM games 
+            WHERE sport='NHL' AND season=2025
+            AND game_date=? AND home_team_id=? AND away_team_id=?
+        """, (db_date, home_team, away_team))
+        
+        result = cursor.fetchone()
+        if not result:
+            logger.warning(f"No matching game found for {home_team} vs {away_team} on {game_date}")
+            continue
+        
+        game_id = result[0]
         
         # Get probabilities
         xgb_prob = float(pred['xgb_home_prob'])
@@ -117,7 +137,7 @@ def main():
         meta_prob = float(pred['meta_home_prob'])
         predicted_winner = pred['predicted_winner']
         
-        # Insert prediction
+        # Insert prediction with correct game_id
         cursor.execute("""
             INSERT INTO predictions (
                 sport, league, game_id, game_date, home_team_id, away_team_id,
@@ -127,7 +147,7 @@ def main():
                 created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            'NHL', 'NHL', game_id, game_date, home_team, away_team,
+            'NHL', 'NHL', game_id, db_date, home_team, away_team,
             predicted_winner, meta_prob,
             elo_prob, xgb_prob, cat_prob, meta_prob,
             datetime.now().isoformat()
