@@ -313,7 +313,7 @@ class NHLPredictor:
         """Calculate ADVANCED team statistics with multiple windows and splits"""
         # Convert current_date to Timestamp if it's a string
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True)
+            current_date = pd.to_datetime(current_date, format='mixed', dayfirst=True)
         elif hasattr(current_date, 'date'):
             # If it's already a Timestamp, keep it
             pass
@@ -323,7 +323,7 @@ class NHLPredictor:
         
         # Ensure game_date column is datetime for comparison (DD/MM/YYYY format)
         games_df = games_df.copy()
-        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='mixed', dayfirst=True)
         
         # Get ALL team's games before current date (compare Timestamps)
         all_team_games = games_df[
@@ -577,7 +577,7 @@ class NHLPredictor:
         """Calculate head-to-head statistics"""
         # Convert current_date to Timestamp if it's a string
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True)
+            current_date = pd.to_datetime(current_date, format='mixed', dayfirst=True)
         elif hasattr(current_date, 'date'):
             # If it's already a Timestamp, keep it
             pass
@@ -586,7 +586,7 @@ class NHLPredictor:
             current_date = pd.Timestamp(current_date)
         
         games_df = games_df.copy()
-        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
+        games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='mixed', dayfirst=True)
         
         # Get previous matchups
         h2h_games = games_df[
@@ -628,7 +628,7 @@ class NHLPredictor:
             
             # FILTER TO 2024 SEASON ONLY
             games_df = games_df.copy()
-            games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
+            games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='mixed', dayfirst=True)
             games_df['season'] = games_df['game_date'].dt.year
             
             # Keep only 2024 games

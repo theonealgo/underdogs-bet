@@ -48,20 +48,12 @@ def get_historical_games():
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
-        # Convert to DataFrame with date format conversion
-        from datetime import datetime
+        # Convert to DataFrame - keep YYYY-MM-DD format
         games = []
         for game in all_games:
-            # Convert ISO date format to DD/MM/YYYY
-            try:
-                date_obj = datetime.strptime(game['date'], '%Y-%m-%d')
-                formatted_date = date_obj.strftime('%d/%m/%Y')
-            except:
-                formatted_date = game['date']
-            
             games.append({
                 'game_id': f"nhl_{game['match_id']}",
-                'game_date': formatted_date,
+                'game_date': game['date'],  # Keep original YYYY-MM-DD format
                 'home_team_id': game['home_team'],
                 'away_team_id': game['away_team'],
                 'home_score': game['home_score'],
