@@ -15,26 +15,30 @@ logger = logging.getLogger(__name__)
 DATABASE = 'sports_predictions_original.db'
 
 def load_nhl_training_data():
-    """Load NHL training data (2024 season + 2025 completed games)"""
+    """Load NHL training data (2024 season + 2025 completed games only for speed)"""
     import pickle
     import os
     from datetime import datetime
     
     games = []
     
-    # Load 2024 season historical data from pickle file
+    # Load historical data and filter to 2024 season only
     if os.path.exists('nhl_historical_data.pkl'):
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
-        # Convert to DataFrame with date format conversion (YYYY-MM-DD -> DD/MM/YYYY)
+        # Filter to 2024 season only (not 2022-2023)
         for game in all_games:
-            # Convert ISO date format to DD/MM/YYYY
             try:
                 date_obj = datetime.strptime(game['date'], '%Y-%m-%d')
+                
+                # Only include 2024 games
+                if date_obj.year != 2024:
+                    continue
+                    
                 formatted_date = date_obj.strftime('%d/%m/%Y')
             except:
-                formatted_date = game['date']
+                continue
             
             games.append({
                 'game_id': f"nhl_{game['match_id']}",
@@ -45,7 +49,7 @@ def load_nhl_training_data():
                 'away_score': game['away_score'],
                 'status': 'final'
             })
-        logger.info(f"Loaded {len(games)} games from 2024 season historical data")
+        logger.info(f"Loaded {len(games)} games from 2024 season (filtered for speed)")
     else:
         logger.error("Historical data file not found. Run 'python fetch_nhl_historical_data.py' first")
         return pd.DataFrame()
