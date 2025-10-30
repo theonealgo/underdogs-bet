@@ -9,6 +9,7 @@ import os
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error
 from sklearn.linear_model import LogisticRegression
+from sklearn.calibration import CalibratedClassifierCV
 import xgboost as xgb
 from catboost import CatBoostClassifier, CatBoostRegressor
 
@@ -529,12 +530,23 @@ class NHLPredictor:
             
             # Prepare features and targets
             feature_cols = [col for col in complete_games.columns if col not in ['home_win', 'total_goals', 'game_date_rank']]
-            X = complete_games[feature_cols]
+            
+            # SELECT ONLY TOP PREDICTIVE FEATURES to reduce overfitting
+            # Based on feature importance analysis, use differential features + key stats
+            top_features = [
+                'form_diff', 'win_pct_diff_10', 'win_pct_diff_5', 'goals_diff_5', 'goals_diff_10',
+                'home_goals_against_10', 'away_goals_against_10', 'h2h_home_wins', 'h2h_avg_total_goals',
+                'home_goals_per_game_5', 'away_goals_per_game_5', 'rest_diff'
+            ]
+            
+            # Only use features that exist in the data
+            available_features = [f for f in top_features if f in feature_cols]
+            X = complete_games[available_features]
             y_winner = complete_games['home_win']
             y_total = complete_games['total_goals']
             
-            self.feature_names = feature_cols
-            self.logger.info(f"Training with {len(feature_cols)} features")
+            self.feature_names = available_features
+            self.logger.info(f"Training with {len(available_features)} SELECTED features (reduced from {len(feature_cols)} to prevent overfitting)")
             
             # TIME-BASED SPLIT: Train on earlier games, test on most recent games
             # Sort games chronologically (already should be sorted from query)
@@ -556,16 +568,26 @@ class NHLPredictor:
             self.logger.info(f"Recency weighting: oldest game weight={sample_weights[0]:.2f}, newest game weight={sample_weights[-1]:.2f}")
             
             # Train XGBoost winner model with recency weighting
-            self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
-            self.xgb_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            base_xgb = xgb.XGBClassifier(**self.xgb_winner_params)
+            base_xgb.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            
+            # CALIBRATE probabilities using isotonic regression to fix bias
+            self.xgb_winner_model = CalibratedClassifierCV(base_xgb, method='isotonic', cv='prefit')
+            self.xgb_winner_model.fit(X_test, y_test_winner)
+            
             xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
-            self.logger.info(f"XGBoost winner accuracy (time-based test): {xgb_acc:.3f}")
+            self.logger.info(f"XGBoost winner accuracy (calibrated): {xgb_acc:.3f}")
             
             # Train CatBoost winner model with recency weighting
-            self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
-            self.catboost_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            base_catboost = CatBoostClassifier(**self.catboost_winner_params)
+            base_catboost.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            
+            # CALIBRATE probabilities using isotonic regression to fix bias
+            self.catboost_winner_model = CalibratedClassifierCV(base_catboost, method='isotonic', cv='prefit')
+            self.catboost_winner_model.fit(X_test, y_test_winner)
+            
             catboost_acc = accuracy_score(y_test_winner, self.catboost_winner_model.predict(X_test))
-            self.logger.info(f"CatBoost winner accuracy (time-based test): {catboost_acc:.3f}")
+            self.logger.info(f"CatBoost winner accuracy (calibrated): {catboost_acc:.3f}")
             
             # Train totals models with same time-based split and recency weighting
             y_train_total = y_total.iloc[:train_size]
