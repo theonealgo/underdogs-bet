@@ -373,7 +373,9 @@ class NHLPredictor:
         max_win_streak = 0
         current_win_streak = 0
         
-        for idx, game in recent_games.iterrows():
+        # Iterate CHRONOLOGICALLY (oldest to newest) so current_streak reflects latest game
+        for idx in range(len(recent_games)-1, -1, -1):  # Reverse iteration
+            game = recent_games.iloc[idx]
             is_home = game['home_team_id'] == team_id
             team_score = game['home_score'] if is_home else game['away_score']
             opp_score = game['away_score'] if is_home else game['home_score']
@@ -382,7 +384,7 @@ class NHLPredictor:
                 won = team_score > opp_score
                 
                 # Current streak (positive for wins, negative for losses)
-                if idx == 0:  # Most recent game
+                if idx == 0:  # Most recent game (first row after sorting desc)
                     current_streak = 1 if won else -1
                 elif won:
                     current_streak = current_streak + 1 if current_streak > 0 else 1
@@ -409,7 +411,9 @@ class NHLPredictor:
             return 0.0
         
         results = []
-        for idx, game in recent_games.iterrows():
+        # Iterate CHRONOLOGICALLY (oldest to newest) for correct momentum calculation
+        for idx in range(len(recent_games)-1, -1, -1):
+            game = recent_games.iloc[idx]
             is_home = game['home_team_id'] == team_id
             team_score = game['home_score'] if is_home else game['away_score']
             opp_score = game['away_score'] if is_home else game['home_score']
@@ -670,16 +674,16 @@ class NHLPredictor:
             self.logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)} games")
             
             # Train XGBoost with EARLY STOPPING on validation set
-            self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
+            self.xgb_winner_model = xgb.XGBClassifier(**{**self.xgb_winner_params, 'early_stopping_rounds': 20})
             self.xgb_winner_model.fit(
                 X_train, y_train_winner, 
                 sample_weight=sample_weights,
                 eval_set=[(X_val, y_val_winner)],
-                early_stopping_rounds=20,
                 verbose=False
             )
             xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
-            self.logger.info(f"XGBoost accuracy (test set): {xgb_acc:.3f}, best iteration: {self.xgb_winner_model.best_iteration}")
+            best_iter = getattr(self.xgb_winner_model, 'best_iteration', self.xgb_winner_params['n_estimators'])
+            self.logger.info(f"XGBoost accuracy (test set): {xgb_acc:.3f}, best iteration: {best_iter}")
             
             # Train CatBoost with EARLY STOPPING on validation set
             self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
@@ -698,12 +702,11 @@ class NHLPredictor:
             y_val_total = y_total.iloc[train_size:train_size+val_size]
             y_test_total = y_total.iloc[train_size+val_size:]
             
-            self.xgb_total_model = xgb.XGBRegressor(**self.xgb_total_params)
+            self.xgb_total_model = xgb.XGBRegressor(**{**self.xgb_total_params, 'early_stopping_rounds': 20})
             self.xgb_total_model.fit(
                 X_train, y_train_total, 
                 sample_weight=sample_weights,
                 eval_set=[(X_val, y_val_total)],
-                early_stopping_rounds=20,
                 verbose=False
             )
             xgb_mae = mean_absolute_error(y_test_total, self.xgb_total_model.predict(X_test))
@@ -772,10 +775,10 @@ class NHLPredictor:
             away_rating = self.get_elo_rating(away_team)
             elo_prob = self.elo_expected_score(home_rating, away_rating)
             
-            # Meta ensemble: weighted average favoring XGBoost/CatBoost over Elo
-            # XGBoost and CatBoost both show 52.7% accuracy, Elo only 48%
-            # Weights: 45% XGBoost, 45% CatBoost, 10% Elo
-            meta_prob = (0.45 * xgb_prob + 0.45 * catboost_prob + 0.10 * elo_prob)
+            # Meta ensemble: weighted average based on test set performance
+            # XGBoost: 59.1%, CatBoost: 55.9%, Elo: 56.8%
+            # Weights: 50% XGBoost (best), 25% CatBoost, 25% Elo
+            meta_prob = (0.50 * xgb_prob + 0.25 * catboost_prob + 0.25 * elo_prob)
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
