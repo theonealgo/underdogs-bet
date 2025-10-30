@@ -1197,7 +1197,7 @@ def sport_results(sport):
     if sport not in SPORTS:
         return "Sport not found", 404
     
-    # NHL: Show first 147 games (Oct 7-26) with predictions for user testing
+    # NHL: Show first 148 games (Match IDs 1-148) for user testing
     if sport == 'NHL':
         conn = get_db_connection()
         games = conn.execute("""
@@ -1214,8 +1214,8 @@ def sport_results(sport):
             FROM games g
             LEFT JOIN predictions p ON g.game_id = p.game_id
             WHERE g.sport='NHL' AND g.season=2025
-            AND g.game_date >= '2025-10-07' AND g.game_date <= '2025-10-26'
-            ORDER BY g.game_date, g.game_id
+            AND CAST(SUBSTR(g.game_id, 10) AS INTEGER) <= 148
+            ORDER BY CAST(SUBSTR(g.game_id, 10) AS INTEGER)
         """).fetchall()
         conn.close()
         
