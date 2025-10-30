@@ -9,7 +9,8 @@ import os
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.isotonic import IsotonicRegression
 import xgboost as xgb
 from catboost import CatBoostClassifier, CatBoostRegressor
 
@@ -29,6 +30,12 @@ class NHLPredictor:
         self.catboost_winner_model = None
         self.xgb_total_model = None
         self.catboost_total_model = None
+        
+        # Calibration models (fix overconfident predictions)
+        self.xgb_calibrator = None
+        self.catboost_calibrator = None
+        self.meta_calibrator = None
+        
         self.is_trained = False
         self.feature_names = None
         
@@ -108,6 +115,7 @@ class NHLPredictor:
             xgb_total_path = os.path.join(self.model_dir, 'nhl_xgb_total.pkl')
             catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
+            calibrators_path = os.path.join(self.model_dir, 'nhl_calibrators.pkl')
             
             if os.path.exists(xgb_winner_path):
                 with open(xgb_winner_path, 'rb') as f:
@@ -125,6 +133,14 @@ class NHLPredictor:
                     with open(features_path, 'rb') as f:
                         self.feature_names = pickle.load(f)
                 
+                # Load calibrators if they exist
+                if os.path.exists(calibrators_path):
+                    with open(calibrators_path, 'rb') as f:
+                        calibrators = pickle.load(f)
+                        self.xgb_calibrator = calibrators.get('xgb')
+                        self.catboost_calibrator = calibrators.get('catboost')
+                        self.meta_calibrator = calibrators.get('meta')
+                
                 self.is_trained = True
                 self.logger.info("Loaded existing NHL models")
         except Exception as e:
@@ -139,6 +155,7 @@ class NHLPredictor:
             xgb_total_path = os.path.join(self.model_dir, 'nhl_xgb_total.pkl')
             catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
+            calibrators_path = os.path.join(self.model_dir, 'nhl_calibrators.pkl')
             
             with open(xgb_winner_path, 'wb') as f:
                 pickle.dump(self.xgb_winner_model, f)
@@ -152,6 +169,16 @@ class NHLPredictor:
                 pickle.dump(self.catboost_total_model, f)
             with open(features_path, 'wb') as f:
                 pickle.dump(self.feature_names, f)
+            
+            # Save calibrators
+            if self.xgb_calibrator is not None:
+                calibrators = {
+                    'xgb': self.xgb_calibrator,
+                    'catboost': self.catboost_calibrator,
+                    'meta': self.meta_calibrator
+                }
+                with open(calibrators_path, 'wb') as f:
+                    pickle.dump(calibrators, f)
             
             self.logger.info("Saved NHL models")
         except Exception as e:
@@ -723,6 +750,33 @@ class NHLPredictor:
             catboost_mae = mean_absolute_error(y_test_total, self.catboost_total_model.predict(X_test))
             self.logger.info(f"CatBoost total MAE (test set): {catboost_mae:.3f}")
             
+            # CALIBRATION: Fix overconfident predictions using isotonic regression
+            self.logger.info("\nCalibrating probabilities to fix overconfidence...")
+            
+            # Get uncalibrated probabilities on validation set
+            xgb_val_probs = self.xgb_winner_model.predict_proba(X_val)[:, 1]
+            catboost_val_probs = self.catboost_winner_model.predict_proba(X_val)[:, 1]
+            
+            # Train calibrators on validation set
+            self.xgb_calibrator = IsotonicRegression(out_of_bounds='clip')
+            self.xgb_calibrator.fit(xgb_val_probs, y_val_winner)
+            
+            self.catboost_calibrator = IsotonicRegression(out_of_bounds='clip')
+            self.catboost_calibrator.fit(catboost_val_probs, y_val_winner)
+            
+            # Calibrate meta ensemble predictions
+            meta_val_probs = 0.50 * xgb_val_probs + 0.25 * catboost_val_probs + 0.25 * 0.568  # Elo baseline
+            self.meta_calibrator = IsotonicRegression(out_of_bounds='clip')
+            self.meta_calibrator.fit(meta_val_probs, y_val_winner)
+            
+            # Test calibrated predictions
+            xgb_test_probs = self.xgb_winner_model.predict_proba(X_test)[:, 1]
+            xgb_calibrated = self.xgb_calibrator.predict(xgb_test_probs)
+            xgb_cal_acc = accuracy_score(y_test_winner, (xgb_calibrated > 0.5).astype(int))
+            
+            self.logger.info(f"XGBoost calibrated accuracy: {xgb_cal_acc:.3f}")
+            self.logger.info(f"Calibration reduces overconfidence by adjusting probabilities toward 50%")
+            
             self.is_trained = True
             self._save_models()
             
@@ -766,19 +820,32 @@ class NHLPredictor:
                 self.logger.warning("Models not trained, using default prediction")
                 return self._default_prediction(home_team, away_team)
             
-            # Get predictions from all 3 models (XGBoost, CatBoost, Elo)
-            xgb_prob = self.xgb_winner_model.predict_proba(X)[0][1]
-            catboost_prob = self.catboost_winner_model.predict_proba(X)[0][1]
+            # Get UNCALIBRATED predictions from all 3 models
+            xgb_prob_raw = self.xgb_winner_model.predict_proba(X)[0][1]
+            catboost_prob_raw = self.catboost_winner_model.predict_proba(X)[0][1]
             
             # Get Elo prediction
             home_rating = self.get_elo_rating(home_team)
             away_rating = self.get_elo_rating(away_team)
             elo_prob = self.elo_expected_score(home_rating, away_rating)
             
-            # Meta ensemble: weighted average based on test set performance
-            # XGBoost: 59.1%, CatBoost: 55.9%, Elo: 56.8%
-            # Weights: 50% XGBoost (best), 25% CatBoost, 25% Elo
-            meta_prob = (0.50 * xgb_prob + 0.25 * catboost_prob + 0.25 * elo_prob)
+            # APPLY CALIBRATION to fix overconfidence
+            if self.xgb_calibrator is not None and self.catboost_calibrator is not None:
+                xgb_prob = self.xgb_calibrator.predict([xgb_prob_raw])[0]
+                catboost_prob = self.catboost_calibrator.predict([catboost_prob_raw])[0]
+            else:
+                xgb_prob = xgb_prob_raw
+                catboost_prob = catboost_prob_raw
+            
+            # Meta ensemble with calibrated probabilities
+            # Weights: 50% XGBoost, 25% CatBoost, 25% Elo
+            meta_prob_raw = (0.50 * xgb_prob + 0.25 * catboost_prob + 0.25 * elo_prob)
+            
+            # Apply meta calibration
+            if self.meta_calibrator is not None:
+                meta_prob = self.meta_calibrator.predict([meta_prob_raw])[0]
+            else:
+                meta_prob = meta_prob_raw
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
