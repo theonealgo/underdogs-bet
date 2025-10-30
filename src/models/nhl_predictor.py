@@ -568,26 +568,16 @@ class NHLPredictor:
             self.logger.info(f"Recency weighting: oldest game weight={sample_weights[0]:.2f}, newest game weight={sample_weights[-1]:.2f}")
             
             # Train XGBoost winner model with recency weighting
-            base_xgb = xgb.XGBClassifier(**self.xgb_winner_params)
-            base_xgb.fit(X_train, y_train_winner, sample_weight=sample_weights)
-            
-            # CALIBRATE probabilities using isotonic regression to fix bias
-            self.xgb_winner_model = CalibratedClassifierCV(base_xgb, method='isotonic', cv='prefit')
-            self.xgb_winner_model.fit(X_test, y_test_winner)
-            
+            self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
+            self.xgb_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
             xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
-            self.logger.info(f"XGBoost winner accuracy (calibrated): {xgb_acc:.3f}")
+            self.logger.info(f"XGBoost winner accuracy (time-based test): {xgb_acc:.3f}")
             
             # Train CatBoost winner model with recency weighting
-            base_catboost = CatBoostClassifier(**self.catboost_winner_params)
-            base_catboost.fit(X_train, y_train_winner, sample_weight=sample_weights)
-            
-            # CALIBRATE probabilities using isotonic regression to fix bias
-            self.catboost_winner_model = CalibratedClassifierCV(base_catboost, method='isotonic', cv='prefit')
-            self.catboost_winner_model.fit(X_test, y_test_winner)
-            
+            self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
+            self.catboost_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
             catboost_acc = accuracy_score(y_test_winner, self.catboost_winner_model.predict(X_test))
-            self.logger.info(f"CatBoost winner accuracy (calibrated): {catboost_acc:.3f}")
+            self.logger.info(f"CatBoost winner accuracy (time-based test): {catboost_acc:.3f}")
             
             # Train totals models with same time-based split and recency weighting
             y_train_total = y_total.iloc[:train_size]
@@ -656,14 +646,19 @@ class NHLPredictor:
             elo_prob = self.elo_expected_score(home_rating, away_rating)
             
             # Meta ensemble: average of XGBoost, CatBoost, and Elo
-            meta_prob = (xgb_prob + catboost_prob + elo_prob) / 3.0
+            meta_prob_raw = (xgb_prob + catboost_prob + elo_prob) / 3.0
+            
+            # BIAS CORRECTION: Reduce home advantage (model over-predicts home wins)
+            # Historical home win rate is 54.5%, target ~54% home picks
+            home_bias_correction = -0.03  # Reduce home probability by 3 percentage points
+            meta_prob = max(0.0, min(1.0, meta_prob_raw + home_bias_correction))
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
             catboost_total = self.catboost_total_model.predict(X)[0]
             predicted_total = (xgb_total + catboost_total) / 2.0
             
-            # Determine winner based on meta probability
+            # Determine winner based on corrected meta probability
             predicted_winner = home_team if meta_prob > 0.5 else away_team
             
             return {
