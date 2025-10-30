@@ -620,27 +620,27 @@ class NHLPredictor:
             'avg_total_goals': total_goals / len(h2h_games) if len(h2h_games) > 0 else 6.0
         }
     
-    def train_models(self, games_df: pd.DataFrame, season_year: int = 2024) -> Dict:
+    def train_models(self, games_df: pd.DataFrame, season_year: int = None) -> Dict:
         """Train ALL winner and totals prediction models (XGBoost, CatBoost, Elo)
-        CRITICAL: Train ONLY on specified season, NOT historical data"""
+        Uses all available data (2024 + 2025 completed games) for better accuracy"""
         try:
             self.logger.info(f"Training NHL models with {len(games_df)} games")
             
-            # FILTER TO 2024 SEASON ONLY
+            # Parse dates
             games_df = games_df.copy()
             games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='mixed', dayfirst=True)
             games_df['season'] = games_df['game_date'].dt.year
             
-            # Keep only 2024 games
-            season_games = games_df[games_df['season'] == season_year].copy()
-            self.logger.info(f"Filtered to {len(season_games)} games from {season_year} season")
+            # Use all available data (2024 + 2025 completed)
+            season_games = games_df.copy()
+            self.logger.info(f"Training on {len(season_games)} total games (2024 + 2025 completed)")
             
             if len(season_games) < 50:
-                self.logger.error(f"Insufficient 2024 season games: {len(season_games)}")
-                return {'success': False, 'error': f'Only {len(season_games)} games in {season_year}'}
+                self.logger.error(f"Insufficient training games: {len(season_games)}")
+                return {'success': False, 'error': f'Only {len(season_games)} games available'}
             
-            # Build Elo ratings from 2024 season ONLY
-            self.logger.info("Building Elo ratings from 2024 season only...")
+            # Build Elo ratings from all available data
+            self.logger.info("Building Elo ratings from all available games...")
             self.elo_ratings = {}  # Reset Elo ratings
             elo_correct = 0
             elo_total = 0

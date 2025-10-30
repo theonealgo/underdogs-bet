@@ -15,18 +15,19 @@ logger = logging.getLogger(__name__)
 DATABASE = 'sports_predictions_original.db'
 
 def load_nhl_training_data():
-    """Load 3 seasons of NHL historical data (2022-25) from API"""
+    """Load NHL training data (2024 season + 2025 completed games)"""
     import pickle
     import os
+    from datetime import datetime
     
-    # Check if historical data exists
+    games = []
+    
+    # Load 2024 season historical data from pickle file
     if os.path.exists('nhl_historical_data.pkl'):
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
         # Convert to DataFrame with date format conversion (YYYY-MM-DD -> DD/MM/YYYY)
-        from datetime import datetime
-        games = []
         for game in all_games:
             # Convert ISO date format to DD/MM/YYYY
             try:
@@ -44,17 +45,48 @@ def load_nhl_training_data():
                 'away_score': game['away_score'],
                 'status': 'final'
             })
-        
-        df = pd.DataFrame(games)
-        
-        logger.info(f"Loaded {len(df)} training games from 3 NHL seasons (2022-25) - API data")
-        if len(df) > 0:
-            logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-        
-        return df
+        logger.info(f"Loaded {len(games)} games from 2024 season historical data")
     else:
         logger.error("Historical data file not found. Run 'python fetch_nhl_historical_data.py' first")
         return pd.DataFrame()
+    
+    # Add completed 2025 games from database
+    conn = sqlite3.connect(DATABASE)
+    completed_2025 = pd.read_sql_query("""
+        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
+        FROM games
+        WHERE sport='NHL' AND season=2025 
+        AND home_score IS NOT NULL AND away_score IS NOT NULL
+        ORDER BY game_date
+    """, conn)
+    conn.close()
+    
+    if len(completed_2025) > 0:
+        for _, row in completed_2025.iterrows():
+            # Convert YYYY-MM-DD to DD/MM/YYYY
+            try:
+                date_obj = datetime.strptime(row['game_date'], '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%d/%m/%Y')
+            except:
+                formatted_date = row['game_date']
+                
+            games.append({
+                'game_id': row['game_id'],
+                'game_date': formatted_date,
+                'home_team_id': row['home_team_id'],
+                'away_team_id': row['away_team_id'],
+                'home_score': row['home_score'],
+                'away_score': row['away_score'],
+                'status': 'final'
+            })
+        logger.info(f"Added {len(completed_2025)} completed games from 2025 season")
+    
+    df = pd.DataFrame(games)
+    logger.info(f"Total {len(df)} training games (2024 + 2025 completed)")
+    if len(df) > 0:
+        logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+    
+    return df
 
 def main():
     """Main training function"""
@@ -75,9 +107,9 @@ def main():
     # Initialize NHL predictor
     predictor = NHLPredictor(model_dir='models')
     
-    # Train all models (XGBoost, CatBoost, Elo) on 2024 season ONLY
-    logger.info("\nTraining XGBoost, CatBoost, and Elo models on 2024 season only...")
-    results = predictor.train_models(training_data, season_year=2024)
+    # Train all models (XGBoost, CatBoost, Elo) on all available data (2024 + 2025 completed)
+    logger.info("\nTraining XGBoost, CatBoost, and Elo models on all available data...")
+    results = predictor.train_models(training_data)
     
     if results['success']:
         logger.info("\n" + "="*70)
@@ -96,14 +128,13 @@ def main():
         
         # AUTOMATIC 148-GAME BACKTEST
         logger.info("\n" + "="*70)
-        logger.info("AUTOMATIC BACKTEST ON LAST 148 GAMES")
+        logger.info("AUTOMATIC BACKTEST ON LAST 148 GAMES (All Available Data)")
         logger.info("="*70)
         
-        # Filter to 2024 games and take last 148
+        # Take last 148 games from all available data (2024 + 2025 completed)
         training_data['game_date'] = pd.to_datetime(training_data['game_date'], format='%d/%m/%Y', dayfirst=True)
-        season_2024 = training_data[training_data['game_date'].dt.year == 2024].copy()
-        season_2024 = season_2024.sort_values('game_date')
-        test_games = season_2024.tail(148)
+        training_data_sorted = training_data.sort_values('game_date')
+        test_games = training_data_sorted.tail(148)
         
         logger.info(f"Testing on {len(test_games)} most recent 2024 games")
         logger.info(f"Date range: {test_games['game_date'].min().strftime('%Y-%m-%d')} to {test_games['game_date'].max().strftime('%Y-%m-%d')}")

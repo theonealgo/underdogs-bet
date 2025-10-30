@@ -39,17 +39,18 @@ def get_nhl_games():
     return df
 
 def get_historical_games():
-    """Get historical games for feature engineering from API data"""
+    """Get historical games for feature engineering (2024 season + 2025 completed games)"""
     import pickle
     import os
     
-    # Load from pickle file (same as training)
+    games = []
+    
+    # Load 2024 season historical data from pickle file
     if os.path.exists('nhl_historical_data.pkl'):
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
         # Convert to DataFrame - keep YYYY-MM-DD format
-        games = []
         for game in all_games:
             games.append({
                 'game_id': f"nhl_{game['match_id']}",
@@ -60,13 +61,37 @@ def get_historical_games():
                 'away_score': game['away_score'],
                 'status': 'final'
             })
-        
-        df = pd.DataFrame(games)
-        logger.info(f"Loaded {len(df)} historical games for feature engineering")
-        return df
+        logger.info(f"Loaded {len(games)} games from 2024 season historical data")
     else:
         logger.warning("Historical data file not found")
-        return pd.DataFrame()
+    
+    # Add completed 2025 games from database
+    conn = sqlite3.connect(DATABASE)
+    completed_2025 = pd.read_sql_query("""
+        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
+        FROM games
+        WHERE sport='NHL' AND season=2025 
+        AND home_score IS NOT NULL AND away_score IS NOT NULL
+        ORDER BY game_date
+    """, conn)
+    conn.close()
+    
+    if len(completed_2025) > 0:
+        for _, row in completed_2025.iterrows():
+            games.append({
+                'game_id': row['game_id'],
+                'game_date': row['game_date'],
+                'home_team_id': row['home_team_id'],
+                'away_team_id': row['away_team_id'],
+                'home_score': row['home_score'],
+                'away_score': row['away_score'],
+                'status': 'final'
+            })
+        logger.info(f"Added {len(completed_2025)} completed games from 2025 season")
+    
+    df = pd.DataFrame(games)
+    logger.info(f"Total {len(df)} games available for feature engineering (2024 + 2025)")
+    return df
 
 def main():
     """Main prediction generation function"""
