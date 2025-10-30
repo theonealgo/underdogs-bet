@@ -847,6 +847,11 @@ class NHLPredictor:
             else:
                 meta_prob = meta_prob_raw
             
+            # HOME ICE BIAS CORRECTION: Models over-predict home wins (62% vs 54% historical)
+            # Shift probabilities away from home team to match NHL reality
+            home_bias_adjustment = -0.04  # Reduce home win prob by 4 percentage points
+            meta_prob = np.clip(meta_prob + home_bias_adjustment, 0.0, 1.0)
+            
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
             catboost_total = self.catboost_total_model.predict(X)[0]
