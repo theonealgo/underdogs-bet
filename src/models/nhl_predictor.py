@@ -650,7 +650,7 @@ class NHLPredictor:
             
             # BIAS CORRECTION: Reduce home advantage (model over-predicts home wins)
             # Historical home win rate is 54.5%, target ~54% home picks
-            home_bias_correction = -0.03  # Reduce home probability by 3 percentage points
+            home_bias_correction = -0.02  # Reduce home probability by 2 percentage points
             meta_prob = max(0.0, min(1.0, meta_prob_raw + home_bias_correction))
             
             # Get total predictions
