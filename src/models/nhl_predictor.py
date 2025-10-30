@@ -645,13 +645,10 @@ class NHLPredictor:
             away_rating = self.get_elo_rating(away_team)
             elo_prob = self.elo_expected_score(home_rating, away_rating)
             
-            # Meta ensemble: average of XGBoost, CatBoost, and Elo
-            meta_prob_raw = (xgb_prob + catboost_prob + elo_prob) / 3.0
-            
-            # BIAS CORRECTION: Reduce home advantage (model over-predicts home wins)
-            # Historical home win rate is 54.5%, target ~54% home picks
-            home_bias_correction = -0.02  # Reduce home probability by 2 percentage points
-            meta_prob = max(0.0, min(1.0, meta_prob_raw + home_bias_correction))
+            # Meta ensemble: weighted average favoring XGBoost/CatBoost over Elo
+            # XGBoost and CatBoost both show 52.7% accuracy, Elo only 48%
+            # Weights: 45% XGBoost, 45% CatBoost, 10% Elo
+            meta_prob = (0.45 * xgb_prob + 0.45 * catboost_prob + 0.10 * elo_prob)
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
