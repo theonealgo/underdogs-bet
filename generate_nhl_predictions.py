@@ -16,28 +16,26 @@ logger = logging.getLogger(__name__)
 DATABASE = 'sports_predictions_original.db'
 
 def get_nhl_games():
-    """Get all 2025-26 season NHL games for predictions"""
-    conn = sqlite3.connect(DATABASE)
+    """Get all 2025-26 season NHL games for predictions from nhlschedules.py"""
+    from nhlschedules import get_nhl_2025_schedule
     
-    query = """
-        SELECT 
-            game_id,
-            game_date,
-            home_team_id,
-            away_team_id,
-            home_score,
-            away_score,
-            status
-        FROM games
-        WHERE sport = 'NHL' 
-        AND season = 2025
-        ORDER BY game_date
-    """
+    schedule = get_nhl_2025_schedule()
     
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    # Convert to DataFrame
+    games = []
+    for game in schedule:
+        games.append({
+            'game_id': f"nhl_{game['date']}_{game['home_team']}_{game['away_team']}",
+            'game_date': game['date'],
+            'home_team_id': game['home_team'],
+            'away_team_id': game['away_team'],
+            'home_score': game.get('home_score'),
+            'away_score': game.get('away_score'),
+            'status': 'final' if game.get('home_score') is not None else 'scheduled'
+        })
     
-    logger.info(f"Loaded {len(df)} games for 2025-26 season")
+    df = pd.DataFrame(games)
+    logger.info(f"Loaded {len(df)} games for 2025-26 season from nhlschedules.py")
     return df
 
 def get_historical_games():
