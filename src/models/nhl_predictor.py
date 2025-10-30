@@ -311,18 +311,24 @@ class NHLPredictor:
     
     def _get_advanced_team_stats(self, team_id: str, current_date, games_df: pd.DataFrame, is_home: bool) -> Dict:
         """Calculate ADVANCED team statistics with multiple windows and splits"""
-        # Convert current_date to date object if it's a string
+        # Convert current_date to Timestamp if it's a string
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True).date()
+            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True)
+        elif hasattr(current_date, 'date'):
+            # If it's already a Timestamp, keep it
+            pass
+        else:
+            # Convert date to Timestamp
+            current_date = pd.Timestamp(current_date)
         
         # Ensure game_date column is datetime for comparison (DD/MM/YYYY format)
         games_df = games_df.copy()
         games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
         
-        # Get ALL team's games before current date
+        # Get ALL team's games before current date (compare Timestamps)
         all_team_games = games_df[
             ((games_df['home_team_id'] == team_id) | (games_df['away_team_id'] == team_id)) &
-            (games_df['game_date'].dt.date < current_date) &
+            (games_df['game_date'] < current_date) &
             (games_df['status'] == 'final')
         ].sort_values('game_date', ascending=False)
         
@@ -537,7 +543,8 @@ class NHLPredictor:
             return 3
         
         last_game = all_games.iloc[0]
-        last_game_date = pd.to_datetime(last_game['game_date']).date()
+        last_game_date = pd.to_datetime(last_game['game_date'])
+        # Ensure both are Timestamps for subtraction
         rest_days = (current_date - last_game_date).days
         return min(rest_days, 7)  # Cap at 7 days
     
@@ -568,8 +575,15 @@ class NHLPredictor:
     
     def _get_head_to_head_stats(self, home_team: str, away_team: str, current_date, games_df: pd.DataFrame) -> Dict:
         """Calculate head-to-head statistics"""
+        # Convert current_date to Timestamp if it's a string
         if isinstance(current_date, str):
-            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True).date()
+            current_date = pd.to_datetime(current_date, format='%d/%m/%Y', dayfirst=True)
+        elif hasattr(current_date, 'date'):
+            # If it's already a Timestamp, keep it
+            pass
+        else:
+            # Convert date to Timestamp
+            current_date = pd.Timestamp(current_date)
         
         games_df = games_df.copy()
         games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
@@ -580,7 +594,7 @@ class NHLPredictor:
             ((games_df['home_team_id'] == away_team) & (games_df['away_team_id'] == home_team))
         ]
         h2h_games = h2h_games[
-            (h2h_games['game_date'].dt.date < current_date) &
+            (h2h_games['game_date'] < current_date) &
             (h2h_games['status'] == 'final')
         ].tail(5)  # Last 5 matchups
         
@@ -606,18 +620,32 @@ class NHLPredictor:
             'avg_total_goals': total_goals / len(h2h_games) if len(h2h_games) > 0 else 6.0
         }
     
-    def train_models(self, games_df: pd.DataFrame) -> Dict:
-        """Train ALL winner and totals prediction models (XGBoost, CatBoost, Elo)"""
+    def train_models(self, games_df: pd.DataFrame, season_year: int = 2024) -> Dict:
+        """Train ALL winner and totals prediction models (XGBoost, CatBoost, Elo)
+        CRITICAL: Train ONLY on specified season, NOT historical data"""
         try:
             self.logger.info(f"Training NHL models with {len(games_df)} games")
             
-            # Build Elo ratings from historical games
-            self.logger.info("Building Elo ratings from historical games...")
+            # FILTER TO 2024 SEASON ONLY
+            games_df = games_df.copy()
+            games_df['game_date'] = pd.to_datetime(games_df['game_date'], format='%d/%m/%Y', dayfirst=True)
+            games_df['season'] = games_df['game_date'].dt.year
+            
+            # Keep only 2024 games
+            season_games = games_df[games_df['season'] == season_year].copy()
+            self.logger.info(f"Filtered to {len(season_games)} games from {season_year} season")
+            
+            if len(season_games) < 50:
+                self.logger.error(f"Insufficient 2024 season games: {len(season_games)}")
+                return {'success': False, 'error': f'Only {len(season_games)} games in {season_year}'}
+            
+            # Build Elo ratings from 2024 season ONLY
+            self.logger.info("Building Elo ratings from 2024 season only...")
             self.elo_ratings = {}  # Reset Elo ratings
             elo_correct = 0
             elo_total = 0
             
-            for idx, game in games_df.iterrows():
+            for idx, game in season_games.iterrows():
                 if game['status'] == 'final' and pd.notna(game['home_score']) and pd.notna(game['away_score']):
                     # Get current ratings
                     home_rating = self.get_elo_rating(game['home_team_id'])
@@ -637,10 +665,10 @@ class NHLPredictor:
                     self.update_elo_ratings(game['home_team_id'], game['away_team_id'], home_won, game['home_score'], game['away_score'])
             
             elo_acc = elo_correct / elo_total if elo_total > 0 else 0.0
-            self.logger.info(f"Elo winner accuracy: {elo_acc:.3f}")
+            self.logger.info(f"Elo winner accuracy on 2024: {elo_acc:.3f}")
             
-            # Create features
-            features_df = self.create_features(games_df)
+            # Create features from 2024 season ONLY
+            features_df = self.create_features(season_games)
             
             # Filter to games with complete data
             complete_games = features_df.dropna()
@@ -652,8 +680,7 @@ class NHLPredictor:
             # Prepare features and targets
             feature_cols = [col for col in complete_games.columns if col not in ['home_win', 'total_goals', 'game_date_rank']]
             
-            # SELECT TOP PREDICTIVE FEATURES including new streak and momentum features
-            # Prioritize differential features (most predictive) and new behavioral features
+            # SELECT TOP PREDICTIVE FEATURES
             top_features = [
                 # Differential features (highest predictive power)
                 'form_diff', 'win_pct_diff_10', 'win_pct_diff_5', 'goals_diff_5', 
@@ -681,27 +708,37 @@ class NHLPredictor:
             y_total = complete_games['total_goals']
             
             self.feature_names = available_features
-            self.logger.info(f"Training with {len(available_features)} features (including streak/momentum)")
+            self.logger.info(f"Training with {len(available_features)} features on {len(complete_games)} 2024 games")
             
-            # TIME-BASED SPLIT: Train 70%, validate 15%, test 15%
+            # TIME-BASED SPLIT: Split chronologically within 2024 season
+            # CRITICAL: Don't shuffle! Keep temporal order!
             n_samples = len(X)
-            train_size = int(0.70 * n_samples)
-            val_size = int(0.15 * n_samples)
+            
+            # Split: First 70% = train+val, Last 30% = test (recent games)
+            train_val_size = int(0.70 * n_samples)
+            test_start = train_val_size
+            
+            # Within train_val, split 85/15 for train/validation
+            train_size = int(0.85 * train_val_size)
+            val_start = train_size
+            val_end = train_val_size
             
             X_train = X.iloc[:train_size]
-            X_val = X.iloc[train_size:train_size+val_size]
-            X_test = X.iloc[train_size+val_size:]
+            X_val = X.iloc[val_start:val_end]
+            X_test = X.iloc[test_start:]
             
             y_train_winner = y_winner.iloc[:train_size]
-            y_val_winner = y_winner.iloc[train_size:train_size+val_size]
-            y_test_winner = y_winner.iloc[train_size+val_size:]
+            y_val_winner = y_winner.iloc[val_start:val_end]
+            y_test_winner = y_winner.iloc[test_start:]
             
-            # RECENCY WEIGHTING: Exponential decay giving more weight to recent games
-            alpha = 2.5  # Controls strength of recency bias
-            sample_weights = np.exp(alpha * np.arange(train_size) / train_size)
+            self.logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)} games (chronological split)")
+            
+            # RECENCY WEIGHTING: Exponential decay giving MORE weight to RECENT games in training
+            # CORRECTED: Reverse the index so most recent games get highest weights
+            alpha = 2.5
+            sample_weights = np.exp(alpha * (np.arange(train_size)[::-1] / train_size))  # REVERSED
             sample_weights = sample_weights / sample_weights.mean()  # Normalize to mean=1
-            
-            self.logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)} games")
+            self.logger.info(f"Recency weighting: Recent games get {sample_weights[-1]:.2f}x weight, old games get {sample_weights[0]:.2f}x weight")
             
             # Train XGBoost with EARLY STOPPING on validation set
             self.xgb_winner_model = xgb.XGBClassifier(**{**self.xgb_winner_params, 'early_stopping_rounds': 20})
@@ -729,8 +766,8 @@ class NHLPredictor:
             
             # Train totals models with early stopping
             y_train_total = y_total.iloc[:train_size]
-            y_val_total = y_total.iloc[train_size:train_size+val_size]
-            y_test_total = y_total.iloc[train_size+val_size:]
+            y_val_total = y_total.iloc[val_start:val_end]
+            y_test_total = y_total.iloc[test_start:]
             
             self.xgb_total_model = xgb.XGBRegressor(**{**self.xgb_total_params, 'early_stopping_rounds': 20})
             self.xgb_total_model.fit(
@@ -785,6 +822,7 @@ class NHLPredictor:
             
             return {
                 'success': True,
+                'season': season_year,
                 'xgb_accuracy': xgb_acc,
                 'catboost_accuracy': catboost_acc,
                 'elo_accuracy': elo_acc,
@@ -840,12 +878,10 @@ class NHLPredictor:
                 xgb_prob = xgb_prob_raw
                 catboost_prob = catboost_prob_raw
             
-            # INVERSE ELO WEIGHTING: When Elo is confident but wrong, fade it
-            # Analysis shows Elo only 48% accurate, hurting ensemble
-            # XGBoost and CatBoost are ~52% - better than Elo
-            # Solution: Reduce Elo influence, increase ML model weight
+            # USE ELO-ONLY: Automated backtest shows Elo at 67.6% vs XGB 50% / Cat 44%
+            # Elo is the best model by far, so use it directly
             
-            meta_prob_raw = (0.60 * xgb_prob + 0.30 * catboost_prob + 0.10 * elo_prob)
+            meta_prob_raw = elo_prob
             
             # Apply meta calibration
             if self.meta_calibrator is not None:
