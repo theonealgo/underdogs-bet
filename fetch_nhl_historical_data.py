@@ -15,6 +15,45 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://api-web.nhle.com/v1/"
 
+# Map API city names to full team names (matching schedule database)
+TEAM_NAME_MAP = {
+    'Anaheim': 'Anaheim Ducks',
+    'Arizona': 'Arizona Coyotes',
+    'Boston': 'Boston Bruins',
+    'Buffalo': 'Buffalo Sabres',
+    'Calgary': 'Calgary Flames',
+    'Carolina': 'Carolina Hurricanes',
+    'Chicago': 'Chicago Blackhawks',
+    'Colorado': 'Colorado Avalanche',
+    'Columbus': 'Columbus Blue Jackets',
+    'Dallas': 'Dallas Stars',
+    'Detroit': 'Detroit Red Wings',
+    'Edmonton': 'Edmonton Oilers',
+    'Florida': 'Florida Panthers',
+    'Los Angeles': 'Los Angeles Kings',
+    'Minnesota': 'Minnesota Wild',
+    'Montréal': 'Montreal Canadiens',
+    'Montreal': 'Montreal Canadiens',
+    'Nashville': 'Nashville Predators',
+    'New Jersey': 'New Jersey Devils',
+    'New York': 'New York Islanders',  # Default for NY
+    'Islanders': 'New York Islanders',
+    'Rangers': 'New York Rangers',
+    'Ottawa': 'Ottawa Senators',
+    'Philadelphia': 'Philadelphia Flyers',
+    'Pittsburgh': 'Pittsburgh Penguins',
+    'San Jose': 'San Jose Sharks',
+    'Seattle': 'Seattle Kraken',
+    'St. Louis': 'St Louis Blues',
+    'Tampa Bay': 'Tampa Bay Lightning',
+    'Toronto': 'Toronto Maple Leafs',
+    'Utah': 'Utah Mammoth',
+    'Vancouver': 'Vancouver Canucks',
+    'Vegas': 'Vegas Golden Knights',
+    'Washington': 'Washington Capitals',
+    'Winnipeg': 'Winnipeg Jets'
+}
+
 def fetch_season_games(start_date, end_date, season_name):
     """Fetch all completed games for a specific season by date range"""
     logger.info(f"Fetching {season_name} season data ({start_date} to {end_date})...")
@@ -55,11 +94,19 @@ def fetch_season_games(start_date, end_date, season_name):
                                 else:
                                     game_date_formatted = date_str
                                 
+                                # Get city names from API
+                                home_city = home_team.get('placeName', {}).get('default', '')
+                                away_city = away_team.get('placeName', {}).get('default', '')
+                                
+                                # Map to full team names
+                                home_full = TEAM_NAME_MAP.get(home_city, home_city)
+                                away_full = TEAM_NAME_MAP.get(away_city, away_city)
+                                
                                 game_data = {
                                     'match_id': game.get('id'),
                                     'date': game_date_formatted,
-                                    'home_team': home_team.get('placeName', {}).get('default', ''),
-                                    'away_team': away_team.get('placeName', {}).get('default', ''),
+                                    'home_team': home_full,
+                                    'away_team': away_full,
                                     'home_score': int(home_score),
                                     'away_score': int(away_score),
                                     'season': season_name
