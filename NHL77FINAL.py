@@ -68,12 +68,34 @@ def get_upcoming_predictions(sport, days=365):
     USER REQUIREMENT: Show ALL games from season start (Oct 7 for NHL), not just upcoming!
     """
     
-    # FOR NHL: Load from nhlschedules.py
+    # FOR NHL: Load from nhlschedules.py AND join with predictions from database
     if sport == 'NHL':
         nhl_schedule = get_nhl_2025_schedule()
+        
+        # Load predictions from database
+        conn = get_db_connection()
+        predictions_dict = {}
+        db_predictions = conn.execute('''
+            SELECT game_date, home_team_id, away_team_id,
+                   elo_home_prob, xgboost_home_prob, catboost_home_prob, 
+                   logistic_home_prob, meta_home_prob
+            FROM predictions 
+            WHERE sport = 'NHL'
+        ''').fetchall()
+        
+        # Index predictions by (date, home, away)
+        for pred in db_predictions:
+            key = (pred['game_date'], pred['home_team_id'], pred['away_team_id'])
+            predictions_dict[key] = dict(pred)
+        conn.close()
+        
+        # Merge schedule with predictions
         all_games_raw = []
         for game in nhl_schedule:
-            # Convert nhlschedules.py format to database format
+            key = (game['date'], game['home_team'], game['away_team'])
+            pred = predictions_dict.get(key, {})
+            
+            # Convert nhlschedules.py format to database format with predictions
             game_dict = {
                 'sport': 'NHL',
                 'game_date': game['date'],
@@ -81,6 +103,11 @@ def get_upcoming_predictions(sport, days=365):
                 'away_team_id': game['away_team'],
                 'home_score': game.get('home_score'),
                 'away_score': game.get('away_score'),
+                'stored_elo_prob': pred.get('elo_home_prob'),
+                'stored_xgb_prob': pred.get('xgboost_home_prob'),
+                'stored_cat_prob': pred.get('catboost_home_prob'),
+                'stored_log_prob': pred.get('logistic_home_prob'),
+                'stored_ensemble_prob': pred.get('meta_home_prob'),
                 'home_goalie': None,
                 'away_goalie': None,
                 'home_goalie_save_pct': None,
