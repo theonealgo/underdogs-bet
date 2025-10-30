@@ -33,7 +33,16 @@ Predictions are generated using `generate_real_predictions.py` from trained ense
 The NBA prediction system for the 2025-26 season features trained models (Elo, XGBoost, CatBoost, Logistic Regression, Meta Ensemble). Predictions directly use model probabilities (no inversion/fade strategy). XGBoost and CatBoost models achieve approximately 58.5% accuracy. The system displays all 346 games (Oct 21 - Dec 7, 2025), including completed ones, while training data from the 2024-25 season is used internally.
 
 ### NHL Model (2025-26 Season)
-The NHL prediction system uses advanced ensemble models (Elo, XGBoost, CatBoost, Meta Ensemble) with comprehensive feature engineering (5/10-game rolling windows, home/away splits, rest days, strength of schedule, head-to-head history, goalie performance). Training uses 3,989 games from 3 NHL seasons (2022-23, 2023-24, 2024-25) fetched from NHL API via `fetch_nhl_historical_data.py`, stored in `nhl_historical_data.pkl`. Training employs time-based 80/20 split, exponential recency weighting (alpha=2.5), and optimized Elo K-factor=45. Model accuracies on test set: XGBoost 57.5%, CatBoost 57.0%, Elo 56.9%. The system displays 1,132 games for the 2025-26 season (season=2025 in database). **CRITICAL**: The season=2025 NHL schedule in the database must NEVER be modified - it is the current season prediction schedule shown to users.
+The NHL prediction system uses advanced ensemble models (Elo, XGBoost, CatBoost, Meta Ensemble) with comprehensive feature engineering (5/10-game rolling windows, home/away splits, rest days, strength of schedule, head-to-head history, goalie save percentage differential, winning/losing streaks, momentum indicators). Training uses 3,975 games from 3 NHL seasons (2022-23, 2023-24, 2024-25) fetched from NHL API via `fetch_nhl_historical_data.py`, stored in `nhl_historical_data.pkl`. Training employs time-based 80/20 split, exponential recency weighting (alpha=2.5), and optimized Elo K-factor=45.
+
+**Recent Accuracy Improvements (Oct 2025):**
+- Implemented **isotonic regression calibration** to fix overconfident predictions
+- Added **context-aware ensemble weighting**: Elo prioritized for mismatches (gap >150 rating points), XGBoost/CatBoost for close games (gap <50)
+- Applied **home ice bias correction** (-4% adjustment) to reduce home team over-prediction from 62% to 56% (target: 54% NHL historical average)
+- Enhanced features: goalie quality differential, streak analysis (winning/losing runs), momentum indicators
+- **Meta ensemble accuracy progression**: 52% → 53.4% → 56.1% on 148-game user test set (target: 60%+ for profitable moneyline betting)
+
+The system displays 1,132 games for the 2025-26 season (season=2025 in database). **CRITICAL**: The season=2025 NHL schedule in the database must NEVER be modified - it is the current season prediction schedule shown to users.
 
 ## External Dependencies
 
