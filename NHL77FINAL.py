@@ -773,6 +773,123 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
 # RESULTS TEMPLATE
 # ============================================================================
 
+NHL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
+    '{% block extra_styles %}{% endblock %}',
+    """
+    .page-title {
+        font-size: 2.5em;
+        margin-bottom: 30px;
+        text-align: center;
+    }
+    .section-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 30px;
+        justify-content: center;
+    }
+    .tab {
+        padding: 12px 30px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        transition: all 0.3s;
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+    .tab.active {
+        background: linear-gradient(135deg, #10b981, #059669);
+    }
+    .results-table-container {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 15px;
+        padding: 20px;
+        overflow-x: auto;
+    }
+    .results-header {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    .results-header h2 {
+        color: #fbbf24;
+        font-size: 1.8em;
+        margin-bottom: 10px;
+    }
+    .results-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.95em;
+    }
+    .results-table th {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 12px 8px;
+        text-align: left;
+        font-weight: bold;
+        color: #fbbf24;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+    }
+    .results-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .results-table tr:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .prob-high {
+        color: #10b981;
+        font-weight: bold;
+    }
+    .prob-low {
+        color: #ef4444;
+    }
+    """
+).replace('{% block content %}{% endblock %}', """
+    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - First 147 Games Results</h1>
+    
+    <div class="section-tabs">
+        <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
+        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Results</a>
+    </div>
+    
+    <div class="results-table-container">
+        <div class="results-header">
+            <h2>📅 October 7 - October 26, 2025 (147 Games)</h2>
+            <p style="opacity: 0.8;">Model predictions shown as home team win probability (%)</p>
+        </div>
+        
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Away Team</th>
+                    <th>Home Team</th>
+                    <th>XGBoost</th>
+                    <th>CatBoost</th>
+                    <th>Elo</th>
+                    <th>Meta</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for game in results %}
+                <tr>
+                    <td>{{ game.date }}</td>
+                    <td>{{ game.away }}</td>
+                    <td>{{ game.home }}</td>
+                    <td class="{% if game.xgb_home|float >= 60 %}prob-high{% elif game.xgb_home|float <= 40 %}prob-low{% endif %}">{{ game.xgb_home }}%</td>
+                    <td class="{% if game.cat_home|float >= 60 %}prob-high{% elif game.cat_home|float <= 40 %}prob-low{% endif %}">{{ game.cat_home }}%</td>
+                    <td class="{% if game.elo_home|float >= 60 %}prob-high{% elif game.elo_home|float <= 40 %}prob-low{% endif %}">{{ game.elo_home }}%</td>
+                    <td class="{% if game.meta_home|float >= 60 %}prob-high{% elif game.meta_home|float <= 40 %}prob-low{% endif %}">{{ game.meta_home }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <div style="margin-top: 30px; text-align: center; padding: 20px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
+            <p style="font-size: 1.1em; margin-bottom: 10px;">📊 <strong>Total Games:</strong> {{ results|length }}</p>
+            <p style="opacity: 0.8;">Values shown are home team win probabilities. Higher % = model favors home team.</p>
+        </div>
+    </div>
+""")
+
 RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     '{% block extra_styles %}{% endblock %}',
     """
@@ -1080,8 +1197,51 @@ def sport_results(sport):
     if sport not in SPORTS:
         return "Sport not found", 404
     
+    # NHL: Show first 147 games (Oct 7-26) with predictions for user testing
+    if sport == 'NHL':
+        conn = get_db_connection()
+        games = conn.execute("""
+            SELECT 
+                g.game_date,
+                g.away_team_id,
+                g.home_team_id,
+                g.home_score,
+                g.away_score,
+                p.xgboost_home_prob,
+                p.catboost_home_prob,
+                p.elo_home_prob,
+                p.meta_home_prob
+            FROM games g
+            LEFT JOIN predictions p ON g.game_id = p.game_id
+            WHERE g.sport='NHL' AND g.season=2025
+            AND g.game_date >= '2025-10-07' AND g.game_date <= '2025-10-26'
+            ORDER BY g.game_date, g.game_id
+        """).fetchall()
+        conn.close()
+        
+        results = []
+        for game in games:
+            date_obj = parse_date(game['game_date'])
+            results.append({
+                'date': date_obj.strftime('%m/%d/%Y') if date_obj else game['game_date'],
+                'away': game['away_team_id'],
+                'home': game['home_team_id'],
+                'xgb_home': f"{game['xgboost_home_prob']*100:.1f}" if game['xgboost_home_prob'] else "N/A",
+                'cat_home': f"{game['catboost_home_prob']*100:.1f}" if game['catboost_home_prob'] else "N/A",
+                'elo_home': f"{game['elo_home_prob']*100:.1f}" if game['elo_home_prob'] else "N/A",
+                'meta_home': f"{game['meta_home_prob']*100:.1f}" if game['meta_home_prob'] else "N/A"
+            })
+        
+        return render_template_string(
+            NHL_RESULTS_TEMPLATE,
+            page=sport,
+            sport=sport,
+            sport_info=SPORTS[sport],
+            results=results
+        )
+    
     # Use actual 94-game test results for NFL (user's external testing)
-    if sport == 'NFL':
+    elif sport == 'NFL':
         performance = {
             'date_range': '04/09/2025 - 09/10/2025',
             'total_games': 94,
@@ -1106,16 +1266,22 @@ def sport_results(sport):
                 'total': 94
             }
         }
+        return render_template_string(
+            RESULTS_TEMPLATE,
+            page=sport,
+            sport=sport,
+            sport_info=SPORTS[sport],
+            performance=performance
+        )
     else:
         performance = calculate_model_performance(sport)
-    
-    return render_template_string(
-        RESULTS_TEMPLATE,
-        page=sport,
-        sport=sport,
-        sport_info=SPORTS[sport],
-        performance=performance
-    )
+        return render_template_string(
+            RESULTS_TEMPLATE,
+            page=sport,
+            sport=sport,
+            sport_info=SPORTS[sport],
+            performance=performance
+        )
 
 if __name__ == '__main__':
     print("\n" + "="*60)
