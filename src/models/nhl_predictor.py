@@ -228,6 +228,16 @@ class NHLPredictor:
                 'home_recent_form': home_stats['recent_form'],
                 'away_recent_form': away_stats['recent_form'],
                 
+                # NEW: Streak features (highly predictive)
+                'home_current_streak': home_stats['current_streak'],
+                'away_current_streak': away_stats['current_streak'],
+                'home_max_win_streak_5': home_stats['max_win_streak'],
+                'away_max_win_streak_5': away_stats['max_win_streak'],
+                
+                # NEW: Momentum features (trend over time)
+                'home_momentum': home_stats['momentum'],
+                'away_momentum': away_stats['momentum'],
+                
                 # Home/away splits
                 'home_home_win_pct': home_stats['home_win_pct'],
                 'away_away_win_pct': away_stats['away_win_pct'],
@@ -252,13 +262,15 @@ class NHLPredictor:
                 'h2h_total_games': h2h_stats['total_games'],
                 'h2h_avg_total_goals': h2h_stats['avg_total_goals'],
                 
-                # Differential features
+                # Differential features (most predictive)
                 'win_pct_diff_5': home_stats['win_pct_5'] - away_stats['win_pct_5'],
                 'win_pct_diff_10': home_stats['win_pct_10'] - away_stats['win_pct_10'],
                 'goals_diff_5': home_stats['goals_per_game_5'] - away_stats['goals_per_game_5'],
                 'defense_diff_5': away_stats['goals_against_5'] - home_stats['goals_against_5'],
                 'rest_diff': home_stats['rest_days'] - away_stats['rest_days'],
                 'form_diff': home_stats['recent_form'] - away_stats['recent_form'],
+                'streak_diff': home_stats['current_streak'] - away_stats['current_streak'],
+                'momentum_diff': home_stats['momentum'] - away_stats['momentum'],
             }
             
             # Add target variables if available
@@ -308,6 +320,10 @@ class NHLPredictor:
         # Get goalie stats if available
         goalie_sv_pct = self._get_goalie_sv_pct(team_id)
         
+        # Calculate streaks and momentum
+        streak_stats = self._calculate_streaks(team_id, all_team_games.head(10))
+        momentum = self._calculate_momentum(team_id, all_team_games.head(10))
+        
         return {
             # Multiple window win percentages
             'win_pct_5': stats_5['win_pct'],
@@ -323,6 +339,13 @@ class NHLPredictor:
             
             # Recent form (last 5 games)
             'recent_form': stats_5['win_pct'],
+            
+            # Streaks (highly predictive in sports)
+            'current_streak': streak_stats['current_streak'],
+            'max_win_streak': streak_stats['max_win_streak'],
+            
+            # Momentum (trend indicator)
+            'momentum': momentum,
             
             # Home/away splits
             'home_win_pct': home_away_stats['home_win_pct'],
@@ -341,6 +364,72 @@ class NHLPredictor:
             'goalie_sv_pct': goalie_sv_pct
         }
     
+    def _calculate_streaks(self, team_id: str, recent_games: pd.DataFrame) -> Dict:
+        """Calculate current winning/losing streak and max streak"""
+        if len(recent_games) == 0:
+            return {'current_streak': 0, 'max_win_streak': 0}
+        
+        current_streak = 0
+        max_win_streak = 0
+        current_win_streak = 0
+        
+        for idx, game in recent_games.iterrows():
+            is_home = game['home_team_id'] == team_id
+            team_score = game['home_score'] if is_home else game['away_score']
+            opp_score = game['away_score'] if is_home else game['home_score']
+            
+            if pd.notna(team_score) and pd.notna(opp_score):
+                won = team_score > opp_score
+                
+                # Current streak (positive for wins, negative for losses)
+                if idx == 0:  # Most recent game
+                    current_streak = 1 if won else -1
+                elif won:
+                    current_streak = current_streak + 1 if current_streak > 0 else 1
+                else:
+                    current_streak = current_streak - 1 if current_streak < 0 else -1
+                
+                # Track max win streak
+                if won:
+                    current_win_streak += 1
+                    max_win_streak = max(max_win_streak, current_win_streak)
+                else:
+                    current_win_streak = 0
+        
+        return {
+            'current_streak': current_streak,
+            'max_win_streak': max_win_streak
+        }
+    
+    def _calculate_momentum(self, team_id: str, recent_games: pd.DataFrame) -> float:
+        """Calculate momentum: weighted average favoring recent games
+        Positive = improving, Negative = declining
+        """
+        if len(recent_games) < 3:
+            return 0.0
+        
+        results = []
+        for idx, game in recent_games.iterrows():
+            is_home = game['home_team_id'] == team_id
+            team_score = game['home_score'] if is_home else game['away_score']
+            opp_score = game['away_score'] if is_home else game['home_score']
+            
+            if pd.notna(team_score) and pd.notna(opp_score):
+                # Win = 1, Loss = 0
+                results.append(1.0 if team_score > opp_score else 0.0)
+        
+        if len(results) < 3:
+            return 0.0
+        
+        # Calculate weighted win rates: recent games weighted more heavily
+        # Compare last 3 games vs previous 3-7 games
+        recent_win_rate = np.mean(results[:3]) if len(results) >= 3 else 0.5
+        older_win_rate = np.mean(results[3:]) if len(results) > 3 else recent_win_rate
+        
+        # Momentum = difference (positive means improving)
+        momentum = recent_win_rate - older_win_rate
+        return momentum
+    
     def _default_team_stats(self) -> Dict:
         """Return default stats for teams without history"""
         return {
@@ -348,6 +437,7 @@ class NHLPredictor:
             'goals_per_game_5': 3.0, 'goals_per_game_10': 3.0,
             'goals_against_5': 3.0, 'goals_against_10': 3.0,
             'recent_form': 0.5,
+            'current_streak': 0, 'max_win_streak': 0, 'momentum': 0.0,
             'home_win_pct': 0.55, 'away_win_pct': 0.45,
             'home_goals_avg': 3.2, 'away_goals_avg': 2.8,
             'rest_days': 1, 'back_to_back': 0,
@@ -531,12 +621,23 @@ class NHLPredictor:
             # Prepare features and targets
             feature_cols = [col for col in complete_games.columns if col not in ['home_win', 'total_goals', 'game_date_rank']]
             
-            # SELECT ONLY TOP PREDICTIVE FEATURES to reduce overfitting
-            # Based on feature importance analysis, use differential features + key stats
+            # SELECT TOP PREDICTIVE FEATURES including new streak and momentum features
+            # Prioritize differential features (most predictive) and new behavioral features
             top_features = [
-                'form_diff', 'win_pct_diff_10', 'win_pct_diff_5', 'goals_diff_5', 'goals_diff_10',
-                'home_goals_against_10', 'away_goals_against_10', 'h2h_home_wins', 'h2h_avg_total_goals',
-                'home_goals_per_game_5', 'away_goals_per_game_5', 'rest_diff'
+                # Differential features (highest predictive power)
+                'form_diff', 'win_pct_diff_10', 'win_pct_diff_5', 'goals_diff_5', 
+                'defense_diff_5', 'rest_diff', 'streak_diff', 'momentum_diff',
+                
+                # Key absolute stats
+                'home_goals_per_game_5', 'away_goals_per_game_5',
+                'home_goals_against_5', 'away_goals_against_5',
+                
+                # Streaks and momentum (new high-impact features)
+                'home_current_streak', 'away_current_streak', 
+                'home_momentum', 'away_momentum',
+                
+                # Head-to-head history
+                'h2h_home_wins', 'h2h_total_games'
             ]
             
             # Only use features that exist in the data
@@ -546,52 +647,78 @@ class NHLPredictor:
             y_total = complete_games['total_goals']
             
             self.feature_names = available_features
-            self.logger.info(f"Training with {len(available_features)} SELECTED features (reduced from {len(feature_cols)} to prevent overfitting)")
+            self.logger.info(f"Training with {len(available_features)} features (including streak/momentum)")
             
-            # TIME-BASED SPLIT: Train on earlier games, test on most recent games
-            # Sort games chronologically (already should be sorted from query)
+            # TIME-BASED SPLIT: Train 70%, validate 15%, test 15%
             n_samples = len(X)
-            train_size = int(0.8 * n_samples)
+            train_size = int(0.70 * n_samples)
+            val_size = int(0.15 * n_samples)
             
             X_train = X.iloc[:train_size]
-            X_test = X.iloc[train_size:]
+            X_val = X.iloc[train_size:train_size+val_size]
+            X_test = X.iloc[train_size+val_size:]
+            
             y_train_winner = y_winner.iloc[:train_size]
-            y_test_winner = y_winner.iloc[train_size:]
+            y_val_winner = y_winner.iloc[train_size:train_size+val_size]
+            y_test_winner = y_winner.iloc[train_size+val_size:]
             
             # RECENCY WEIGHTING: Exponential decay giving more weight to recent games
-            # Weight formula: weight = exp(alpha * (index / n_samples))
-            # Recent games get weight ~3-4x older games
             alpha = 2.5  # Controls strength of recency bias
             sample_weights = np.exp(alpha * np.arange(train_size) / train_size)
             sample_weights = sample_weights / sample_weights.mean()  # Normalize to mean=1
             
-            self.logger.info(f"Recency weighting: oldest game weight={sample_weights[0]:.2f}, newest game weight={sample_weights[-1]:.2f}")
+            self.logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)} games")
             
-            # Train XGBoost winner model with recency weighting
+            # Train XGBoost with EARLY STOPPING on validation set
             self.xgb_winner_model = xgb.XGBClassifier(**self.xgb_winner_params)
-            self.xgb_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            self.xgb_winner_model.fit(
+                X_train, y_train_winner, 
+                sample_weight=sample_weights,
+                eval_set=[(X_val, y_val_winner)],
+                early_stopping_rounds=20,
+                verbose=False
+            )
             xgb_acc = accuracy_score(y_test_winner, self.xgb_winner_model.predict(X_test))
-            self.logger.info(f"XGBoost winner accuracy (time-based test): {xgb_acc:.3f}")
+            self.logger.info(f"XGBoost accuracy (test set): {xgb_acc:.3f}, best iteration: {self.xgb_winner_model.best_iteration}")
             
-            # Train CatBoost winner model with recency weighting
+            # Train CatBoost with EARLY STOPPING on validation set
             self.catboost_winner_model = CatBoostClassifier(**self.catboost_winner_params)
-            self.catboost_winner_model.fit(X_train, y_train_winner, sample_weight=sample_weights)
+            self.catboost_winner_model.fit(
+                X_train, y_train_winner,
+                sample_weight=sample_weights,
+                eval_set=(X_val, y_val_winner),
+                early_stopping_rounds=20,
+                verbose=False
+            )
             catboost_acc = accuracy_score(y_test_winner, self.catboost_winner_model.predict(X_test))
-            self.logger.info(f"CatBoost winner accuracy (time-based test): {catboost_acc:.3f}")
+            self.logger.info(f"CatBoost accuracy (test set): {catboost_acc:.3f}, best iteration: {self.catboost_winner_model.best_iteration_}")
             
-            # Train totals models with same time-based split and recency weighting
+            # Train totals models with early stopping
             y_train_total = y_total.iloc[:train_size]
-            y_test_total = y_total.iloc[train_size:]
+            y_val_total = y_total.iloc[train_size:train_size+val_size]
+            y_test_total = y_total.iloc[train_size+val_size:]
             
             self.xgb_total_model = xgb.XGBRegressor(**self.xgb_total_params)
-            self.xgb_total_model.fit(X_train, y_train_total, sample_weight=sample_weights)
+            self.xgb_total_model.fit(
+                X_train, y_train_total, 
+                sample_weight=sample_weights,
+                eval_set=[(X_val, y_val_total)],
+                early_stopping_rounds=20,
+                verbose=False
+            )
             xgb_mae = mean_absolute_error(y_test_total, self.xgb_total_model.predict(X_test))
-            self.logger.info(f"XGBoost total MAE (time-based test): {xgb_mae:.3f}")
+            self.logger.info(f"XGBoost total MAE (test set): {xgb_mae:.3f}")
             
             self.catboost_total_model = CatBoostRegressor(**self.catboost_total_params)
-            self.catboost_total_model.fit(X_train, y_train_total, sample_weight=sample_weights)
+            self.catboost_total_model.fit(
+                X_train, y_train_total, 
+                sample_weight=sample_weights,
+                eval_set=(X_val, y_val_total),
+                early_stopping_rounds=20,
+                verbose=False
+            )
             catboost_mae = mean_absolute_error(y_test_total, self.catboost_total_model.predict(X_test))
-            self.logger.info(f"CatBoost total MAE (time-based test): {catboost_mae:.3f}")
+            self.logger.info(f"CatBoost total MAE (test set): {catboost_mae:.3f}")
             
             self.is_trained = True
             self._save_models()
