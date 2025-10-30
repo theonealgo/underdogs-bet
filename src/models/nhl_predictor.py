@@ -840,27 +840,12 @@ class NHLPredictor:
                 xgb_prob = xgb_prob_raw
                 catboost_prob = catboost_prob_raw
             
-            # CONTEXT-AWARE ENSEMBLE: Weight models based on game context
-            # Elo works better for mismatches, XGBoost/CatBoost for close games
+            # INVERSE ELO WEIGHTING: When Elo is confident but wrong, fade it
+            # Analysis shows Elo only 48% accurate, hurting ensemble
+            # XGBoost and CatBoost are ~52% - better than Elo
+            # Solution: Reduce Elo influence, increase ML model weight
             
-            # Calculate Elo rating gap (larger gap = more mismatch)
-            elo_gap = abs(home_rating - away_rating)
-            
-            # Adaptive weighting based on Elo gap
-            # Small gap (< 50): Close game → Trust ML models (XGB/Cat)
-            # Medium gap (50-150): Balanced → Equal weighting
-            # Large gap (> 150): Mismatch → Trust Elo more
-            if elo_gap < 50:
-                # Close game: ML models are better at nuance
-                xgb_weight, cat_weight, elo_weight = 0.55, 0.35, 0.10
-            elif elo_gap < 150:
-                # Balanced: Standard weighting
-                xgb_weight, cat_weight, elo_weight = 0.50, 0.30, 0.20
-            else:
-                # Mismatch: Elo captures team quality difference best
-                xgb_weight, cat_weight, elo_weight = 0.35, 0.25, 0.40
-            
-            meta_prob_raw = (xgb_weight * xgb_prob + cat_weight * catboost_prob + elo_weight * elo_prob)
+            meta_prob_raw = (0.60 * xgb_prob + 0.30 * catboost_prob + 0.10 * elo_prob)
             
             # Apply meta calibration
             if self.meta_calibrator is not None:
