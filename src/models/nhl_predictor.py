@@ -659,6 +659,9 @@ class NHLPredictor:
                 'form_diff', 'win_pct_diff_10', 'win_pct_diff_5', 'goals_diff_5', 
                 'defense_diff_5', 'rest_diff', 'streak_diff', 'momentum_diff',
                 
+                # GOALIE DIFFERENTIAL (critical in NHL)
+                'goalie_sv_pct_diff',
+                
                 # Key absolute stats
                 'home_goals_per_game_5', 'away_goals_per_game_5',
                 'home_goals_against_5', 'away_goals_against_5',
@@ -837,9 +840,27 @@ class NHLPredictor:
                 xgb_prob = xgb_prob_raw
                 catboost_prob = catboost_prob_raw
             
-            # Meta ensemble with calibrated probabilities
-            # Weights: 50% XGBoost, 25% CatBoost, 25% Elo
-            meta_prob_raw = (0.50 * xgb_prob + 0.25 * catboost_prob + 0.25 * elo_prob)
+            # CONTEXT-AWARE ENSEMBLE: Weight models based on game context
+            # Elo works better for mismatches, XGBoost/CatBoost for close games
+            
+            # Calculate Elo rating gap (larger gap = more mismatch)
+            elo_gap = abs(home_rating - away_rating)
+            
+            # Adaptive weighting based on Elo gap
+            # Small gap (< 50): Close game → Trust ML models (XGB/Cat)
+            # Medium gap (50-150): Balanced → Equal weighting
+            # Large gap (> 150): Mismatch → Trust Elo more
+            if elo_gap < 50:
+                # Close game: ML models are better at nuance
+                xgb_weight, cat_weight, elo_weight = 0.55, 0.35, 0.10
+            elif elo_gap < 150:
+                # Balanced: Standard weighting
+                xgb_weight, cat_weight, elo_weight = 0.50, 0.30, 0.20
+            else:
+                # Mismatch: Elo captures team quality difference best
+                xgb_weight, cat_weight, elo_weight = 0.35, 0.25, 0.40
+            
+            meta_prob_raw = (xgb_weight * xgb_prob + cat_weight * catboost_prob + elo_weight * elo_prob)
             
             # Apply meta calibration
             if self.meta_calibrator is not None:
