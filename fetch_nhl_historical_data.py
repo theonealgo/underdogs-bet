@@ -102,6 +102,18 @@ def fetch_season_games(start_date, end_date, season_name):
                                 home_full = TEAM_NAME_MAP.get(home_city, home_city)
                                 away_full = TEAM_NAME_MAP.get(away_city, away_city)
                                 
+                                # Skip All-Star games and invalid data
+                                invalid_teams = ['Team McDavid', 'Team Matthews', 'Team Hughes', 'Team MacKinnon', 
+                                                'Team King', 'Team Kloss', 'Atlantic', 'Central', 'Pacific', 
+                                                'Metropolitan', '', ' ']
+                                
+                                # Skip if empty, whitespace, or All-Star teams
+                                if (not home_full or not away_full or 
+                                    home_full.strip() == '' or away_full.strip() == '' or
+                                    home_full in invalid_teams or away_full in invalid_teams or
+                                    'Team ' in home_full or 'Team ' in away_full):
+                                    continue
+                                
                                 game_data = {
                                     'match_id': game.get('id'),
                                     'date': game_date_formatted,
