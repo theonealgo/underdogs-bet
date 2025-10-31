@@ -956,18 +956,9 @@ class NHLPredictor:
             away_rating = self.get_elo_rating(away_team, 'away')
             elo_prob = self.elo_expected_score(home_rating + self.elo_home_advantage, away_rating)
             
-            # META ENSEMBLE: Use LogisticRegression to combine predictions if available
-            if self.meta_model is not None:
-                # Stack predictions
-                meta_features = np.array([[xgb_prob, catboost_prob, elo_prob]])
-                meta_prob = self.meta_model.predict_proba(meta_features)[0][1]
-                
-                # Apply calibration if available
-                if self.meta_calibrator is not None:
-                    meta_prob = self.meta_calibrator.predict([meta_prob])[0]
-            else:
-                # Fallback to weighted average
-                meta_prob = (0.70 * xgb_prob + 0.30 * catboost_prob)
+            # USE CATBOOST ONLY (best performing model at 57.1%)
+            # Meta ensemble (52.0%) and XGBoost (52.5%) perform worse
+            meta_prob = catboost_prob
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]

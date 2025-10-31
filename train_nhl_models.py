@@ -27,12 +27,12 @@ def load_nhl_training_data():
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
-        # Filter to 2024 season only (not 2022-2023)
+        # Use ONLY 2024 season - most recent data for best accuracy
         for game in all_games:
             try:
                 date_obj = datetime.strptime(game['date'], '%Y-%m-%d')
                 
-                # Only include 2024 games
+                # Only 2024 season (most relevant for current predictions)
                 if date_obj.year != 2024:
                     continue
                     
@@ -49,44 +49,16 @@ def load_nhl_training_data():
                 'away_score': game['away_score'],
                 'status': 'final'
             })
-        logger.info(f"Loaded {len(games)} games from 2024 season (filtered for speed)")
+        logger.info(f"Loaded {len(games)} games from 2024 season (most recent full season)")
     else:
         logger.error("Historical data file not found. Run 'python fetch_nhl_historical_data.py' first")
         return pd.DataFrame()
     
-    # Add completed 2025 games from database
-    conn = sqlite3.connect(DATABASE)
-    completed_2025 = pd.read_sql_query("""
-        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
-        FROM games
-        WHERE sport='NHL' AND season=2025 
-        AND home_score IS NOT NULL AND away_score IS NOT NULL
-        ORDER BY game_date
-    """, conn)
-    conn.close()
-    
-    if len(completed_2025) > 0:
-        for _, row in completed_2025.iterrows():
-            # Convert YYYY-MM-DD to DD/MM/YYYY
-            try:
-                date_obj = datetime.strptime(row['game_date'], '%Y-%m-%d')
-                formatted_date = date_obj.strftime('%d/%m/%Y')
-            except:
-                formatted_date = row['game_date']
-                
-            games.append({
-                'game_id': row['game_id'],
-                'game_date': formatted_date,
-                'home_team_id': row['home_team_id'],
-                'away_team_id': row['away_team_id'],
-                'home_score': row['home_score'],
-                'away_score': row['away_score'],
-                'status': 'final'
-            })
-        logger.info(f"Added {len(completed_2025)} completed games from 2025 season")
+    # DO NOT add 2025 games to training - they are our true test set!
+    # Training on 2024 season only to prevent data leakage
     
     df = pd.DataFrame(games)
-    logger.info(f"Total {len(df)} training games (2024 + 2025 completed)")
+    logger.info(f"Total {len(df)} training games (2024 season only - no 2025 to prevent leakage)")
     if len(df) > 0:
         logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
     
@@ -130,17 +102,31 @@ def main():
         logger.info(f"  CatBoost Total MAE:    {results['catboost_total_mae']:.2f} goals")
         logger.info("="*70)
         
-        # AUTOMATIC 148-GAME BACKTEST
+        # AUTOMATIC BACKTEST ON TRUE HELD-OUT 2025 GAMES
         logger.info("\n" + "="*70)
-        logger.info("AUTOMATIC BACKTEST ON LAST 148 GAMES (All Available Data)")
+        logger.info("AUTOMATIC BACKTEST ON 2025 COMPLETED GAMES (TRUE HELD-OUT DATA)")
         logger.info("="*70)
         
-        # Take last 148 games from all available data (2024 + 2025 completed)
-        training_data['game_date'] = pd.to_datetime(training_data['game_date'], format='%d/%m/%Y', dayfirst=True)
-        training_data_sorted = training_data.sort_values('game_date')
-        test_games = training_data_sorted.tail(148)
+        # Load 2025 completed games from database (NOT in training set)
+        conn = sqlite3.connect(DATABASE)
+        test_games = pd.read_sql_query("""
+            SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
+            FROM games
+            WHERE sport='NHL' AND season=2025 
+            AND home_score IS NOT NULL AND away_score IS NOT NULL
+            ORDER BY game_date
+        """, conn)
+        conn.close()
         
-        logger.info(f"Testing on {len(test_games)} most recent 2024 games")
+        if len(test_games) == 0:
+            logger.warning("No completed 2025 games found for backtest")
+            logger.info("Models trained successfully. Backtest will run once 2025 games are completed.")
+            return
+        
+        # Convert date format for compatibility
+        test_games['game_date'] = pd.to_datetime(test_games['game_date'], format='%Y-%m-%d')
+        
+        logger.info(f"Testing on {len(test_games)} completed 2025 games (NEVER SEEN BEFORE)")
         logger.info(f"Date range: {test_games['game_date'].min().strftime('%Y-%m-%d')} to {test_games['game_date'].max().strftime('%Y-%m-%d')}")
         
         # Generate predictions for test games
@@ -191,11 +177,12 @@ def main():
                 if meta_winner == actual_winner:
                     meta_correct += 1
         
-        logger.info("\n148-GAME BACKTEST ACCURACY:")
-        logger.info(f"  XGBoost:   {xgb_correct}/148 = {xgb_correct/148:.1%}")
-        logger.info(f"  CatBoost:  {cat_correct}/148 = {cat_correct/148:.1%}")
-        logger.info(f"  Elo:       {elo_correct}/148 = {elo_correct/148:.1%}")
-        logger.info(f"  Meta:      {meta_correct}/148 = {meta_correct/148:.1%}")
+        total_games = len(test_games)
+        logger.info(f"\n{total_games}-GAME BACKTEST ACCURACY (TRUE HELD-OUT 2025 DATA):")
+        logger.info(f"  XGBoost:   {xgb_correct}/{total_games} = {xgb_correct/total_games:.1%}")
+        logger.info(f"  CatBoost:  {cat_correct}/{total_games} = {cat_correct/total_games:.1%}")
+        logger.info(f"  Elo:       {elo_correct}/{total_games} = {elo_correct/total_games:.1%}")
+        logger.info(f"  Meta:      {meta_correct}/{total_games} = {meta_correct/total_games:.1%}")
         logger.info("="*70)
         
         logger.info("\n✅ NHL MODEL TRAINING COMPLETE")
