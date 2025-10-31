@@ -30,6 +30,7 @@ class NHLPredictor:
         self.catboost_winner_model = None
         self.xgb_total_model = None
         self.catboost_total_model = None
+        self.meta_model = None  # Logistic regression for combining predictions
         
         # Calibration models (fix overconfident predictions)
         self.xgb_calibrator = None
@@ -39,9 +40,10 @@ class NHLPredictor:
         self.is_trained = False
         self.feature_names = None
         
-        # Elo rating system (K-factor=45 for NHL - higher for faster adaptation to form changes)
-        self.elo_ratings = {}  # team_id -> rating
-        self.elo_k_factor = 45  # Increased for faster response to recent performance
+        # Elo rating system with separate home/away ratings
+        self.elo_ratings = {}  # team_id -> {'overall': rating, 'home': rating, 'away': rating}
+        self.elo_k_factor = 32  # Optimized K-factor based on NHL backtesting
+        self.elo_home_advantage = 50  # Reduced from implicit 100+ in previous version
         self.elo_initial_rating = 1500
         
         # XGBoost parameters - Balanced to prevent overfitting while allowing learning
@@ -116,6 +118,7 @@ class NHLPredictor:
             catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
             calibrators_path = os.path.join(self.model_dir, 'nhl_calibrators.pkl')
+            meta_model_path = os.path.join(self.model_dir, 'nhl_meta_model.pkl')
             
             if os.path.exists(xgb_winner_path):
                 with open(xgb_winner_path, 'rb') as f:
@@ -132,6 +135,11 @@ class NHLPredictor:
                 if os.path.exists(features_path):
                     with open(features_path, 'rb') as f:
                         self.feature_names = pickle.load(f)
+                
+                # Load meta model if it exists
+                if os.path.exists(meta_model_path):
+                    with open(meta_model_path, 'rb') as f:
+                        self.meta_model = pickle.load(f)
                 
                 # Load calibrators if they exist
                 if os.path.exists(calibrators_path):
@@ -156,6 +164,7 @@ class NHLPredictor:
             catboost_total_path = os.path.join(self.model_dir, 'nhl_catboost_total.pkl')
             features_path = os.path.join(self.model_dir, 'nhl_feature_names.pkl')
             calibrators_path = os.path.join(self.model_dir, 'nhl_calibrators.pkl')
+            meta_model_path = os.path.join(self.model_dir, 'nhl_meta_model.pkl')
             
             with open(xgb_winner_path, 'wb') as f:
                 pickle.dump(self.xgb_winner_model, f)
@@ -169,6 +178,11 @@ class NHLPredictor:
                 pickle.dump(self.catboost_total_model, f)
             with open(features_path, 'wb') as f:
                 pickle.dump(self.feature_names, f)
+            
+            # Save meta model
+            if self.meta_model is not None:
+                with open(meta_model_path, 'wb') as f:
+                    pickle.dump(self.meta_model, f)
             
             # Save calibrators
             if self.xgb_calibrator is not None:
@@ -184,38 +198,59 @@ class NHLPredictor:
         except Exception as e:
             self.logger.error(f"Error saving NHL models: {e}")
     
-    def get_elo_rating(self, team: str) -> float:
-        """Get team's current Elo rating"""
+    def get_elo_rating(self, team: str, rating_type: str = 'overall') -> float:
+        """Get team's Elo rating (overall, home, or away)"""
         if team not in self.elo_ratings:
-            self.elo_ratings[team] = self.elo_initial_rating
-        return self.elo_ratings[team]
+            self.elo_ratings[team] = {
+                'overall': self.elo_initial_rating,
+                'home': self.elo_initial_rating,
+                'away': self.elo_initial_rating
+            }
+        return self.elo_ratings[team][rating_type]
     
     def elo_expected_score(self, rating_a: float, rating_b: float) -> float:
         """Calculate expected win probability for team A vs team B"""
         return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     
     def update_elo_ratings(self, home_team: str, away_team: str, home_won: bool, home_score: int = None, away_score: int = None):
-        """Update Elo ratings after a game with margin of victory adjustment"""
-        home_rating = self.get_elo_rating(home_team)
-        away_rating = self.get_elo_rating(away_team)
+        """Update Elo ratings after a game with margin of victory and home/away splits"""
+        # Initialize if needed
+        if home_team not in self.elo_ratings:
+            self.elo_ratings[home_team] = {'overall': self.elo_initial_rating, 'home': self.elo_initial_rating, 'away': self.elo_initial_rating}
+        if away_team not in self.elo_ratings:
+            self.elo_ratings[away_team] = {'overall': self.elo_initial_rating, 'home': self.elo_initial_rating, 'away': self.elo_initial_rating}
+        
+        # Use home/away specific ratings for more accurate predictions
+        home_rating = self.elo_ratings[home_team]['home']
+        away_rating = self.elo_ratings[away_team]['away']
+        
+        # Add small home ice advantage (reduced from previous)
+        home_rating_adj = home_rating + self.elo_home_advantage
         
         # Expected scores
-        home_expected = self.elo_expected_score(home_rating, away_rating)
+        home_expected = self.elo_expected_score(home_rating_adj, away_rating)
         
         # Actual result
         home_actual = 1.0 if home_won else 0.0
         
-        # Margin of victory multiplier (if scores provided)
+        # Margin of victory multiplier (blowouts matter more)
         mov_multiplier = 1.0
         if home_score is not None and away_score is not None:
             score_diff = abs(home_score - away_score)
-            # NHL: Score differences matter less than NBA/NFL (typical range 1-3 goals)
-            mov_multiplier = 1.0 + (score_diff / 10.0)  # Max ~1.5x for 5-goal win
+            # NHL: Blowouts (3+ goals) should count significantly more
+            mov_multiplier = 1.0 + (score_diff * 0.15)  # Max ~1.75x for 5-goal win
         
-        # Update ratings
-        rating_change = self.elo_k_factor * mov_multiplier * (home_actual - home_expected)
-        self.elo_ratings[home_team] = home_rating + rating_change
-        self.elo_ratings[away_team] = away_rating - rating_change
+        # Update ratings with MoV weighting
+        k = self.elo_k_factor * mov_multiplier
+        rating_change = k * (home_actual - home_expected)
+        
+        # Update overall ratings
+        self.elo_ratings[home_team]['overall'] += rating_change
+        self.elo_ratings[away_team]['overall'] -= rating_change
+        
+        # Update home/away specific ratings (double weight for venue-specific)
+        self.elo_ratings[home_team]['home'] += rating_change * 1.5
+        self.elo_ratings[away_team]['away'] -= rating_change * 1.5
     
     def create_features(self, games_df: pd.DataFrame, historical_games: pd.DataFrame = None) -> pd.DataFrame:
         """Create ADVANCED features for NHL games"""
@@ -811,8 +846,52 @@ class NHLPredictor:
             self.catboost_calibrator = IsotonicRegression(out_of_bounds='clip')
             self.catboost_calibrator.fit(catboost_val_probs, y_val_winner)
             
-            # Calibrate meta ensemble predictions
-            meta_val_probs = 0.50 * xgb_val_probs + 0.25 * catboost_val_probs + 0.25 * 0.568  # Elo baseline
+            # TRAIN META MODEL: Use LogisticRegression to combine XGBoost, CatBoost, and Elo predictions
+            self.logger.info("\nTraining Meta Ensemble (LogisticRegression combining XGB + CatBoost + Elo)...")
+            
+            # Get Elo probabilities for train/val/test sets
+            def get_elo_probs(df_subset):
+                elo_probs = []
+                for idx in df_subset.index:
+                    row = complete_games.iloc[idx]
+                    # Extract team names from original games
+                    home_team = season_games.iloc[idx]['home_team_id']
+                    away_team = season_games.iloc[idx]['away_team_id']
+                    home_rating = self.get_elo_rating(home_team, 'home')
+                    away_rating = self.get_elo_rating(away_team, 'away')
+                    elo_prob = self.elo_expected_score(home_rating + self.elo_home_advantage, away_rating)
+                    elo_probs.append(elo_prob)
+                return np.array(elo_probs)
+            
+            elo_train_probs = get_elo_probs(X_train)
+            elo_val_probs = get_elo_probs(X_val)
+            elo_test_probs = get_elo_probs(X_test)
+            
+            # Get model predictions on train set
+            xgb_train_probs = self.xgb_winner_model.predict_proba(X_train)[:, 1]
+            catboost_train_probs = self.catboost_winner_model.predict_proba(X_train)[:, 1]
+            
+            # Stack predictions as meta features
+            meta_train_X = np.column_stack([xgb_train_probs, catboost_train_probs, elo_train_probs])
+            meta_val_X = np.column_stack([xgb_val_probs, catboost_val_probs, elo_val_probs])
+            meta_test_X = np.column_stack([
+                self.xgb_winner_model.predict_proba(X_test)[:, 1],
+                self.catboost_winner_model.predict_proba(X_test)[:, 1],
+                elo_test_probs
+            ])
+            
+            # Train meta model with L2 regularization
+            self.meta_model = LogisticRegression(penalty='l2', C=1.0, random_state=42, max_iter=1000)
+            self.meta_model.fit(meta_train_X, y_train_winner)
+            
+            # Evaluate meta model
+            meta_val_probs = self.meta_model.predict_proba(meta_val_X)[:, 1]
+            meta_test_probs = self.meta_model.predict_proba(meta_test_X)[:, 1]
+            meta_test_acc = accuracy_score(y_test_winner, (meta_test_probs > 0.5).astype(int))
+            self.logger.info(f"Meta model accuracy (test set): {meta_test_acc:.3f}")
+            self.logger.info(f"Meta weights - XGB: {self.meta_model.coef_[0][0]:.3f}, CatBoost: {self.meta_model.coef_[0][1]:.3f}, Elo: {self.meta_model.coef_[0][2]:.3f}")
+            
+            # Calibrate meta model predictions
             self.meta_calibrator = IsotonicRegression(out_of_bounds='clip')
             self.meta_calibrator.fit(meta_val_probs, y_val_winner)
             
@@ -868,17 +947,27 @@ class NHLPredictor:
                 self.logger.warning("Models not trained, using default prediction")
                 return self._default_prediction(home_team, away_team)
             
-            # Get predictions from XGBoost and CatBoost (NO CALIBRATION)
+            # Get predictions from XGBoost and CatBoost
             xgb_prob = self.xgb_winner_model.predict_proba(X)[0][1]
             catboost_prob = self.catboost_winner_model.predict_proba(X)[0][1]
             
-            # Get Elo prediction
-            home_rating = self.get_elo_rating(home_team)
-            away_rating = self.get_elo_rating(away_team)
-            elo_prob = self.elo_expected_score(home_rating, away_rating)
+            # Get Elo prediction using home/away specific ratings
+            home_rating = self.get_elo_rating(home_team, 'home')
+            away_rating = self.get_elo_rating(away_team, 'away')
+            elo_prob = self.elo_expected_score(home_rating + self.elo_home_advantage, away_rating)
             
-            # META ENSEMBLE: 70% XGBoost + 30% CatBoost (NO ELO)
-            meta_prob = (0.70 * xgb_prob + 0.30 * catboost_prob)
+            # META ENSEMBLE: Use LogisticRegression to combine predictions if available
+            if self.meta_model is not None:
+                # Stack predictions
+                meta_features = np.array([[xgb_prob, catboost_prob, elo_prob]])
+                meta_prob = self.meta_model.predict_proba(meta_features)[0][1]
+                
+                # Apply calibration if available
+                if self.meta_calibrator is not None:
+                    meta_prob = self.meta_calibrator.predict([meta_prob])[0]
+            else:
+                # Fallback to weighted average
+                meta_prob = (0.70 * xgb_prob + 0.30 * catboost_prob)
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
