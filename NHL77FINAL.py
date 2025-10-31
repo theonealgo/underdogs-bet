@@ -843,7 +843,7 @@ NHL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     }
     """
 ).replace('{% block content %}{% endblock %}', """
-    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - First 147 Games Results</h1>
+    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - Completed Games Results</h1>
     
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
@@ -852,7 +852,7 @@ NHL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     
     <div class="results-table-container">
         <div class="results-header">
-            <h2>📅 October 7 - October 26, 2025 (147 Games)</h2>
+            <h2>📅 2025-26 Season - All Completed Games</h2>
             <p style="opacity: 0.8;">Model predictions shown as home team win probability (%)</p>
         </div>
         
@@ -1197,7 +1197,7 @@ def sport_results(sport):
     if sport not in SPORTS:
         return "Sport not found", 404
     
-    # NHL: Show first 148 games (Match IDs 1-148) for user testing
+    # NHL: Show all completed games with scores for user testing
     if sport == 'NHL':
         conn = get_db_connection()
         games = conn.execute("""
@@ -1213,8 +1213,7 @@ def sport_results(sport):
                 p.meta_home_prob
             FROM games g
             LEFT JOIN predictions p ON g.game_id = p.game_id
-            WHERE g.sport='NHL' AND g.season=2025
-            AND CAST(SUBSTR(g.game_id, 10) AS INTEGER) <= 148
+            WHERE g.sport='NHL' AND g.season=2025 AND g.status='final'
             ORDER BY CAST(SUBSTR(g.game_id, 10) AS INTEGER)
         """).fetchall()
         conn.close()
