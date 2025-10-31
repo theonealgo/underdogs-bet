@@ -45,13 +45,22 @@ def get_historical_games():
     
     games = []
     
-    # Load 2024 season historical data from pickle file
+    # Load ONLY 2024 season historical data (matching training data!)
     if os.path.exists('nhl_historical_data.pkl'):
         with open('nhl_historical_data.pkl', 'rb') as f:
             all_games = pickle.load(f)
         
-        # Convert to DataFrame - keep YYYY-MM-DD format
+        # Filter to 2024 season ONLY (matching training)
+        from datetime import datetime as dt
         for game in all_games:
+            try:
+                date_obj = dt.strptime(game['date'], '%Y-%m-%d')
+                # Only 2024 season (matching training data exactly)
+                if date_obj.year != 2024:
+                    continue
+            except:
+                continue
+                
             games.append({
                 'game_id': f"nhl_{game['match_id']}",
                 'game_date': game['date'],  # Keep original YYYY-MM-DD format
@@ -61,36 +70,15 @@ def get_historical_games():
                 'away_score': game['away_score'],
                 'status': 'final'
             })
-        logger.info(f"Loaded {len(games)} games from 2024 season historical data")
+        logger.info(f"Loaded {len(games)} games from 2024 season historical data (matching training)")
     else:
         logger.warning("Historical data file not found")
     
-    # Add completed 2025 games from database
-    conn = sqlite3.connect(DATABASE)
-    completed_2025 = pd.read_sql_query("""
-        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
-        FROM games
-        WHERE sport='NHL' AND season=2025 
-        AND home_score IS NOT NULL AND away_score IS NOT NULL
-        ORDER BY game_date
-    """, conn)
-    conn.close()
-    
-    if len(completed_2025) > 0:
-        for _, row in completed_2025.iterrows():
-            games.append({
-                'game_id': row['game_id'],
-                'game_date': row['game_date'],
-                'home_team_id': row['home_team_id'],
-                'away_team_id': row['away_team_id'],
-                'home_score': row['home_score'],
-                'away_score': row['away_score'],
-                'status': 'final'
-            })
-        logger.info(f"Added {len(completed_2025)} completed games from 2025 season")
+    # DO NOT add 2025 games - use only 2024 for features (matching backtest)
+    # This prevents future data leakage where later games influence earlier predictions
     
     df = pd.DataFrame(games)
-    logger.info(f"Total {len(df)} games available for feature engineering (2024 + 2025)")
+    logger.info(f"Total {len(df)} games available for feature engineering (2024 ONLY, matching backtest)")
     return df
 
 def main():
