@@ -965,7 +965,7 @@ class NHLPredictor:
             catboost_total = self.catboost_total_model.predict(X)[0]
             predicted_total = (xgb_total + catboost_total) / 2.0
             
-            # Determine winner based on corrected meta probability
+            # UN-FLIPPED: Restored original logic (57.1% accuracy)
             predicted_winner = home_team if meta_prob > 0.5 else away_team
             
             return {
