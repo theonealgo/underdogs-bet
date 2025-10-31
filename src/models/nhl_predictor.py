@@ -44,18 +44,18 @@ class NHLPredictor:
         self.elo_k_factor = 45  # Increased for faster response to recent performance
         self.elo_initial_rating = 1500
         
-        # XGBoost parameters - AGGRESSIVE regularization to prevent overfitting on small samples
+        # XGBoost parameters - FIXED to prevent overfitting
         self.xgb_winner_params = {
             'objective': 'binary:logistic',
             'eval_metric': 'logloss',
-            'max_depth': 3,  # Reduced from 5 - shallower trees = less overfitting
-            'learning_rate': 0.03,  # Reduced from 0.05 - slower learning = better generalization
-            'n_estimators': 100,  # Reduced from 200 - fewer trees with small data
-            'min_child_weight': 5,  # Increased from 3 - require more samples per leaf
-            'subsample': 0.7,  # Reduced from 0.8 - more stochasticity
-            'colsample_bytree': 0.7,  # Reduced from 0.8 - prevent feature overfitting
-            'reg_alpha': 2.0,  # Increased from 0.5 - stronger L1 regularization
-            'reg_lambda': 3.0,  # Increased from 1.0 - stronger L2 regularization
+            'max_depth': 2,  # REDUCED - prevent overfitting
+            'learning_rate': 0.01,  # REDUCED - slower learning
+            'n_estimators': 50,  # REDUCED - fewer trees
+            'min_child_weight': 10,  # INCREASED - more samples per leaf
+            'subsample': 0.5,  # REDUCED - more randomness
+            'colsample_bytree': 0.5,  # REDUCED - prevent feature overfitting
+            'reg_alpha': 5.0,  # INCREASED - stronger L1 regularization
+            'reg_lambda': 5.0,  # INCREASED - stronger L2 regularization
             'random_state': 42,
             'verbosity': 0
         }
@@ -63,14 +63,14 @@ class NHLPredictor:
         self.xgb_total_params = {
             'objective': 'reg:squarederror',
             'eval_metric': 'rmse',
-            'max_depth': 3,  # Reduced from 5
-            'learning_rate': 0.03,  # Reduced from 0.05
-            'n_estimators': 100,  # Reduced from 200
-            'min_child_weight': 5,  # Increased from 3
-            'subsample': 0.7,  # Reduced from 0.8
-            'colsample_bytree': 0.7,  # Reduced from 0.8
-            'reg_alpha': 2.0,  # Increased from 0.5
-            'reg_lambda': 3.0,  # Increased from 1.0
+            'max_depth': 2,
+            'learning_rate': 0.01,
+            'n_estimators': 50,
+            'min_child_weight': 10,
+            'subsample': 0.5,
+            'colsample_bytree': 0.5,
+            'reg_alpha': 5.0,
+            'reg_lambda': 5.0,
             'random_state': 42,
             'verbosity': 0
         }
@@ -233,11 +233,13 @@ class NHLPredictor:
             h2h_stats = self._get_head_to_head_stats(game['home_team_id'], game['away_team_id'], game['game_date'], history_df)
             
             features = {
-                # Overall performance (multiple windows)
-                'home_win_pct_5': home_stats['win_pct_5'],
+                # Overall performance (multiple windows: 3, 10, 20 games)
+                'home_win_pct_3': home_stats['win_pct_3'],
                 'home_win_pct_10': home_stats['win_pct_10'],
-                'away_win_pct_5': away_stats['win_pct_5'],
+                'home_win_pct_20': home_stats['win_pct_20'],
+                'away_win_pct_3': away_stats['win_pct_3'],
                 'away_win_pct_10': away_stats['win_pct_10'],
+                'away_win_pct_20': away_stats['win_pct_20'],
                 
                 # Offensive stats
                 'home_goals_per_game_5': home_stats['goals_per_game_5'],
@@ -290,8 +292,9 @@ class NHLPredictor:
                 'h2h_avg_total_goals': h2h_stats['avg_total_goals'],
                 
                 # Differential features (most predictive)
-                'win_pct_diff_5': home_stats['win_pct_5'] - away_stats['win_pct_5'],
+                'win_pct_diff_3': home_stats['win_pct_3'] - away_stats['win_pct_3'],
                 'win_pct_diff_10': home_stats['win_pct_10'] - away_stats['win_pct_10'],
+                'win_pct_diff_20': home_stats['win_pct_20'] - away_stats['win_pct_20'],
                 'goals_diff_5': home_stats['goals_per_game_5'] - away_stats['goals_per_game_5'],
                 'defense_diff_5': away_stats['goals_against_5'] - home_stats['goals_against_5'],
                 'rest_diff': home_stats['rest_days'] - away_stats['rest_days'],
@@ -340,9 +343,10 @@ class NHLPredictor:
         rest_days = self._calculate_rest_days(team_id, current_date, all_team_games)
         back_to_back = 1 if rest_days == 0 else 0
         
-        # Calculate stats for multiple windows
+        # Calculate stats for multiple windows (5, 10, 20 games)
         stats_5 = self._calculate_window_stats(team_id, all_team_games.head(5))
         stats_10 = self._calculate_window_stats(team_id, all_team_games.head(10))
+        stats_20 = self._calculate_window_stats(team_id, all_team_games.head(20))
         
         # Calculate home/away splits
         home_away_stats = self._calculate_home_away_splits(team_id, all_team_games, is_home)
@@ -358,17 +362,20 @@ class NHLPredictor:
         momentum = self._calculate_momentum(team_id, all_team_games.head(10))
         
         return {
-            # Multiple window win percentages
-            'win_pct_5': stats_5['win_pct'],
+            # Multiple window win percentages (3, 10, 20 games)
+            'win_pct_3': stats_5['win_pct'],
             'win_pct_10': stats_10['win_pct'],
+            'win_pct_20': stats_20['win_pct'],
             
             # Multiple window offensive stats
             'goals_per_game_5': stats_5['goals_per_game'],
             'goals_per_game_10': stats_10['goals_per_game'],
+            'goals_per_game_20': stats_20['goals_per_game'],
             
             # Multiple window defensive stats
             'goals_against_5': stats_5['goals_against'],
             'goals_against_10': stats_10['goals_against'],
+            'goals_against_20': stats_20['goals_against'],
             
             # Recent form (last 5 games)
             'recent_form': stats_5['win_pct'],
@@ -470,9 +477,9 @@ class NHLPredictor:
     def _default_team_stats(self) -> Dict:
         """Return default stats for teams without history"""
         return {
-            'win_pct_5': 0.5, 'win_pct_10': 0.5,
-            'goals_per_game_5': 3.0, 'goals_per_game_10': 3.0,
-            'goals_against_5': 3.0, 'goals_against_10': 3.0,
+            'win_pct_3': 0.5, 'win_pct_10': 0.5, 'win_pct_20': 0.5,
+            'goals_per_game_5': 3.0, 'goals_per_game_10': 3.0, 'goals_per_game_20': 3.0,
+            'goals_against_5': 3.0, 'goals_against_10': 3.0, 'goals_against_20': 3.0,
             'recent_form': 0.5,
             'current_streak': 0, 'max_win_streak': 0, 'momentum': 0.0,
             'home_win_pct': 0.55, 'away_win_pct': 0.45,
@@ -861,39 +868,17 @@ class NHLPredictor:
                 self.logger.warning("Models not trained, using default prediction")
                 return self._default_prediction(home_team, away_team)
             
-            # Get UNCALIBRATED predictions from all 3 models
-            xgb_prob_raw = self.xgb_winner_model.predict_proba(X)[0][1]
-            catboost_prob_raw = self.catboost_winner_model.predict_proba(X)[0][1]
+            # Get predictions from XGBoost and CatBoost (NO CALIBRATION)
+            xgb_prob = self.xgb_winner_model.predict_proba(X)[0][1]
+            catboost_prob = self.catboost_winner_model.predict_proba(X)[0][1]
             
             # Get Elo prediction
             home_rating = self.get_elo_rating(home_team)
             away_rating = self.get_elo_rating(away_team)
             elo_prob = self.elo_expected_score(home_rating, away_rating)
             
-            # APPLY CALIBRATION to fix overconfidence
-            if self.xgb_calibrator is not None and self.catboost_calibrator is not None:
-                xgb_prob = self.xgb_calibrator.predict([xgb_prob_raw])[0]
-                catboost_prob = self.catboost_calibrator.predict([catboost_prob_raw])[0]
-            else:
-                xgb_prob = xgb_prob_raw
-                catboost_prob = catboost_prob_raw
-            
-            # DEFAULT ENSEMBLE: Use static weights
-            # XGBoost: 40%, CatBoost: 30%, Elo: 30%
-            xgb_weight, cat_weight, elo_weight = 0.40, 0.30, 0.30
-            
-            # Weighted ensemble
-            meta_prob_raw = (xgb_weight * xgb_prob + cat_weight * catboost_prob + elo_weight * elo_prob)
-            
-            # Apply meta calibration
-            if self.meta_calibrator is not None:
-                meta_prob = self.meta_calibrator.predict([meta_prob_raw])[0]
-            else:
-                meta_prob = meta_prob_raw
-            
-            # HOME ICE BIAS CORRECTION: Reduce home advantage overestimation
-            home_bias_adjustment = -0.03  # Reduce by 3%
-            meta_prob = np.clip(meta_prob + home_bias_adjustment, 0.0, 1.0)
+            # META ENSEMBLE: 70% XGBoost + 30% CatBoost (NO ELO)
+            meta_prob = (0.70 * xgb_prob + 0.30 * catboost_prob)
             
             # Get total predictions
             xgb_total = self.xgb_total_model.predict(X)[0]
