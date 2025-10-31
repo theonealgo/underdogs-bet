@@ -44,18 +44,18 @@ class NHLPredictor:
         self.elo_k_factor = 45  # Increased for faster response to recent performance
         self.elo_initial_rating = 1500
         
-        # XGBoost parameters - FIXED to prevent overfitting
+        # XGBoost parameters - Balanced to prevent overfitting while allowing learning
         self.xgb_winner_params = {
             'objective': 'binary:logistic',
             'eval_metric': 'logloss',
-            'max_depth': 2,  # REDUCED - prevent overfitting
-            'learning_rate': 0.01,  # REDUCED - slower learning
-            'n_estimators': 50,  # REDUCED - fewer trees
-            'min_child_weight': 10,  # INCREASED - more samples per leaf
-            'subsample': 0.5,  # REDUCED - more randomness
-            'colsample_bytree': 0.5,  # REDUCED - prevent feature overfitting
-            'reg_alpha': 5.0,  # INCREASED - stronger L1 regularization
-            'reg_lambda': 5.0,  # INCREASED - stronger L2 regularization
+            'max_depth': 4,
+            'learning_rate': 0.05,
+            'n_estimators': 200,
+            'min_child_weight': 5,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'reg_alpha': 1.0,
+            'reg_lambda': 2.0,
             'random_state': 42,
             'verbosity': 0
         }
@@ -63,38 +63,38 @@ class NHLPredictor:
         self.xgb_total_params = {
             'objective': 'reg:squarederror',
             'eval_metric': 'rmse',
-            'max_depth': 2,
-            'learning_rate': 0.01,
-            'n_estimators': 50,
-            'min_child_weight': 10,
-            'subsample': 0.5,
-            'colsample_bytree': 0.5,
-            'reg_alpha': 5.0,
-            'reg_lambda': 5.0,
+            'max_depth': 4,
+            'learning_rate': 0.05,
+            'n_estimators': 200,
+            'min_child_weight': 5,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'reg_alpha': 1.0,
+            'reg_lambda': 2.0,
             'random_state': 42,
             'verbosity': 0
         }
         
-        # CatBoost parameters - AGGRESSIVE regularization for small sample sizes
+        # CatBoost parameters - Balanced regularization
         self.catboost_winner_params = {
-            'iterations': 100,  # Reduced from 200 - fewer iterations with small data
-            'depth': 4,  # Reduced from 6 - shallower trees
-            'learning_rate': 0.03,  # Reduced from 0.05 - slower learning
-            'l2_leaf_reg': 5.0,  # Increased from 3.0 - stronger regularization
-            'random_strength': 1.5,  # Increased - more randomization
-            'bagging_temperature': 0.7,  # Increased - more Bayesian bootstrap randomness
+            'iterations': 200,
+            'depth': 6,
+            'learning_rate': 0.05,
+            'l2_leaf_reg': 2.0,
+            'random_strength': 1.0,
+            'bagging_temperature': 0.5,
             'random_state': 42,
             'verbose': False,
             'loss_function': 'Logloss'
         }
         
         self.catboost_total_params = {
-            'iterations': 100,  # Reduced from 200
-            'depth': 4,  # Reduced from 6
-            'learning_rate': 0.03,  # Reduced from 0.05
-            'l2_leaf_reg': 5.0,  # Increased from 3.0
-            'random_strength': 1.5,  # Increased
-            'bagging_temperature': 0.7,  # Increased
+            'iterations': 200,
+            'depth': 6,
+            'learning_rate': 0.05,
+            'l2_leaf_reg': 2.0,
+            'random_strength': 1.0,
+            'bagging_temperature': 0.5,
             'random_state': 42,
             'verbose': False,
             'loss_function': 'RMSE'
