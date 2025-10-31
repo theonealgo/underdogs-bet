@@ -878,23 +878,9 @@ class NHLPredictor:
                 xgb_prob = xgb_prob_raw
                 catboost_prob = catboost_prob_raw
             
-            # ADVANCED ENSEMBLE: Combine all 3 models with confidence-based weighting
-            # Strategy: Weight models based on their prediction confidence
-            
-            # Calculate confidence scores (distance from 50%)
-            xgb_confidence = abs(xgb_prob - 0.5)
-            cat_confidence = abs(catboost_prob - 0.5)
-            elo_confidence = abs(elo_prob - 0.5)
-            
-            # Normalize confidences to weights (models with higher confidence get more weight)
-            total_confidence = xgb_confidence + cat_confidence + elo_confidence
-            if total_confidence > 0:
-                xgb_weight = xgb_confidence / total_confidence
-                cat_weight = cat_confidence / total_confidence
-                elo_weight = elo_confidence / total_confidence
-            else:
-                # Fallback if all models at 50%
-                xgb_weight, cat_weight, elo_weight = 0.40, 0.30, 0.30
+            # DEFAULT ENSEMBLE: Use static weights
+            # XGBoost: 40%, CatBoost: 30%, Elo: 30%
+            xgb_weight, cat_weight, elo_weight = 0.40, 0.30, 0.30
             
             # Weighted ensemble
             meta_prob_raw = (xgb_weight * xgb_prob + cat_weight * catboost_prob + elo_weight * elo_prob)
