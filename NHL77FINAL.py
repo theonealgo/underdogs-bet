@@ -62,67 +62,37 @@ def parse_date(date_str):
 def get_upcoming_predictions(sport, days=365):
     """Get ALL game predictions from season start - both completed and upcoming
     
-    FOR NHL: Loads games from nhlschedules.py
-    FOR OTHER SPORTS: Loads from database
+    Loads games from database for all sports including NHL
     
     USER REQUIREMENT: Show ALL games from season start (Oct 7 for NHL), not just upcoming!
     """
     
-    # FOR NHL: Load from nhlschedules.py AND join with predictions from database
+    # Load from database WITH stored predictions for ALL sports
+    conn = get_db_connection()
+    
     if sport == 'NHL':
-        nhl_schedule = get_nhl_2025_schedule()
-        
-        # Load predictions from database
-        conn = get_db_connection()
-        predictions_dict = {}
-        db_predictions = conn.execute('''
-            SELECT game_date, home_team_id, away_team_id,
-                   elo_home_prob, xgboost_home_prob, catboost_home_prob, 
-                   logistic_home_prob, meta_home_prob
-            FROM predictions 
-            WHERE sport = 'NHL'
+        # NHL: Load all games with predictions from database
+        all_games_raw = conn.execute('''
+            SELECT g.*, 
+                   p.elo_home_prob as stored_elo_prob,
+                   p.xgboost_home_prob as stored_xgb_prob,
+                   p.catboost_home_prob as stored_cat_prob,
+                   p.logistic_home_prob as stored_log_prob,
+                   p.meta_home_prob as stored_ensemble_prob,
+                   NULL as home_goalie, NULL as away_goalie,
+                   NULL as home_goalie_save_pct, NULL as away_goalie_save_pct,
+                   NULL as home_goalie_gaa, NULL as away_goalie_gaa,
+                   NULL as home_moneyline, NULL as away_moneyline,
+                   NULL as spread, NULL as total,
+                   NULL as home_implied_prob, NULL as away_implied_prob,
+                   NULL as num_bookmakers
+            FROM games g
+            LEFT JOIN predictions p ON g.game_id = p.game_id
+            WHERE g.sport = 'NHL' AND g.season = 2025
+            ORDER BY CAST(SUBSTR(g.game_id, 10) AS INTEGER)
         ''').fetchall()
-        
-        # Index predictions by (date, home, away)
-        for pred in db_predictions:
-            key = (pred['game_date'], pred['home_team_id'], pred['away_team_id'])
-            predictions_dict[key] = dict(pred)
+        all_games_raw = [dict(g) for g in all_games_raw]
         conn.close()
-        
-        # Merge schedule with predictions
-        all_games_raw = []
-        for game in nhl_schedule:
-            key = (game['date'], game['home_team'], game['away_team'])
-            pred = predictions_dict.get(key, {})
-            
-            # Convert nhlschedules.py format to database format with predictions
-            game_dict = {
-                'sport': 'NHL',
-                'game_date': game['date'],
-                'home_team_id': game['home_team'],
-                'away_team_id': game['away_team'],
-                'home_score': game.get('home_score'),
-                'away_score': game.get('away_score'),
-                'stored_elo_prob': pred.get('elo_home_prob'),
-                'stored_xgb_prob': pred.get('xgboost_home_prob'),
-                'stored_cat_prob': pred.get('catboost_home_prob'),
-                'stored_log_prob': pred.get('logistic_home_prob'),
-                'stored_ensemble_prob': pred.get('meta_home_prob'),
-                'home_goalie': None,
-                'away_goalie': None,
-                'home_goalie_save_pct': None,
-                'away_goalie_save_pct': None,
-                'home_goalie_gaa': None,
-                'away_goalie_gaa': None,
-                'home_moneyline': None,
-                'away_moneyline': None,
-                'spread': None,
-                'total': None,
-                'home_implied_prob': None,
-                'away_implied_prob': None,
-                'num_bookmakers': None
-            }
-            all_games_raw.append(game_dict)
     else:
         # FOR OTHER SPORTS: Load from database WITH stored predictions
         # Use subquery to get one betting_odds row per game (prevents duplicates)
