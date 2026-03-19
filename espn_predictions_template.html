@@ -142,7 +142,7 @@
                         </div>
                         {% else %}
                         <div class="sf-item"><span class="sf-label">XSharp Spread</span>
-                            {% if pred.xgb_spread > 0 %}<span class="sf-val sf-fav">{{ pred.home_team_id[:11] }} -{{ pred.xgb_spread|abs }}</span>
+                            {% if home_picked %}<span class="sf-val sf-fav">{{ pred.home_team_id[:11] }} -{{ pred.xgb_spread|abs }}</span>
                             {% else %}<span class="sf-val sf-fav">{{ pred.away_team_id[:11] }} -{{ pred.xgb_spread|abs }}</span>{% endif %}
                         </div>
                         {% endif %}
@@ -153,7 +153,7 @@
                         {% elif pred.naive_spread is not none %}
                         <div class="sf-item"><span class="sf-label">Pred Score</span><span class="sf-val">{{ pred.naive_away_score }} – {{ pred.naive_home_score }}</span></div>
                         <div class="sf-item"><span class="sf-label">Spread</span>
-                            {% if pred.naive_spread > 0 %}<span class="sf-val sf-fav">{{ pred.home_team_id[:11] }} -{{ pred.naive_spread|abs }}</span>
+                            {% if home_picked %}<span class="sf-val sf-fav">{{ pred.home_team_id[:11] }} -{{ pred.naive_spread|abs }}</span>
                             {% else %}<span class="sf-val sf-fav">{{ pred.away_team_id[:11] }} -{{ pred.naive_spread|abs }}</span>{% endif %}
                         </div>
                         <div class="sf-item"><span class="sf-label">Total</span><span class="sf-val">{{ pred.naive_total }}</span></div>

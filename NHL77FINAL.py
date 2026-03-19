@@ -2708,7 +2708,7 @@ def get_landing_accuracy(sport):
     return {'NHL': 77.0, 'NFL': 56.8}.get(sport, 0.0)
 
 # ── Stripe payment link — replace with your link from dashboard.stripe.com/payment-links
-STRIPE_DONATION_URL = 'https://donate.stripe.com/YOUR_LINK_HERE'
+STRIPE_DONATION_URL = 'https://buy.stripe.com/8x228sabu7aV7uj43nao800'
 
 @app.route('/')
 def landing_page():
