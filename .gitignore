@@ -1,0 +1,80 @@
+# ── Databases (large & contain user data) ─────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Secrets & environment variables ───────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+.Python
+
+# ── Trained model binaries (large, regeneratable) ─────────────────────────────
+*.pkl
+*.h5
+*.joblib
+catboost_info/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+*.log.*
+
+# ── Backups ───────────────────────────────────────────────────────────────────
+backups/
+database_backups/
+*.bak
+*_backup_*.py
+*_BACKUP_*.py
+*_SAFE_BACKUP_*.py
+*_WORKING_BACKUP_*.py
+
+# ── Old / deprecated files ────────────────────────────────────────────────────
+TO_DELETE/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V4/
+.Trashes
+*.AppleDouble
+
+# ── Node.js (social-media-app) ────────────────────────────────────────────────
+node_modules/
+.next/
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+tsconfig.tsbuildinfo
+
+# ── IDE / editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── External repos ────────────────────────────────────────────────────────────
+TelegramExporter/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.local/
+uv.lock
+*.txt.bak
+debug_*.html

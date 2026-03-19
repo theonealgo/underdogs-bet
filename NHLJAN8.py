@@ -3,11 +3,10 @@
 underdogs.bet - Multi-Sport Prediction Platform
 ==================================================
 Complete platform with Dashboard, Predictions, and Results pages for all sports.
-5-Model System: Glicko-2, TrueSkill, Elo, XGBoost, Ensemble
+4-Model System: Elo, XGBoost, CatBoost, Meta Ensemble
 """
 
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for
-from flask_cors import CORS
+from flask import Flask, render_template_string, request
 import sqlite3
 import pandas as pd
 import numpy as np
@@ -19,79 +18,15 @@ import requests
 from nba_sportsdata_api import NBASportsDataAPI
 from nhl_api import NHLAPI
 from value_predictor import ValuePredictor
+from rundown_api import RundownAPI
 from ats_system import ATSSystem
-
-# V2 PREDICTION SYSTEM - Upgraded architecture
-try:
-    from prediction_system_v2 import AdvancedPredictor
-    V2_PREDICTORS = {}
-    # Load trained models for supported sports
-    for sport in ['NHL', 'NFL', 'NBA', 'MLB', 'NCAAF', 'NCAAB']:
-        try:
-            V2_PREDICTORS[sport] = AdvancedPredictor.load(sport, f'models/{sport}_v2')
-            print(f"✅ Loaded {sport} v2 predictor (Glicko-2 + Ensemble + Calibration)")
-        except Exception as e:
-            print(f"⚠️ {sport} v2 model not found, using fallback: {e}")
-    HAS_V2_SYSTEM = len(V2_PREDICTORS) > 0
-except ImportError as e:
-    print(f"⚠️ V2 prediction system not available: {e}")
-    V2_PREDICTORS = {}
-    HAS_V2_SYSTEM = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-import time as _time
-
-# ── Module-level HTTP request cache (15-min TTL) ──────────────────────────────
-_API_CACHE: dict = {}
-_API_TTL = 900  # seconds
-
-
-def _cached_get(url: str, timeout: int = 10):
-    """requests.get with 15-minute in-process cache."""
-    now = _time.time()
-    entry = _API_CACHE.get(url)
-    if entry and (now - entry['ts']) < _API_TTL:
-        return entry['data']
-    try:
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        _API_CACHE[url] = {'data': data, 'ts': now}
-        return data
-    except Exception as exc:
-        raise exc
-
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend integration
-
-@app.after_request
-def add_header(response):
-    """Add headers to allow iframe embedding"""
-    response.headers['X-Frame-Options'] = 'ALLOWALL'
-    response.headers['Content-Security-Policy'] = "frame-ancestors 'self' http://localhost:3000"
-    return response
 
 DATABASE = 'sports_predictions_original.db'
-
-def log_site_visit(endpoint):
-    """Track site visits for analytics"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        visit_date = datetime.now().strftime('%Y-%m-%d')
-        ip_address = request.remote_addr if request else None
-        user_agent = request.headers.get('User-Agent') if request else None
-        
-        cursor.execute('''
-            INSERT INTO site_visits (visit_date, ip_address, user_agent, endpoint)
-            VALUES (?, ?, ?, ?)
-        ''', (visit_date, ip_address, user_agent, endpoint))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Error logging site visit: {e}")
 
 SPORTS = {
     'NHL': {'name': 'NHL', 'icon': '🏒', 'color': '#1e3a8a'},
@@ -100,87 +35,14 @@ SPORTS = {
     'MLB': {'name': 'MLB', 'icon': '⚾', 'color': '#9333ea'},
     'NCAAF': {'name': 'NCAA Football', 'icon': '🏟️', 'color': '#ea580c'},
     'NCAAB': {'name': 'NCAA Basketball', 'icon': '🎓', 'color': '#0891b2'},
-}
-
-# ── Public-facing model brand names ───────────────────────────────────────────
-# Maps internal identifiers → user-facing names shown in UI / API responses.
-# Internal variables, files, and training logic are UNCHANGED.
-MODEL_DISPLAY_NAMES = {
-    'glicko2':   'Grinder2',
-    'trueskill': 'Takedown',
-    'elo':       'Edge',
-    'xgboost':   'XSharp',
-    'ensemble':  'Sharp Consensus',
+    'WNBA': {'name': 'WNBA', 'icon': '🏀', 'color': '#ea580c'},
 }
 
 import nfl_data_py as nfl
 
-# ── Puck-Line Cover Probability Configuration ─────────────────────────────────
-# Standard deviation for goal-differential normal distribution (tunable per sport).
-# Only NHL uses puck-line display; all others keep raw spread in the UI.
-PUCK_LINE_STD: dict = {
-    'NHL':   1.5,
-    'NBA':  12.0,
-    'NFL':  10.0,
-    'MLB':   2.0,
-    'NCAAB': 12.0,
-    'NCAAF': 14.0,
-    'WNBA':  12.0,
-}
-_PUCK_LINE_VALUE = 1.5  # NHL puck line is always ±1.5
-
-
-def compute_puck_line_prob(spread: float, sport: str = 'NHL') -> dict:
-    """Convert an XSharp goal-differential spread into puck-line cover probabilities.
-
-    spread > 0  → home team favored
-    spread < 0  → away team favored
-
-    Steps:
-      1. Assume goal-differential ~ N(|spread|, std)
-      2. P_cover_fav = 1 - CDF(1.5 | |spread|, std)   (favorite wins by >1.5)
-      3. P_cover_dog =     CDF(1.5 | |spread|, std)   (underdog keeps it within 1.5)
-      4. Tag: STRONG ≥55%, LEAN 52–55%, NO EDGE otherwise
-
-    Returns dict with keys:
-      puck_line_fav_prob  – favourite -1.5 cover % (0–100)
-      puck_line_dog_prob  – underdog  +1.5 cover % (0–100)
-      puck_line_tag       – STRONG -1.5 / LEAN -1.5 / STRONG +1.5 / LEAN +1.5 / NO EDGE
-      puck_line_fav_side  – 'home' or 'away'
-    """
-    from scipy.stats import norm
-    std  = PUCK_LINE_STD.get(sport, 1.5)
-    line = _PUCK_LINE_VALUE
-    abs_spread = abs(spread)
-
-    p_fav = float(1.0 - norm.cdf(line, loc=abs_spread, scale=std))
-    p_dog = float(norm.cdf(line, loc=abs_spread, scale=std))
-    p_fav_pct = round(p_fav * 100, 1)
-    p_dog_pct = round(p_dog * 100, 1)
-
-    if p_fav_pct >= 55:
-        tag = 'STRONG -1.5'
-    elif p_fav_pct >= 52:
-        tag = 'LEAN -1.5'
-    elif p_dog_pct >= 55:
-        tag = 'STRONG +1.5'
-    elif p_dog_pct >= 52:
-        tag = 'LEAN +1.5'
-    else:
-        tag = 'NO EDGE'
-
-    return {
-        'puck_line_fav_prob': p_fav_pct,
-        'puck_line_dog_prob': p_dog_pct,
-        'puck_line_tag':      tag,
-        'puck_line_fav_side': 'home' if spread >= 0 else 'away',
-    }
-
-
 def update_nfl_scores():
     """
     Fetches and updates NFL scores for the 2025 season.
-    Also inserts new games (including playoffs) that don't exist in database.
     """
     try:
         logger.info("Fetching 2025 NFL schedule to update scores...")
@@ -198,60 +60,19 @@ def update_nfl_scores():
 
         logger.info(f"Found {len(finished_games)} finished NFL games to update.")
         
-        # Team abbreviation to full name mapping for NFL
-        nfl_abbr_to_full = {
-            'ARI': 'Arizona Cardinals', 'ATL': 'Atlanta Falcons', 'BAL': 'Baltimore Ravens',
-            'BUF': 'Buffalo Bills', 'CAR': 'Carolina Panthers', 'CHI': 'Chicago Bears',
-            'CIN': 'Cincinnati Bengals', 'CLE': 'Cleveland Browns', 'DAL': 'Dallas Cowboys',
-            'DEN': 'Denver Broncos', 'DET': 'Detroit Lions', 'GB': 'Green Bay Packers',
-            'HOU': 'Houston Texans', 'IND': 'Indianapolis Colts', 'JAX': 'Jacksonville Jaguars',
-            'KC': 'Kansas City Chiefs', 'LV': 'Las Vegas Raiders', 'LAC': 'Los Angeles Chargers',
-            'LAR': 'Los Angeles Rams', 'LA': 'Los Angeles Rams', 'MIA': 'Miami Dolphins',
-            'MIN': 'Minnesota Vikings', 'NE': 'New England Patriots', 'NO': 'New Orleans Saints',
-            'NYG': 'New York Giants', 'NYJ': 'New York Jets', 'PHI': 'Philadelphia Eagles',
-            'PIT': 'Pittsburgh Steelers', 'SF': 'San Francisco 49ers', 'SEA': 'Seattle Seahawks',
-            'TB': 'Tampa Bay Buccaneers', 'TEN': 'Tennessee Titans', 'WAS': 'Washington Commanders'
-        }
-        
         conn = get_db_connection()
         cursor = conn.cursor()
-        updates_count = 0
-        inserts_count = 0
 
         for _, game in finished_games.iterrows():
-            game_id = game['game_id']
-            
-            # Check if game exists
-            existing = cursor.execute("SELECT 1 FROM games WHERE game_id = ? AND sport = 'NFL'", (game_id,)).fetchone()
-            
-            if existing:
-                # Update existing game
-                cursor.execute("""
-                    UPDATE games
-                    SET home_score = ?, away_score = ?, status = 'final'
-                    WHERE sport = 'NFL' AND game_id = ?
-                """, (game['home_score'], game['away_score'], game_id))
-                if cursor.rowcount > 0:
-                    updates_count += 1
-            else:
-                # Insert new game (including playoffs)
-                try:
-                    home_team = nfl_abbr_to_full.get(game['home_team'], game['home_team'])
-                    away_team = nfl_abbr_to_full.get(game['away_team'], game['away_team'])
-                    game_date = str(game['gameday']) if pd.notna(game.get('gameday')) else str(game.get('game_date', ''))
-                    
-                    cursor.execute("""
-                        INSERT INTO games (sport, league, game_id, season, game_date, home_team_id, away_team_id, home_score, away_score, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'final')
-                    """, ('NFL', 'NFL', game_id, 2025, game_date, home_team, away_team, game['home_score'], game['away_score']))
-                    inserts_count += 1
-                    logger.info(f"Inserted new NFL game: {away_team} @ {home_team} (Week {game.get('week', 'N/A')})")
-                except Exception as insert_error:
-                    logger.error(f"Error inserting NFL game {game_id}: {insert_error}")
+            cursor.execute("""
+                UPDATE games
+                SET home_score = ?, away_score = ?, status = 'final'
+                WHERE sport = 'NFL' AND game_id = ?
+            """, (game['home_score'], game['away_score'], game['game_id']))
 
         conn.commit()
         conn.close()
-        logger.info(f"Successfully updated {updates_count} and inserted {inserts_count} NFL game scores.")
+        logger.info("Successfully updated NFL scores in the database.")
 
     except Exception as e:
         logger.error(f"An error occurred while updating NFL scores: {e}")
@@ -392,8 +213,7 @@ def update_espn_scores(sport):
             check_date = datetime.now() - timedelta(days=days_back)
             date_str = check_date.strftime('%Y%m%d')
             
-            extra_params = '&groups=50&limit=357' if sport == 'NCAAB' else ''
-            url = f"{ESPN_ENDPOINTS[sport]}?dates={date_str}{extra_params}"
+            params = f"dates={date_str}"
             
             try:
                 response = requests.get(url, timeout=10)
@@ -512,176 +332,8 @@ def parse_date(date_str):
         return None
 
 # ============================================================================
-# V2 PREDICTION SYSTEM HELPER
-# ============================================================================
-
-def get_v2_prediction(sport, home_team, away_team, game_date=None):
-    """
-    Get predictions from the v2 system (Glicko-2 + Stacked Ensemble + Calibration)
-    
-    Returns dict with probabilities or None if v2 not available for this sport
-    """
-    if not HAS_V2_SYSTEM or sport not in V2_PREDICTORS:
-        return None
-    
-    try:
-        predictor = V2_PREDICTORS[sport]
-        game_df = pd.DataFrame([{
-            'home_team': home_team,
-            'away_team': away_team,
-            'date': game_date or datetime.now().strftime('%Y-%m-%d')
-        }])
-        
-        pred = predictor.predict(game_df)
-        row = pred.iloc[0]
-        
-        return {
-            'home_prob': row['home_win_prob'],
-            'away_prob': row['away_win_prob'],
-            'confidence': row['confidence'],
-            'model_agreement': row['model_agreement'],
-            'predicted_winner': row['predicted_winner'],
-            'expected_home_score': row.get('expected_home_score'),
-            'expected_away_score': row.get('expected_away_score'),
-            
-            # Individual model probabilities for display
-            'glicko2_prob': row.get('glicko2_prob'),
-            'trueskill_prob': row.get('trueskill_prob'),
-            'xgboost_prob': row.get('xgboost_prob'),
-            
-            # Ratings
-            'home_glicko2': row.get('home_glicko2'),
-            'away_glicko2': row.get('away_glicko2'),
-            'home_trueskill_mu': row.get('home_trueskill_mu'),
-            'away_trueskill_mu': row.get('away_trueskill_mu'),
-            
-            'is_v2': True,
-        }
-    except Exception as e:
-        logger.warning(f"V2 prediction failed for {away_team} @ {home_team}: {e}")
-        return None
-
-# ============================================================================
 # DATA LOADING FUNCTIONS
 # ============================================================================
-
-# ── Cached helpers for spread/total predictors ──────────────────────────────────
-_sp_instances: dict = {}   # {sport: (ScorePredictor, timestamp)}
-_sp_TTL = 3600             # re-fetch team stats at most once per hour
-
-
-def _build_team_stats_from_db(sport: str) -> dict:
-    """
-    Compute team offense/defense PPG from completed games already in the DB.
-
-    Used as a baseline for sports (e.g. NCAAB) where ESPN's /teams endpoint
-    only covers ~30 major programs and misses hundreds of small-conference teams.
-    Requires >= 3 completed games per team to produce a stat entry.
-    """
-    try:
-        from collections import defaultdict
-        conn = get_db_connection()
-        rows = conn.execute(
-            'SELECT home_team_id, away_team_id, home_score, away_score '
-            'FROM games WHERE sport=? AND home_score IS NOT NULL AND away_score IS NOT NULL',
-            (sport,)
-        ).fetchall()
-        conn.close()
-
-        totals = defaultdict(lambda: {'scored': 0.0, 'allowed': 0.0, 'games': 0})
-        for row in rows:
-            h, a, hs, as_ = row[0], row[1], row[2], row[3]
-            if hs is None or as_ is None:
-                continue
-            totals[h]['scored']  += float(hs);  totals[h]['allowed'] += float(as_);  totals[h]['games'] += 1
-            totals[a]['scored']  += float(as_); totals[a]['allowed'] += float(hs);  totals[a]['games'] += 1
-
-        return {
-            team: {'offense': d['scored'] / d['games'], 'defense': d['allowed'] / d['games']}
-            for team, d in totals.items()
-            if d['games'] >= 3  # minimum sample
-        }
-    except Exception as _e:
-        logger.debug(f"_build_team_stats_from_db({sport}) failed: {_e}")
-        return {}
-
-
-def _score_predictor_instance(sport):
-    """
-    Return a ScorePredictor whose team_stats are cached for the day.
-
-    Strategy:
-      1. Build a baseline from completed DB games (covers ALL teams that have played).
-      2. Try ESPN API (covers major-conference teams with richer season-level stats).
-      3. Merge: DB is the base layer; ESPN overrides where available.
-
-    This ensures small-conference NCAAB teams (and any sport with a large team pool)
-    still get spread/total predictions even when ESPN's /teams endpoint omits them.
-    """
-    try:
-        from score_predictor import ScorePredictor
-    except ImportError:
-        return None
-    now = _time.time()
-    cached = _sp_instances.get(sport)
-    if cached and (now - cached[1]) < _sp_TTL:
-        return cached[0]
-    sp = ScorePredictor()
-    from datetime import datetime as _dt_inner
-    _cache_key = f"{sport}_{_dt_inner.now().strftime('%Y-%m-%d')}"
-
-    # 1. DB-derived baseline (all teams with >= 3 games)
-    _db_stats = _build_team_stats_from_db(sport)
-
-    # 2. ESPN API (may be empty or partial for large leagues like NCAAB)
-    try:
-        _api_stats = sp.fetch_team_stats(sport)
-    except Exception:
-        _api_stats = {}
-
-    # 3. Merge: DB base, ESPN overrides (ESPN data is richer for teams it covers)
-    _stats = {**_db_stats, **(_api_stats or {})}
-
-    if _stats:
-        sp.team_stats_cache[_cache_key] = _stats
-    _sp_instances[sport] = (sp, now)
-    logger.debug(f"[{sport}] team_stats loaded: {len(_stats)} teams "
-                 f"(db={len(_db_stats)}, api={len(_api_stats or {})})")
-    return sp
-
-
-_xgb_sport_models: dict = {}  # populated lazily; re-uses xgb_spread_model._MODEL_CACHE
-
-
-def _get_xgb_spread_model(sport):
-    """Build (or return cached) XGBSpreadTotalPredictor for `sport`."""
-    try:
-        from xgb_spread_model import get_or_train_model
-    except ImportError:
-        return None
-    # Need completed games from DB and team stats
-    try:
-        sp = _score_predictor_instance(sport)
-        if not sp:
-            return None
-        team_stats = sp.team_stats_cache.get(
-            f"{sport}_{__import__('datetime').datetime.now().strftime('%Y-%m-%d')}", {}
-        )
-        conn = get_db_connection()
-        rows = conn.execute(
-            'SELECT home_team_id, away_team_id, home_score, away_score, game_date '
-            'FROM games WHERE sport=? AND home_score IS NOT NULL ORDER BY game_date',
-            (sport,)
-        ).fetchall()
-        conn.close()
-        games = [dict(r) for r in rows]
-        if not team_stats or not games:
-            return None
-        return get_or_train_model(sport, games, team_stats)
-    except Exception as e:
-        logger.debug(f"_get_xgb_spread_model error for {sport}: {e}")
-        return None
-
 
 def get_upcoming_predictions(sport, days=365):
     """Get ALL game predictions from season start - both completed and upcoming
@@ -703,7 +355,7 @@ def get_upcoming_predictions(sport, days=365):
             for game in api_games:
                 # Try to find match in database by date and team names
                 existing = conn.execute('''
-                    SELECT g.game_id, p.elo_home_prob, p.xgboost_home_prob, p.meta_home_prob
+                    SELECT g.game_id, p.elo_home_prob, p.xgboost_home_prob, p.catboost_home_prob, p.meta_home_prob
                     FROM games g
                     LEFT JOIN predictions p ON g.game_id = p.game_id
                     WHERE g.sport = 'NHL' 
@@ -716,6 +368,7 @@ def get_upcoming_predictions(sport, days=365):
                     game['game_id'] = existing['game_id']
                     game['stored_elo_prob'] = existing['elo_home_prob']
                     game['stored_xgb_prob'] = existing['xgboost_home_prob']
+                    game['stored_cat_prob'] = existing['catboost_home_prob']
                     game['stored_ensemble_prob'] = existing['meta_home_prob']
             
             conn.close()
@@ -745,9 +398,16 @@ def get_upcoming_predictions(sport, days=365):
             date_str = check_date.strftime('%Y%m%d')
             
             try:
-                extra_params = '&groups=50&limit=357' if sport == 'NCAAB' else ''
-                url = f"{ESPN_ENDPOINTS[sport]}?dates={date_str}{extra_params}"
-                data = _cached_get(url)
+                params = f"dates={date_str}"
+                if sport == 'NCAAB':
+                    params += "&groups=50&limit=1000"
+                elif sport == 'NCAAF':
+                    params += "&groups=80&limit=1000"
+                
+                url = f"{ESPN_ENDPOINTS[sport]}?{params}"
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
                 
                 events = data.get('events', [])
                 
@@ -805,6 +465,7 @@ def get_upcoming_predictions(sport, days=365):
             if pred:
                 game['stored_elo_prob'] = pred['elo_home_prob']
                 game['stored_xgb_prob'] = pred['xgboost_home_prob']
+                game['stored_cat_prob'] = pred['logistic_home_prob']
                 game['stored_ensemble_prob'] = pred['win_probability']
         conn.close()
         
@@ -829,6 +490,8 @@ def get_upcoming_predictions(sport, days=365):
             SELECT g.*, 
                    p.elo_home_prob as stored_elo_prob,
                    p.xgboost_home_prob as stored_xgb_prob,
+                   p.catboost_home_prob as stored_cat_prob,
+                   p.logistic_home_prob as stored_log_prob,
                    p.win_probability as stored_ensemble_prob,
                    gg.home_goalie, gg.away_goalie,
                    gg.home_goalie_save_pct, gg.away_goalie_save_pct,
@@ -861,44 +524,7 @@ def get_upcoming_predictions(sport, days=365):
     
     # Split into completed (for Elo training) and all (for predictions)
     completed_games = [g for d, g in all_games_with_dates if g.get('home_score') is not None]
-
-    # ── NHL: inject team stats directly from completed API games ─────────────
-    # The ESPN /teams endpoint doesn't expose NHL goals-per-game stats, and the
-    # DB may not yet be populated (update_nhl_scores is only called on results page).
-    # We already have 30 days of completed games here with real scores, so we
-    # build GPG/GAPG from those and push them into the ScorePredictor cache.
-    # This runs every request so the stats are always fresh, regardless of TTL.
-    if sport == 'NHL' and completed_games:
-        try:
-            from collections import defaultdict as _dd_nhl
-            _nhl_totals = _dd_nhl(lambda: {'scored': 0.0, 'allowed': 0.0, 'n': 0})
-            for _cg in completed_games:
-                _h  = _cg.get('home_team_id') or _cg.get('home_team_name', '')
-                _a  = _cg.get('away_team_id') or _cg.get('away_team_name', '')
-                _hs = _cg.get('home_score')
-                _as = _cg.get('away_score')
-                if _h and _a and _hs is not None and _as is not None:
-                    _nhl_totals[_h]['scored']  += float(_hs)
-                    _nhl_totals[_h]['allowed'] += float(_as)
-                    _nhl_totals[_h]['n']       += 1
-                    _nhl_totals[_a]['scored']  += float(_as)
-                    _nhl_totals[_a]['allowed'] += float(_hs)
-                    _nhl_totals[_a]['n']       += 1
-            _nhl_api_stats = {
-                t: {'offense': d['scored'] / d['n'], 'defense': d['allowed'] / d['n']}
-                for t, d in _nhl_totals.items() if d['n'] >= 3
-            }
-            if _nhl_api_stats:
-                _sp_nhl = _score_predictor_instance(sport)
-                if _sp_nhl:
-                    _ck_nhl = f"NHL_{datetime.now().strftime('%Y-%m-%d')}"
-                    # Merge: existing richer stats take precedence; API stats fill gaps
-                    _existing_nhl = _sp_nhl.team_stats_cache.get(_ck_nhl, {})
-                    _sp_nhl.team_stats_cache[_ck_nhl] = {**_nhl_api_stats, **_existing_nhl}
-                    logger.debug(f"[NHL] injected {len(_nhl_api_stats)} team stats from API games")
-        except Exception as _nhl_stat_err:
-            logger.debug(f"[NHL] team stats injection failed: {_nhl_stat_err}")
-
+    
     # Train Elo system on all completed games (with home/away splits tracking)
     elo_ratings = {}
     home_away_stats = {}  # Track home/away performance
@@ -953,81 +579,80 @@ def get_upcoming_predictions(sport, days=365):
     for game_date, game in all_games_with_dates:
         # Show games from season start up to one month from today
         if game_date >= season_start and game_date <= one_month_ahead:
-            # ============================================================
-            # V2 PREDICTION SYSTEM - ALWAYS try v2 first when available
-            # ============================================================
-            v2_pred = get_v2_prediction(
-                    sport, 
-                    game.get('home_team_id') or game.get('home_team_name'),
-                    game.get('away_team_id') or game.get('away_team_name'),
-                    game.get('game_date')
-                )
+            # Check if stored predictions exist (for sports with pre-generated predictions)
+            if game.get('stored_elo_prob') is not None:
+                # Use stored predictions from database with safe conversion
+                import struct
                 
-            if v2_pred:
-                # Use actual stored Elo prob from DB; fall back to Elo rating computation
-                stored_elo = game.get('stored_elo_prob')
-                if stored_elo is not None:
-                    elo_prob = float(stored_elo)
-                else:
-                    home_rating = get_elo(game.get('home_team_id', ''))
-                    away_rating = get_elo(game.get('away_team_id', ''))
-                    elo_prob = expected_score(home_rating, away_rating)
-                _xgb_raw = v2_pred.get('xgboost_prob')
-                xgb_prob = _xgb_raw if _xgb_raw is not None else v2_pred['home_prob']
-
-                # Build ensemble from individual model probs.
-                # The meta-learner (v2_pred['home_prob']) frequently defaults to ~0.49
-                # when team-name lookup fails, so we compute a weighted blend instead.
-                _g2 = v2_pred.get('glicko2_prob')
-                _ts = v2_pred.get('trueskill_prob')
-                _wp = []
-                if _g2       is not None: _wp.append((_g2,      0.30))
-                if _ts       is not None: _wp.append((_ts,      0.30))
-                if _xgb_raw  is not None: _wp.append((_xgb_raw, 0.25))
-                _wp.append((elo_prob, 0.15))
-                _tw = sum(w for _, w in _wp)
-                ensemble_prob = sum(p * w for p, w in _wp) / _tw
-
-                # Store model probabilities for display (Glicko-2 and TrueSkill only)
-                game['glicko2_prob'] = v2_pred.get('glicko2_prob')
-                game['trueskill_prob'] = v2_pred.get('trueskill_prob')
+                def safe_float_convert(value, fallback=0.5):
+                    """Safely convert database value to float, handling bytes/binary data"""
+                    if value is None:
+                        return fallback
+                    try:
+                        # If it's already a float or int, return it
+                        if isinstance(value, (float, int)):
+                            return float(value)
+                        # If it's bytes, try to unpack as float
+                        if isinstance(value, bytes):
+                            if len(value) == 8:
+                                # Double precision float (8 bytes)
+                                return struct.unpack('d', value)[0]
+                            elif len(value) == 4:
+                                # Single precision float (4 bytes)
+                                return struct.unpack('f', value)[0]
+                        # If it's a string, parse it
+                        return float(value)
+                    except (ValueError, struct.error, TypeError):
+                        return fallback
                 
-                # Store v2 metadata for display
-                game['v2_confidence'] = v2_pred.get('confidence')
-                game['v2_agreement'] = v2_pred.get('model_agreement')
-                game['v2_expected_home'] = v2_pred.get('expected_home_score')
-                game['v2_expected_away'] = v2_pred.get('expected_away_score')
-                game['is_v2'] = True
+                elo_prob = safe_float_convert(game['stored_elo_prob'], 0.5)
+                xgb_prob = safe_float_convert(game.get('stored_xgb_prob'), elo_prob)
+                cat_prob = safe_float_convert(game.get('stored_cat_prob'), elo_prob)
+                ensemble_prob = safe_float_convert(game.get('stored_ensemble_prob'), elo_prob)
+                # Override ensemble with Elo for NFL to align with recent performance
+                if sport == 'NFL':
+                    ensemble_prob = elo_prob
             else:
-                # Fallback to basic Elo for sports without v2
+                # Calculate live predictions using Elo for sports without stored predictions
                 home_rating = get_elo(game['home_team_id'])
                 away_rating = get_elo(game['away_team_id'])
                 elo_prob = expected_score(home_rating, away_rating)
                 
-                # Basic enhancements for non-v2 sports
+                # V2 ENHANCEMENTS: Incorporate API data
+                
+                # Feature 1: Goalie differential (if available)
                 goalie_boost = 0.0
                 if game.get('home_goalie_save_pct') and game.get('away_goalie_save_pct'):
                     save_pct_diff = float(game['home_goalie_save_pct']) - float(game['away_goalie_save_pct'])
-                    goalie_boost = save_pct_diff * 0.3
+                    goalie_boost = save_pct_diff * 0.3  # 3% save pct diff = ~1% boost
                 
+                # Feature 2: Betting market consensus (if available)
                 market_boost = 0.0
                 if game.get('home_implied_prob') and game.get('away_implied_prob'):
                     market_home_prob = float(game['home_implied_prob'])
-                    market_boost = (market_home_prob - 0.5) * 0.15
+                    market_boost = (market_home_prob - 0.5) * 0.15  # 15% weight to market
                 
+                # Feature 3: Home/Away splits
                 home_stats = get_home_away_stats(game['home_team_id'])
                 away_stats = get_home_away_stats(game['away_team_id'])
+                
                 home_win_pct = home_stats['home_wins'] / home_stats['home_games'] if home_stats['home_games'] > 0 else 0.5
                 away_win_pct = away_stats['away_wins'] / away_stats['away_games'] if away_stats['away_games'] > 0 else 0.5
-                split_boost = (home_win_pct - away_win_pct) * 0.1
                 
+                split_boost = (home_win_pct - away_win_pct) * 0.1  # 10% weight to splits
+                
+                # Enhanced model predictions
                 xgb_prob = min(0.95, max(0.05, elo_prob + goalie_boost + market_boost * 0.5 + split_boost))
-
-                if game.get('home_implied_prob'):
-                    ensemble_prob = (xgb_prob * 0.5 + elo_prob * 0.3 + float(game['home_implied_prob']) * 0.2)
-                else:
-                    ensemble_prob = (xgb_prob * 0.6 + elo_prob * 0.4)
+                cat_prob = min(0.95, max(0.05, elo_prob + goalie_boost * 0.7 + market_boost * 0.3 + split_boost * 0.5))
                 
+                # V2 Ensemble (including market data when available)
+                if game.get('home_implied_prob'):
+                    # With betting odds: 40% CatBoost, 30% XGBoost, 20% Elo, 10% Market
+                    ensemble_prob = (cat_prob * 0.4 + xgb_prob * 0.3 + elo_prob * 0.2 + float(game['home_implied_prob']) * 0.1)
+                else:
+                    # Without betting odds: 50% CatBoost, 30% XGBoost, 20% Elo
+                    ensemble_prob = (cat_prob * 0.5 + xgb_prob * 0.3 + elo_prob * 0.2)
+                # Override ensemble with Elo for NFL to align with recent performance
                 if sport == 'NFL':
                     ensemble_prob = elo_prob
             
@@ -1035,6 +660,7 @@ def get_upcoming_predictions(sport, days=365):
             game_dict = dict(game)
             game_dict['elo_prob'] = round(elo_prob * 100, 1)
             game_dict['xgb_prob'] = round(xgb_prob * 100, 1)
+            game_dict['cat_prob'] = round(cat_prob * 100, 1)
             game_dict['ensemble_prob'] = round(ensemble_prob * 100, 1)
             game_dict['predicted_winner'] = game['home_team_id'] if ensemble_prob > 0.5 else game['away_team_id']
             
@@ -1052,77 +678,6 @@ def get_upcoming_predictions(sport, days=365):
             game_dict['home_win_pct_home'] = round(home_win_pct * 100, 1)
             game_dict['away_win_pct_away'] = round(away_win_pct * 100, 1)
             
-            # V2 model metadata (Glicko-2 + Stacked Ensemble)
-            game_dict['is_v2'] = game.get('is_v2', False)
-            game_dict['v2_confidence'] = game.get('v2_confidence')
-            game_dict['v2_agreement'] = game.get('v2_agreement')
-            game_dict['v2_expected_home'] = game.get('v2_expected_home')
-            game_dict['v2_expected_away'] = game.get('v2_expected_away')
-            
-            # Individual model probabilities - ALWAYS pass through
-            game_dict['glicko2_prob'] = round(game.get('glicko2_prob', 0) * 100, 1) if game.get('glicko2_prob') else None
-            game_dict['trueskill_prob'] = round(game.get('trueskill_prob', 0) * 100, 1) if game.get('trueskill_prob') else None
-
-            # ── Spread / Total predictions ───────────────────────────────────
-            # Naive formula (ScorePredictor) and XGBoost model
-            # These are only computed for upcoming games (no final score yet)
-            game_dict['naive_home_score'] = None
-            game_dict['naive_away_score'] = None
-            game_dict['naive_spread'] = None
-            game_dict['naive_total'] = None
-            game_dict['xgb_home_score'] = None
-            game_dict['xgb_away_score'] = None
-            game_dict['xgb_spread'] = None
-            game_dict['xgb_total'] = None
-            # Puck-line (NHL) or raw-spread (other sports) display fields
-            game_dict['puck_line_fav_prob'] = None
-            game_dict['puck_line_dog_prob'] = None
-            game_dict['puck_line_tag']      = None
-            game_dict['puck_line_fav_side'] = None
-
-            if game_dict.get('home_score') is None:  # upcoming game only
-                try:
-                    from score_predictor import ScorePredictor
-                    _sp = _score_predictor_instance(sport)
-                    if _sp:
-                        nh, na, ns, nt = _sp.predict_score(
-                            game_dict.get('home_team_id', ''),
-                            game_dict.get('away_team_id', ''),
-                            sport,
-                        )
-                        if nh is not None:
-                            game_dict['naive_home_score'] = nh
-                            game_dict['naive_away_score'] = na
-                            game_dict['naive_spread'] = ns
-                            game_dict['naive_total'] = nt
-                except Exception as _e:
-                    logger.debug(f"ScorePredictor error: {_e}")
-
-                try:
-                    _xm = _get_xgb_spread_model(sport)
-                    if _xm:
-                        result = _xm.predict(
-                            game_dict.get('home_team_id', ''),
-                            game_dict.get('away_team_id', ''),
-                        )
-                        if result and result[0] is not None:
-                            game_dict['xgb_home_score'] = result[0]
-                            game_dict['xgb_away_score'] = result[1]
-                            game_dict['xgb_spread'] = result[2]
-                            game_dict['xgb_total'] = result[3]
-                except Exception as _e:
-                    logger.debug(f"XGBSpread error: {_e}")
-
-                # ── NHL: convert XSharp spread → puck-line cover probabilities ──────────
-                # Internal xgb_spread value is preserved unchanged as a model feature;
-                # puck_line_* fields are the betting-facing output shown in the UI.
-                if sport == 'NHL' and game_dict.get('xgb_spread') is not None:
-                    try:
-                        _pl = compute_puck_line_prob(game_dict['xgb_spread'], sport)
-                        game_dict.update(_pl)
-                    except Exception as _ple:
-                        logger.debug(f"[NHL] puck_line_prob error: {_ple}")
-
             predictions.append(game_dict)
     
     # For NBA: Save newly generated predictions to database so Results page can use them
@@ -1140,18 +695,19 @@ def get_upcoming_predictions(sport, days=365):
                 ''', (pred['game_id'],)).fetchone()
                 
                 if not existing:
-                    # Save new prediction (locked by default when first saved)
+                    # Save new prediction
                     try:
                         cursor_save.execute('''
                             INSERT INTO predictions (
                                 game_id, sport, league, game_date, home_team_id, away_team_id,
-                                elo_home_prob, xgboost_home_prob, win_probability, locked
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                                elo_home_prob, xgboost_home_prob, logistic_home_prob, win_probability
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             pred['game_id'], 'NBA', 'NBA', pred['game_date'],
                             pred['home_team_id'], pred['away_team_id'],
-                            pred['elo_prob'] / 100.0,
+                            pred['elo_prob'] / 100.0,  # Convert back to 0-1 range
                             pred['xgb_prob'] / 100.0,
+                            pred['cat_prob'] / 100.0,
                             pred['ensemble_prob'] / 100.0
                         ))
                         saved_count += 1
@@ -1178,8 +734,11 @@ def calculate_nfl_weekly_performance():
         if schedule.empty:
             return None
         
-        # Filter to completed games only (games with results)
+        # Filter to completed games only (games with results) and exclude today
+        today_str = datetime.now().strftime('%Y-%m-%d')
         completed_games = schedule[schedule['result'].notna()].copy()
+        # Convert gameday to string for comparison if needed
+        completed_games = completed_games[completed_games['gameday'].astype(str) < today_str]
         
         if completed_games.empty:
             return None
@@ -1203,96 +762,105 @@ def calculate_nfl_weekly_performance():
         }
         
         weekly_results = {}
-
+        
         # Process each completed game from API
         for _, api_game in completed_games.iterrows():
             week = int(api_game['week'])
             game_id = api_game['game_id']
-
-            # Look up stored predictions from database
+            
+            # Look up predictions from database using game_id (now they match!)
             pred = conn.execute('''
                 SELECT p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
                 FROM predictions p
                 WHERE p.game_id = ? AND p.sport = 'NFL'
             ''', (game_id,)).fetchone()
-
+            
             if not pred or pred[0] is None:
+                # No prediction for this game, skip it
                 continue
-
+            
+            # Extract stored predictions from database
+            elo_prob = float(pred[0]) if pred[0] else None
+            xgb_prob = float(pred[1]) if pred[1] else None
+            cat_prob = float(pred[2]) if pred[2] else None
+            # Override ensemble with Elo for NFL
+            ens_prob = elo_prob
+            
+            # Get actual result from API
+            actual_home_win = api_game['home_score'] > api_game['away_score']
+            
             # Get team full names
             home_team_full = abbr_to_full.get(api_game['home_team'], api_game['home_team'])
             away_team_full = abbr_to_full.get(api_game['away_team'], api_game['away_team'])
-
-            # Stored DB predictions
-            elo_prob = float(pred[0]) if pred[0] else None
-            xgb_prob = float(pred[1]) if pred[1] else elo_prob
-            ens_prob = elo_prob  # start with elo as fallback
-
-            # V2 model predictions
-            v2 = get_v2_prediction('NFL', home_team_full, away_team_full, str(api_game['gameday']))
-            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-            trueskill_prob = v2.get('trueskill_prob') if v2 else None
-            if v2:
-                xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
-
-            actual_home_win = api_game['home_score'] > api_game['away_score']
-
+            
+            # Initialize week if not exists
             if week not in weekly_results:
                 weekly_results[week] = {
-                    'glicko2':   {'correct': 0, 'total': 0},
-                    'trueskill': {'correct': 0, 'total': 0},
-                    'elo':       {'correct': 0, 'total': 0},
-                    'xgboost':   {'correct': 0, 'total': 0},
-                    'ensemble':  {'correct': 0, 'total': 0},
+                    'elo': {'correct': 0, 'total': 0},
+                    'xgboost': {'correct': 0, 'total': 0},
+                    'catboost': {'correct': 0, 'total': 0},
+                    'ensemble': {'correct': 0, 'total': 0},
                     'games': []
                 }
-
-            glicko2_correct   = (glicko2_prob   > 0.5) == actual_home_win if glicko2_prob   is not None else None
-            trueskill_correct = (trueskill_prob > 0.5) == actual_home_win if trueskill_prob is not None else None
-            elo_correct       = (elo_prob       > 0.5) == actual_home_win if elo_prob       is not None else None
-            xgb_correct       = (xgb_prob       > 0.5) == actual_home_win if xgb_prob       is not None else None
-            ens_correct       = (ens_prob       > 0.5) == actual_home_win if ens_prob       is not None else None
-
-            for model, prob, correct in [
-                ('glicko2',   glicko2_prob,   glicko2_correct),
-                ('trueskill', trueskill_prob, trueskill_correct),
-                ('elo',       elo_prob,       elo_correct),
-                ('xgboost',   xgb_prob,       xgb_correct),
-                ('ensemble',  ens_prob,       ens_correct),
-            ]:
-                if prob is not None:
-                    weekly_results[week][model]['total'] += 1
-                    if correct:
-                        weekly_results[week][model]['correct'] += 1
-
+            
+            # Check each model's prediction
+            elo_correct = None
+            if elo_prob is not None:
+                weekly_results[week]['elo']['total'] += 1
+                elo_correct = (elo_prob > 0.5) == actual_home_win
+                if elo_correct:
+                    weekly_results[week]['elo']['correct'] += 1
+            
+            xgb_correct = None
+            if xgb_prob is not None:
+                weekly_results[week]['xgboost']['total'] += 1
+                xgb_correct = (xgb_prob > 0.5) == actual_home_win
+                if xgb_correct:
+                    weekly_results[week]['xgboost']['correct'] += 1
+            
+            cat_correct = None
+            if cat_prob is not None:
+                weekly_results[week]['catboost']['total'] += 1
+                cat_correct = (cat_prob > 0.5) == actual_home_win
+                if cat_correct:
+                    weekly_results[week]['catboost']['correct'] += 1
+            
+            ens_correct = None
+            if ens_prob is not None:
+                weekly_results[week]['ensemble']['total'] += 1
+                ens_correct = (ens_prob > 0.5) == actual_home_win
+                if ens_correct:
+                    weekly_results[week]['ensemble']['correct'] += 1
+            
+            # Store game details with full team names and correctness flags
             weekly_results[week]['games'].append({
-                'date':             str(api_game['gameday']),
-                'away':             away_team_full,
-                'home':             home_team_full,
-                'away_score':       int(api_game['away_score']),
-                'home_score':       int(api_game['home_score']),
-                'glicko2_prob':     round(glicko2_prob   * 100, 1) if glicko2_prob   is not None else None,
-                'trueskill_prob':   round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
-                'elo_prob':         round(elo_prob       * 100, 1) if elo_prob       is not None else None,
-                'xgb_prob':         round(xgb_prob       * 100, 1) if xgb_prob       is not None else None,
-                'ens_prob':         round(ens_prob       * 100, 1) if ens_prob       is not None else None,
-                'glicko2_correct':   glicko2_correct,
-                'trueskill_correct': trueskill_correct,
-                'elo_correct':       elo_correct,
-                'xgb_correct':       xgb_correct,
-                'ens_correct':       ens_correct,
+                'date': str(api_game['gameday']),  # Date from API
+                'away': away_team_full,  # Full team name
+                'home': home_team_full,  # Full team name
+                'away_score': int(api_game['away_score']),  # Score from API
+                'home_score': int(api_game['home_score']),  # Score from API
+                'elo_prob': round(elo_prob * 100, 1) if elo_prob else 'N/A',
+                'xgb_prob': round(xgb_prob * 100, 1) if xgb_prob else 'N/A',
+                'cat_prob': round(cat_prob * 100, 1) if cat_prob else 'N/A',
+                'ens_prob': round(ens_prob * 100, 1) if ens_prob else 'N/A',
+                'elo_correct': elo_correct,
+                'xgb_correct': xgb_correct,
+                'cat_correct': cat_correct,
+                'ens_correct': ens_correct,
             })
-
+        
         conn.close()
-
+        
+        # Calculate accuracy percentages
         for week in weekly_results:
-            for model in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
+            for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
                 total = weekly_results[week][model]['total']
-                weekly_results[week][model]['accuracy'] = (
-                    round(weekly_results[week][model]['correct'] / total * 100, 1) if total > 0 else 0.0
-                )
-
+                if total > 0:
+                    acc = (weekly_results[week][model]['correct'] / total * 100)
+                    weekly_results[week][model]['accuracy'] = round(acc, 1)
+                else:
+                    weekly_results[week][model]['accuracy'] = 0.0
+        
         return weekly_results
         
     except Exception as e:
@@ -1306,34 +874,45 @@ def calculate_nhl_weekly_performance():
     Groups games by week number extracted from game_date.
     """
     try:
-        from datetime import datetime, timedelta
         conn = get_db_connection()
         
-        # Get completed NHL games through yesterday only
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Get all completed NHL games with predictions (exclude today)
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        
+        # DEBUG: Check if we have games and predictions
+        logger.info(f"Fetching NHL results before {today_str}")
         
         games = conn.execute('''
             SELECT g.game_date, g.home_team_id, g.away_team_id,
                    g.home_score, g.away_score,
-                   p.elo_home_prob, p.xgboost_home_prob, p.meta_home_prob
+                   p.elo_home_prob, p.xgboost_home_prob, p.catboost_home_prob, p.meta_home_prob
             FROM games g
-            LEFT JOIN predictions p ON (p.sport = 'NHL' AND (p.game_id = g.game_id OR 
-                (date(p.game_date) = date(g.game_date) AND p.home_team_id = g.home_team_id AND p.away_team_id = g.away_team_id)))
-            WHERE g.sport = 'NHL'
-              AND g.season = 2025 
-              AND g.home_score IS NOT NULL
-              AND date(g.game_date) <= ?
+            LEFT JOIN predictions p 
+              ON p.sport = 'NHL' AND (
+                   p.game_id = g.game_id
+                   OR (
+                        p.game_date = g.game_date
+                        AND p.home_team_id = g.home_team_id
+                        AND p.away_team_id = g.away_team_id
+                   )
+              )
+            WHERE g.sport = 'NHL' AND g.season = 2025 AND g.home_score IS NOT NULL
+              AND g.game_date < ?
             ORDER BY g.game_date
-        ''', (yesterday,)).fetchall()
+        ''', (today_str,)).fetchall()
+        
+        if games:
+            logger.info(f"Found {len(games)} completed NHL games. First: {dict(games[0])}")
+        else:
+            logger.info("No completed NHL games found in query.")
         
         conn.close()
         
         if not games:
             return None
         
-        # Group games by week (calculate week number from first game)
-        first_game_date = parse_date(games[0]['game_date'])
-        season_start = first_game_date if first_game_date else datetime(2025, 10, 7)
+        # Group games by week (calculate week number from season start)
+        season_start = datetime(2025, 10, 7)  # NHL season starts Oct 7
         
         weekly_results = {}
         
@@ -1347,81 +926,77 @@ def calculate_nhl_weekly_performance():
             days_since_start = (game_date - season_start).days
             week = (days_since_start // 7) + 1
             
-            # Extract stored predictions
-            elo_prob  = float(game['elo_home_prob'])       if game['elo_home_prob']       else None
-            xgb_prob  = float(game['xgboost_home_prob'])   if game['xgboost_home_prob']   else elo_prob
-            meta_prob = float(game['meta_home_prob'])      if game['meta_home_prob']       else elo_prob
-
-            if elo_prob is None:
+            # Skip if no predictions
+            if not game['elo_home_prob']:
                 continue
-
-            # V2 model predictions (Glicko-2, TrueSkill)
-            v2 = get_v2_prediction('NHL', game['home_team_id'], game['away_team_id'], game['game_date'])
-            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-            trueskill_prob = v2.get('trueskill_prob') if v2 else None
-            if v2:
-                xgb_prob  = v2.get('xgboost_prob', xgb_prob)
-                meta_prob = v2['home_prob']
-
+            
+            # Extract predictions
+            elo_prob = float(game['elo_home_prob'])
+            xgb_prob = float(game['xgboost_home_prob']) if game['xgboost_home_prob'] else elo_prob
+            cat_prob = float(game['catboost_home_prob']) if game['catboost_home_prob'] else elo_prob
+            meta_prob = float(game['meta_home_prob']) if game['meta_home_prob'] else elo_prob
+            
+            # Get actual result
             actual_home_win = game['home_score'] > game['away_score']
-
+            
+            # Initialize week if needed
             if week not in weekly_results:
                 weekly_results[week] = {
-                    'glicko2':   {'correct': 0, 'total': 0},
-                    'trueskill': {'correct': 0, 'total': 0},
-                    'elo':       {'correct': 0, 'total': 0},
-                    'xgboost':   {'correct': 0, 'total': 0},
-                    'ensemble':  {'correct': 0, 'total': 0},
+                    'elo': {'correct': 0, 'total': 0},
+                    'xgboost': {'correct': 0, 'total': 0},
+                    'catboost': {'correct': 0, 'total': 0},
+                    'ensemble': {'correct': 0, 'total': 0},
                     'games': []
                 }
-
-            glicko2_correct   = (glicko2_prob   > 0.5) == actual_home_win if glicko2_prob   is not None else None
-            trueskill_correct = (trueskill_prob > 0.5) == actual_home_win if trueskill_prob is not None else None
-            elo_correct       = (elo_prob       > 0.5) == actual_home_win
-            xgb_correct       = (xgb_prob       > 0.5) == actual_home_win
-            meta_correct      = (meta_prob      > 0.5) == actual_home_win
-
+            
+            # Check predictions
+            elo_correct = (elo_prob > 0.5) == actual_home_win
+            xgb_correct = (xgb_prob > 0.5) == actual_home_win
+            cat_correct = (cat_prob > 0.5) == actual_home_win
+            meta_correct = (meta_prob > 0.5) == actual_home_win
+            
             weekly_results[week]['elo']['total'] += 1
-            if elo_correct: weekly_results[week]['elo']['correct'] += 1
-
+            if elo_correct:
+                weekly_results[week]['elo']['correct'] += 1
+            
             weekly_results[week]['xgboost']['total'] += 1
-            if xgb_correct: weekly_results[week]['xgboost']['correct'] += 1
-
+            if xgb_correct:
+                weekly_results[week]['xgboost']['correct'] += 1
+            
+            weekly_results[week]['catboost']['total'] += 1
+            if cat_correct:
+                weekly_results[week]['catboost']['correct'] += 1
+            
             weekly_results[week]['ensemble']['total'] += 1
-            if meta_correct: weekly_results[week]['ensemble']['correct'] += 1
-
-            if glicko2_correct is not None:
-                weekly_results[week]['glicko2']['total'] += 1
-                if glicko2_correct: weekly_results[week]['glicko2']['correct'] += 1
-
-            if trueskill_correct is not None:
-                weekly_results[week]['trueskill']['total'] += 1
-                if trueskill_correct: weekly_results[week]['trueskill']['correct'] += 1
-
+            if meta_correct:
+                weekly_results[week]['ensemble']['correct'] += 1
+            
+            # Store game details
             weekly_results[week]['games'].append({
-                'date':             game['game_date'].split()[0],
-                'away':             game['away_team_id'],
-                'home':             game['home_team_id'],
-                'away_score':       int(game['away_score']),
-                'home_score':       int(game['home_score']),
-                'glicko2_prob':     round(glicko2_prob   * 100, 1) if glicko2_prob   is not None else None,
-                'trueskill_prob':   round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
-                'elo_prob':         round(elo_prob  * 100, 1),
-                'xgb_prob':         round(xgb_prob  * 100, 1),
-                'ens_prob':         round(meta_prob * 100, 1),
-                'glicko2_correct':   glicko2_correct,
-                'trueskill_correct': trueskill_correct,
-                'elo_correct':       elo_correct,
-                'xgb_correct':       xgb_correct,
-                'ens_correct':       meta_correct,
+                'date': game['game_date'].split()[0],
+                'away': game['away_team_id'],
+                'home': game['home_team_id'],
+                'away_score': int(game['away_score']),
+                'home_score': int(game['home_score']),
+                'elo_prob': round(elo_prob * 100, 1),
+                'xgb_prob': round(xgb_prob * 100, 1),
+                'cat_prob': round(cat_prob * 100, 1),
+                'ens_prob': round(meta_prob * 100, 1),
+                'elo_correct': elo_correct,
+                'xgb_correct': xgb_correct,
+                'cat_correct': cat_correct,
+                'ens_correct': meta_correct,
             })
-
+        
+        # Calculate accuracy percentages
         for week in weekly_results:
-            for model in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
+            for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
                 total = weekly_results[week][model]['total']
-                weekly_results[week][model]['accuracy'] = (
-                    round(weekly_results[week][model]['correct'] / total * 100, 1) if total > 0 else 0.0
-                )
+                if total > 0:
+                    acc = (weekly_results[week][model]['correct'] / total * 100)
+                    weekly_results[week][model]['accuracy'] = round(acc, 1)
+                else:
+                    weekly_results[week][model]['accuracy'] = 0.0
         
         return weekly_results
         
@@ -1430,18 +1005,21 @@ def calculate_nhl_weekly_performance():
         return None
 
 def calculate_nba_weekly_performance():
-    """Calculate NBA model performance week by week using v2 model predictions."""
+    """Calculate NBA model performance week by week
+    
+    Uses data from database, groups by week calculated from season start.
+    """
     try:
         conn = get_db_connection()
-        from datetime import datetime, timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-
+        
+        # Get all completed NBA games with predictions (exclude today)
+        today_str = datetime.now().strftime('%Y-%m-%d')
         games = conn.execute('''
             SELECT g.game_date, g.home_team_id, g.away_team_id,
                    g.home_score, g.away_score,
                    p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
             FROM games g
-            LEFT JOIN predictions p
+            LEFT JOIN predictions p 
               ON p.sport = 'NBA' AND (
                    p.game_id = g.game_id
                    OR (
@@ -1450,252 +1028,262 @@ def calculate_nba_weekly_performance():
                         AND p.away_team_id = g.away_team_id
                    )
               )
-            WHERE g.sport = 'NBA'
-              AND g.home_score IS NOT NULL
-              AND g.away_score IS NOT NULL
-              AND date(g.game_date) <= ?
+            WHERE g.sport = 'NBA' AND date(g.game_date) >= '2024-10-21'
+              AND date(g.game_date) < ?
             ORDER BY g.game_date
-        ''', (yesterday,)).fetchall()
+        ''', (today_str,)).fetchall()
+        
         conn.close()
-
+        
         if not games:
             return None
-
-        first_game_date = parse_date(games[0]['game_date'])
-        season_start = first_game_date if first_game_date else datetime(2025, 10, 21)
+            
+        # Group games by week (calculate week number from season start)
+        season_start = datetime(2024, 10, 21)  # NBA season starts Oct 21, 2024
+        
         weekly_results = {}
-
+        
         for game in games:
+            # Parse game date
             game_date = parse_date(game['game_date'])
             if not game_date:
                 continue
-
+            
+            # Get scores from database (already updated by update_nba_scores)
             home_team = game['home_team_id']
             away_team = game['away_team_id']
             home_score = game['home_score']
             away_score = game['away_score']
-
+            
+            # Skip if still no final scores
             if home_score is None or away_score is None:
                 continue
-
+            
+            # Calculate week number (1-indexed)
             days_since_start = (game_date - season_start).days
             week = (days_since_start // 7) + 1
-
-            # Stored DB predictions
-            elo_prob  = float(game['elo_home_prob'])      if game['elo_home_prob']      is not None else None
-            xgb_prob  = float(game['xgboost_home_prob']) if game['xgboost_home_prob']  is not None else elo_prob
-            ens_prob  = float(game['win_probability'])   if game['win_probability']    is not None else elo_prob
-
-            # V2 model predictions (Glicko-2, TrueSkill)
-            v2 = get_v2_prediction('NBA', home_team, away_team, game['game_date'])
-            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-            trueskill_prob = v2.get('trueskill_prob') if v2 else None
-            if v2:
-                xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
-
+            
+            # Extract predictions (allow missing predictions)
+            elo_prob = float(game['elo_home_prob']) if game['elo_home_prob'] is not None else None
+            xgb_prob = float(game['xgboost_home_prob']) if game['xgboost_home_prob'] is not None else None
+            cat_prob = float(game['logistic_home_prob']) if game['logistic_home_prob'] is not None else None
+            ens_prob = float(game['win_probability']) if game['win_probability'] is not None else None
+            
+            # Get actual result
             actual_home_win = home_score > away_score
-
+            
+            # Initialize week if needed
             if week not in weekly_results:
                 weekly_results[week] = {
-                    'glicko2':   {'correct': 0, 'total': 0},
-                    'trueskill': {'correct': 0, 'total': 0},
-                    'elo':       {'correct': 0, 'total': 0},
-                    'xgboost':   {'correct': 0, 'total': 0},
-                    'ensemble':  {'correct': 0, 'total': 0},
+                    'elo': {'correct': 0, 'total': 0},
+                    'xgboost': {'correct': 0, 'total': 0},
+                    'catboost': {'correct': 0, 'total': 0},
+                    'ensemble': {'correct': 0, 'total': 0},
                     'games': []
                 }
-
-            glicko2_correct   = (glicko2_prob   > 0.5) == actual_home_win if glicko2_prob   is not None else None
-            trueskill_correct = (trueskill_prob > 0.5) == actual_home_win if trueskill_prob is not None else None
-            elo_correct       = (elo_prob       > 0.5) == actual_home_win if elo_prob       is not None else None
-            xgb_correct       = (xgb_prob       > 0.5) == actual_home_win if xgb_prob       is not None else None
-            ens_correct       = (ens_prob       > 0.5) == actual_home_win if ens_prob       is not None else None
-
-            for model, prob, correct in [
-                ('glicko2',   glicko2_prob,   glicko2_correct),
-                ('trueskill', trueskill_prob, trueskill_correct),
-                ('elo',       elo_prob,       elo_correct),
-                ('xgboost',   xgb_prob,       xgb_correct),
-                ('ensemble',  ens_prob,       ens_correct),
-            ]:
-                if prob is not None:
-                    weekly_results[week][model]['total'] += 1
-                    if correct:
-                        weekly_results[week][model]['correct'] += 1
-
+            
+            # Check predictions (only when available)
+            elo_correct = None if elo_prob is None else ((elo_prob > 0.5) == actual_home_win)
+            xgb_correct = None if xgb_prob is None else ((xgb_prob > 0.5) == actual_home_win)
+            cat_correct = None if cat_prob is None else ((cat_prob > 0.5) == actual_home_win)
+            ens_correct = None if ens_prob is None else ((ens_prob > 0.5) == actual_home_win)
+            
+            if elo_prob is not None:
+                weekly_results[week]['elo']['total'] += 1
+                if elo_correct:
+                    weekly_results[week]['elo']['correct'] += 1
+            if xgb_prob is not None:
+                weekly_results[week]['xgboost']['total'] += 1
+                if xgb_correct:
+                    weekly_results[week]['xgboost']['correct'] += 1
+            if cat_prob is not None:
+                weekly_results[week]['catboost']['total'] += 1
+                if cat_correct:
+                    weekly_results[week]['catboost']['correct'] += 1
+            if ens_prob is not None:
+                weekly_results[week]['ensemble']['total'] += 1
+                if ens_correct:
+                    weekly_results[week]['ensemble']['correct'] += 1
+            
+            # Store game details
             weekly_results[week]['games'].append({
-                'date':             game['game_date'].split()[0],
-                'away':             away_team,
-                'home':             home_team,
-                'away_score':       int(away_score),
-                'home_score':       int(home_score),
-                'glicko2_prob':     round(glicko2_prob   * 100, 1) if glicko2_prob   is not None else None,
-                'trueskill_prob':   round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
-                'elo_prob':         round(elo_prob  * 100, 1) if elo_prob  is not None else None,
-                'xgb_prob':         round(xgb_prob  * 100, 1) if xgb_prob  is not None else None,
-                'ens_prob':         round(ens_prob  * 100, 1) if ens_prob  is not None else None,
-                'glicko2_correct':   glicko2_correct,
-                'trueskill_correct': trueskill_correct,
-                'elo_correct':       elo_correct,
-                'xgb_correct':       xgb_correct,
-                'ens_correct':       ens_correct,
+                'date': game['game_date'].split()[0],
+                'away': away_team,
+                'home': home_team,
+                'away_score': int(away_score),
+                'home_score': int(home_score),
+                'elo_prob': (round(elo_prob * 100, 1) if elo_prob is not None else 'N/A'),
+                'xgb_prob': (round(xgb_prob * 100, 1) if xgb_prob is not None else 'N/A'),
+                'cat_prob': (round(cat_prob * 100, 1) if cat_prob is not None else 'N/A'),
+                'ens_prob': (round(ens_prob * 100, 1) if ens_prob is not None else 'N/A'),
+                'elo_correct': elo_correct,
+                'xgb_correct': xgb_correct,
+                'cat_correct': cat_correct,
+                'ens_correct': ens_correct,
             })
-
+        
+        # Calculate accuracy percentages
         for week in weekly_results:
-            for model in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
+            for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
                 total = weekly_results[week][model]['total']
-                weekly_results[week][model]['accuracy'] = (
-                    round(weekly_results[week][model]['correct'] / total * 100, 1) if total > 0 else 0.0
-                )
-
+                if total > 0:
+                    acc = (weekly_results[week][model]['correct'] / total * 100)
+                    weekly_results[week][model]['accuracy'] = round(acc, 1)
+                else:
+                    weekly_results[week][model]['accuracy'] = 0.0
+        
         return weekly_results
-
+        
     except Exception as e:
         logger.error(f"Error calculating NBA weekly performance: {e}")
         return None
 
 def calculate_model_performance(sport):
-    """Calculate overall performance per model using stored DB predictions + v2 live inference."""
+    """Calculate performance using stored predictions from database
+    
+    All sports now use the same method: pre-game predictions stored in database
+    """
+    
+    # All sports now use database predictions (no live generation)
     conn = get_db_connection()
+    
+    # Calculate cutoff for results (exclude today)
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    
     results_data = conn.execute('''
-        SELECT
-            g.game_date, g.home_team_id, g.away_team_id,
-            g.away_score, g.home_score,
-            p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob,
-            p.win_probability as ensemble_prob
-        FROM games g
-        LEFT JOIN predictions p ON
-            g.sport = p.sport AND
-            g.game_date = p.game_date AND
-            g.home_team_id = p.home_team_id AND
-            g.away_team_id = p.away_team_id
-        WHERE g.sport = ? AND g.home_score IS NOT NULL
-        ORDER BY g.game_date ASC
-    ''', (sport,)).fetchall()
+            SELECT 
+                g.game_date,
+                g.home_team_id,
+                g.away_team_id,
+                g.away_score,
+                g.home_score,
+                p.elo_home_prob,
+                p.xgboost_home_prob,
+                p.logistic_home_prob,
+                p.win_probability as ensemble_prob
+            FROM games g
+            LEFT JOIN predictions p ON 
+                g.sport = p.sport AND
+                g.game_date = p.game_date AND
+                g.home_team_id = p.home_team_id AND
+                g.away_team_id = p.away_team_id
+            WHERE g.sport = ? 
+                AND g.home_score IS NOT NULL
+                AND date(g.game_date) < ?
+            ORDER BY g.game_date ASC
+        ''', (sport, today_str)).fetchall()
+    
     conn.close()
-
+    
     if len(results_data) == 0:
         return None
-
-    models_list = ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']
-    results = {m: {'correct': 0, 'total': 0} for m in models_list}
+    
+    # Calculate accuracy from stored predictions
+    results = {
+        'elo': {'correct': 0, 'total': 0},
+        'xgboost': {'correct': 0, 'total': 0},
+        'catboost': {'correct': 0, 'total': 0},
+        'ensemble': {'correct': 0, 'total': 0}
+    }
+    
     dates = []
-
-    def to_float(val):
-        if val is None:
-            return None
-        if isinstance(val, (float, int)):
-            return float(val)
-        if isinstance(val, bytes):
+    
+    for row in results_data:
+        # Safe float conversion helper
+        def to_float(val):
+            if val is None:
+                return None
+            if isinstance(val, (float, int)):
+                return float(val)
+            if isinstance(val, bytes):
+                # Try to unpack as binary float
+                try:
+                    import struct
+                    if len(val) == 8:
+                        return struct.unpack('d', val)[0]
+                    elif len(val) == 4:
+                        return struct.unpack('f', val)[0]
+                    else:
+                        # Try decoding as string
+                        return float(val.decode('utf-8', errors='ignore'))
+                except:
+                    return None
             try:
-                import struct
-                if len(val) == 8:
-                    return struct.unpack('d', val)[0]
-                elif len(val) == 4:
-                    return struct.unpack('f', val)[0]
-                return float(val.decode('utf-8', errors='ignore'))
+                return float(val)
             except:
                 return None
-        try:
-            return float(val)
-        except:
-            return None
-
-    for row in results_data:
+        
+        # Actual winner
         home_score = to_float(row[4])
         away_score = to_float(row[3])
-        if home_score is None or away_score is None:
-            continue
-        actual_home_win = home_score > away_score
-
-        # Stored DB probs
-        elo_prob = to_float(row[5])
-        xgb_prob = to_float(row[6])
-        ens_prob = to_float(row[8])
-
-        # V2 live inference
-        v2 = get_v2_prediction(sport, row[1], row[2], row[0])
-        glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-        trueskill_prob = v2.get('trueskill_prob') if v2 else None
-        if v2:
-            xgb_prob = v2.get('xgboost_prob', xgb_prob)
-            ens_prob = v2['home_prob']
-
-        for model, prob in [
-            ('glicko2',   glicko2_prob),
-            ('trueskill', trueskill_prob),
-            ('elo',       elo_prob),
-            ('xgboost',   xgb_prob),
-            ('ensemble',  ens_prob),
-        ]:
-            if prob is not None:
-                results[model]['total'] += 1
-                if (prob > 0.5) == actual_home_win:
-                    results[model]['correct'] += 1
-
+        actual_winner = 'home' if home_score > away_score else 'away'
+        
+        # Only count if we have stored predictions
+        if row[5] is not None:
+            # Elo prediction
+            elo_prob = to_float(row[5])
+            if elo_prob is not None:
+                elo_winner = 'home' if elo_prob > 0.5 else 'away'
+                results['elo']['total'] += 1
+                if elo_winner == actual_winner:
+                    results['elo']['correct'] += 1
+            
+            # XGBoost prediction  
+            if row[6] is not None:
+                xgb_prob = to_float(row[6])
+                if xgb_prob is not None:
+                    xgb_winner = 'home' if xgb_prob > 0.5 else 'away'
+                    results['xgboost']['total'] += 1
+                    if xgb_winner == actual_winner:
+                        results['xgboost']['correct'] += 1
+            
+            # Logistic/CatBoost prediction
+            if row[7] is not None:
+                cat_prob = to_float(row[7])
+                if cat_prob is not None:
+                    cat_winner = 'home' if cat_prob > 0.5 else 'away'
+                    results['catboost']['total'] += 1
+                    if cat_winner == actual_winner:
+                        results['catboost']['correct'] += 1
+            
+            # Ensemble prediction
+            if row[8] is not None:
+                ens_prob = to_float(row[8])
+                if ens_prob is not None:
+                    ens_winner = 'home' if ens_prob > 0.5 else 'away'
+                    results['ensemble']['total'] += 1
+                    if ens_winner == actual_winner:
+                        results['ensemble']['correct'] += 1
+        
+        # Track dates
         dates.append(parse_date(row[0]))
-
+    
+    # Calculate accuracies
     performance = {}
-    for model in models_list:
+    for model in ['elo', 'xgboost', 'catboost', 'ensemble']:
         total = results[model]['total']
-        performance[model] = {
-            'accuracy': round(results[model]['correct'] / total * 100, 1) if total > 0 else 0.0,
-            'correct':  results[model]['correct'],
-            'total':    total
-        }
-    valid_dates
+        if total > 0:
+            acc = (results[model]['correct'] / total * 100)
+            performance[model] = {
+                'accuracy': round(acc, 1),
+                'correct': results[model]['correct'],
+                'total': total
+            }
+        else:
+            performance[model] = {'accuracy': 0.0, 'correct': 0, 'total': 0}
+    
+    # Date range
     valid_dates = [d for d in dates if d is not None]
-    performance['date_range'] = (
-        f"{min(valid_dates).strftime('%d/%m/%Y')} - {max(valid_dates).strftime('%d/%m/%Y')}"
-        if valid_dates else 'N/A'
-    )
+    if valid_dates:
+        min_date = min(valid_dates).strftime('%d/%m/%Y')
+        max_date = max(valid_dates).strftime('%d/%m/%Y')
+        performance['date_range'] = f"{min_date} - {max_date}"
+    else:
+        performance['date_range'] = "N/A"
+    
     performance['total_games'] = len(results_data)
+    
     return performance
-
-
-def compute_overall_stats_from_daily(daily_results):
-    """Compute per-model totals from a daily_results dict (used by DAILY_RESULTS_TEMPLATE)."""
-    model_keys = [
-        ('glicko2',   'glicko2_correct'),
-        ('trueskill', 'trueskill_correct'),
-        ('elo',       'elo_correct'),
-        ('xgboost',   'xgb_correct'),
-        ('ensemble',  'ens_correct'),
-    ]
-    overall = {m: {'correct': 0, 'total': 0} for m, _ in model_keys}
-    for date_data in daily_results.values():
-        for game in date_data.get('games', []):
-            for model_name, correct_key in model_keys:
-                val = game.get(correct_key)
-                if val is not None:
-                    overall[model_name]['total'] += 1
-                    if val:
-                        overall[model_name]['correct'] += 1
-    for model_name, _ in model_keys:
-        t = overall[model_name]['total']
-        overall[model_name]['accuracy'] = (
-            round(overall[model_name]['correct'] / t * 100, 1) if t > 0 else 0.0
-        )
-    return overall
-
-
-def compute_overall_stats_from_weekly(weekly_results):
-    """Compute per-model totals from a weekly_results dict (used by NFL_WEEKLY_RESULTS_TEMPLATE)."""
-    models = ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']
-    overall = {m: {'correct': 0, 'total': 0} for m in models}
-    for week_data in weekly_results.values():
-        for model in models:
-            if model in week_data:
-                overall[model]['correct'] += week_data[model].get('correct', 0)
-                overall[model]['total']   += week_data[model].get('total', 0)
-    for model in models:
-        t = overall[model]['total']
-        overall[model]['accuracy'] = (
-            round(overall[model]['correct'] / t * 100, 1) if t > 0 else 0.0
-        )
-    return overall
-
 
 # ============================================================================
 # BASE TEMPLATE
@@ -1706,7 +1294,7 @@ BASE_TEMPLATE = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}underdogs.bet{% endblock %}</title>
+    <title>{% block title %}Sports Predictions{% endblock %}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1807,7 +1395,7 @@ BASE_TEMPLATE = """
 <body>
     <div class="navbar">
         <div class="navbar-content">
-            <a href="/" class="logo">🎯 underdogs.bet</a>
+            <a href="/" class="logo">← Home</a>
             <div class="hamburger" onclick="toggleMenu()">
                 <span></span>
                 <span></span>
@@ -1852,6 +1440,216 @@ BASE_TEMPLATE = """
             if (!navbar.contains(event.target)) {
                 navLinks.classList.remove('active');
             }
+        });
+    </script>
+</body>
+</html>
+"""
+
+# ============================================================================
+# PREDICTION FIXER TEMPLATE
+# ============================================================================
+
+PREDICTION_FIXER_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Prediction Fixer - Admin Tool</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 30px; padding: 25px; background: rgba(255,255,255,0.05); border-radius: 15px; }
+        h1 { font-size: 2.5em; margin-bottom: 10px; color: #fbbf24; }
+        .subtitle { opacity: 0.8; font-size: 1.1em; }
+        .action-buttons { display: flex; gap: 15px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }
+        .btn { padding: 12px 24px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; transition: all 0.3s; font-size: 1em; }
+        .btn-scan { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; }
+        .btn-fix { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .btn-fix-all { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status-box { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+        .status-box.loading { border-left: 4px solid #3b82f6; }
+        .status-box.success { border-left: 4px solid #10b981; }
+        .status-box.error { border-left: 4px solid #ef4444; }
+        .issues-container { background: rgba(255,255,255,0.03); border-radius: 10px; padding: 20px; max-height: 600px; overflow-y: auto; }
+        .issue-card { background: rgba(255,255,255,0.05); border-left: 4px solid #ef4444; padding: 15px; margin-bottom: 10px; border-radius: 8px; }
+        .issue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .issue-sport { background: #3b82f6; padding: 4px 12px; border-radius: 6px; font-size: 0.9em; font-weight: 600; }
+        .issue-date { opacity: 0.7; font-size: 0.9em; }
+        .issue-matchup { font-size: 1.1em; font-weight: 600; color: #fbbf24; }
+        .issue-score { opacity: 0.8; margin-top: 5px; }
+        .spinner { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: rgba(255,255,255,0.05); padding: 20px; border-radius: 10px; text-align: center; }
+        .stat-value { font-size: 2.5em; font-weight: bold; color: #fbbf24; }
+        .stat-label { opacity: 0.8; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" style="display: inline-block; padding: 10px 20px; background: rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; color: white; margin-bottom: 20px; font-weight: 600;">← Back to Home</a>
+        
+        <div class="header">
+            <h1>🔧 Prediction Fixer</h1>
+            <p class="subtitle">Diagnose and fix missing predictions instantly</p>
+        </div>
+        
+        <div class="action-buttons">
+            <button class="btn btn-scan" onclick="scanIssues()">🔍 Scan for Issues</button>
+            <button class="btn btn-fix" onclick="updateScores()" id="updateScoresBtn">📥 Update Scores</button>
+            <button class="btn btn-fix-all" onclick="fixAll()" id="fixAllBtn" disabled>✨ Fix All Sports</button>
+        </div>
+        
+        <div id="statusBox" class="status-box" style="display: none;"></div>
+        
+        <div id="statsContainer" style="display: none;"></div>
+        
+        <div id="issuesContainer" style="display: none;"></div>
+    </div>
+    
+    <script>
+        let currentIssues = [];
+        
+        function showStatus(message, type = 'loading') {
+            const box = document.getElementById('statusBox');
+            box.className = 'status-box ' + type;
+            box.innerHTML = type === 'loading' ? 
+                `<div class="spinner"></div> <span style="margin-left: 15px;">${message}</span>` :
+                message;
+            box.style.display = 'block';
+        }
+        
+        function hideStatus() {
+            document.getElementById('statusBox').style.display = 'none';
+        }
+        
+        async function scanIssues() {
+            showStatus('Scanning all sports for missing predictions...', 'loading');
+            document.getElementById('issuesContainer').style.display = 'none';
+            document.getElementById('statsContainer').style.display = 'none';
+            document.getElementById('fixAllBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/admin/fixer/scan');
+                const data = await response.json();
+                currentIssues = data.issues;
+                
+                if (data.total_issues === 0) {
+                    showStatus('✅ No issues found! All predictions are in place.', 'success');
+                } else {
+                    showStatus(`⚠️ Found ${data.total_issues} games with missing predictions`, 'error');
+                    displayIssues(data.issues);
+                    displayStats(data.issues);
+                    document.getElementById('fixAllBtn').disabled = false;
+                }
+            } catch (error) {
+                showStatus(`❌ Error scanning: ${error.message}`, 'error');
+            }
+        }
+        
+        function displayStats(issues) {
+            const sportCounts = {};
+            issues.forEach(issue => {
+                sportCounts[issue.sport] = (sportCounts[issue.sport] || 0) + 1;
+            });
+            
+            let html = '<div class="stats">';
+            html += `<div class="stat-card"><div class="stat-value">${issues.length}</div><div class="stat-label">Total Issues</div></div>`;
+            for (const [sport, count] of Object.entries(sportCounts)) {
+                html += `<div class="stat-card"><div class="stat-value">${count}</div><div class="stat-label">${sport}</div></div>`;
+            }
+            html += '</div>';
+            
+            document.getElementById('statsContainer').innerHTML = html;
+            document.getElementById('statsContainer').style.display = 'block';
+        }
+        
+        function displayIssues(issues) {
+            let html = '<h2 style="margin-bottom: 15px; color: #fbbf24;">Missing Predictions</h2>';
+            
+            issues.forEach(issue => {
+                html += `
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-sport">${issue.sport}</span>
+                            <span class="issue-date">${issue.game_date}</span>
+                        </div>
+                        <div class="issue-matchup">${issue.matchup}</div>
+                        <div class="issue-score">Final Score: ${issue.score}</div>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('issuesContainer').innerHTML = html;
+            document.getElementById('issuesContainer').style.display = 'block';
+        }
+        
+        async function updateScores() {
+            showStatus('Updating scores for all sports (last 7 days)...', 'loading');
+            document.getElementById('updateScoresBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/admin/fixer/update-scores');
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus(`✅ Updated ${data.updated} game scores! Rescanning...`, 'success');
+                    setTimeout(() => {
+                        scanIssues();
+                    }, 1500);
+                } else {
+                    showStatus(`❌ Error updating scores: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('updateScoresBtn').disabled = false;
+            }
+        }
+        
+        async function fixAll() {
+            if (!confirm('Fix all missing predictions? This will generate and save predictions for all games with missing data.')) {
+                return;
+            }
+            
+            const sports = [...new Set(currentIssues.map(i => i.sport))];
+            showStatus(`Fixing predictions for ${sports.join(', ')}...`, 'loading');
+            document.getElementById('fixAllBtn').disabled = true;
+            
+            let totalFixed = 0;
+            
+            for (const sport of sports) {
+                try {
+                    const response = await fetch(`/admin/fixer/fix/${sport}`);
+                    const data = await response.json();
+                    if (data.success) {
+                        totalFixed += data.fixed;
+                    }
+                } catch (error) {
+                    console.error(`Error fixing ${sport}:`, error);
+                }
+            }
+            
+            showStatus(`✅ Successfully fixed ${totalFixed} missing predictions!`, 'success');
+            
+            // Rescan after 2 seconds
+            setTimeout(() => {
+                scanIssues();
+            }, 2000);
+        }
+        
+        // Auto-scan on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            scanIssues();
         });
     </script>
 </body>
@@ -1909,10 +1707,11 @@ VALUE_BETTING_TEMPLATE = BASE_TEMPLATE.replace(
                     🎯 <span class="pick-team">{{ pred.pick }}</span>
                 </div>
                 <div style="margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px;">
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 0.9em;">
-                        <div><strong>Edge:</strong> {{ (pred.elo_prob * 100)|round(1) }}%</div>
-                        <div><strong>XSharp:</strong> {{ (pred.xgb_prob * 100)|round(1) }}%</div>
-                        <div><strong>Sharp Consensus:</strong> {{ (pred.ensemble_prob * 100)|round(1) }}%</div>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 0.9em;">
+                        <div><strong>Elo:</strong> {{ (pred.elo_prob * 100)|round(1) }}%</div>
+                        <div><strong>XGB:</strong> {{ (pred.xgb_prob * 100)|round(1) }}%</div>
+                        <div><strong>Cat:</strong> {{ (pred.cat_prob * 100)|round(1) }}%</div>
+                        <div><strong>Meta:</strong> {{ (pred.ensemble_prob * 100)|round(1) }}%</div>
                     </div>
                     <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
                         <strong>Adjusted:</strong> {{ (pred.adjusted_prob * 100)|round(1) }}% &nbsp;|&nbsp; <strong>Market:</strong> {{ (pred.market_prob * 100)|round(1) }}%
@@ -2043,11 +1842,10 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                     <thead>
                         <tr>
                             <th>Matchup</th>
-                            <th style="background: #1e40af;">Grinder2</th>
-                            <th style="background: #7c3aed;">Takedown</th>
-                            <th style="background: #059669;">Edge</th>
-                            <th style="background: #dc2626;">XSharp</th>
-                            <th style="background: #fbbf24; color: #000;">Sharp Consensus</th>
+                            <th>XGBoost</th>
+                            <th>CatBoost</th>
+                            <th>Elo</th>
+                            <th>Meta</th>
                             <th>Pick</th>
                         </tr>
                     </thead>
@@ -2055,11 +1853,10 @@ PREDICTIONS_TEMPLATE = BASE_TEMPLATE.replace(
                         {% for pred in grouped_predictions[date] %}
                         <tr>
                             <td>{{ pred.away_team_id }} @ <strong>{{ pred.home_team_id }}</strong></td>
-                            <td class="model-pred" style="color: #60a5fa;">{{ pred.glicko2_prob if pred.glicko2_prob else '-' }}{% if pred.glicko2_prob %}%{% endif %}</td>
-                            <td class="model-pred" style="color: #a78bfa;">{{ pred.trueskill_prob if pred.trueskill_prob else '-' }}{% if pred.trueskill_prob %}%{% endif %}</td>
-                            <td class="model-pred" style="color: #34d399;">{{ pred.elo_prob if pred.elo_prob else '-' }}{% if pred.elo_prob %}%{% endif %}</td>
-                            <td class="model-pred" style="color: #f87171;">{{ pred.xgb_prob }}%</td>
-                            <td class="model-pred {% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}" style="font-size: 1.1em;">{{ pred.ensemble_prob }}%</td>
+                            <td class="model-pred">{{ pred.xgb_prob }}%</td>
+                            <td class="model-pred">{{ pred.cat_prob }}%</td>
+                            <td class="model-pred">{{ pred.elo_prob }}%</td>
+                            <td class="model-pred {% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}">{{ pred.ensemble_prob }}%</td>
                             <td class="{% if pred.ensemble_prob > 60 %}high-conf{% elif pred.ensemble_prob > 55 %}med-conf{% else %}low-conf{% endif %}"><strong>{{ pred.predicted_winner }}</strong></td>
                         </tr>
                         {% endfor %}
@@ -2166,11 +1963,10 @@ NHL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                     <th>Date</th>
                     <th>Away Team</th>
                     <th>Home Team</th>
-                    <th>Grinder2</th>
-                    <th>Takedown</th>
-                    <th>Edge</th>
-                    <th>XSharp</th>
-                    <th>Sharp Consensus</th>
+                    <th>XGBoost</th>
+                    <th>CatBoost</th>
+                    <th>Elo</th>
+                    <th>Meta</th>
                 </tr>
             </thead>
             <tbody>
@@ -2179,10 +1975,9 @@ NHL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                     <td>{{ game.date }}</td>
                     <td>{{ game.away }}</td>
                     <td>{{ game.home }}</td>
-                    <td class="{% if game.glicko2_home|float >= 60 %}prob-high{% elif game.glicko2_home|float <= 40 %}prob-low{% endif %}">{{ game.glicko2_home if game.glicko2_home else '-' }}</td>
-                    <td class="{% if game.trueskill_home|float >= 60 %}prob-high{% elif game.trueskill_home|float <= 40 %}prob-low{% endif %}">{{ game.trueskill_home if game.trueskill_home else '-' }}</td>
-                    <td class="{% if game.elo_home|float >= 60 %}prob-high{% elif game.elo_home|float <= 40 %}prob-low{% endif %}">{{ game.elo_home }}%</td>
                     <td class="{% if game.xgb_home|float >= 60 %}prob-high{% elif game.xgb_home|float <= 40 %}prob-low{% endif %}">{{ game.xgb_home }}%</td>
+                    <td class="{% if game.cat_home|float >= 60 %}prob-high{% elif game.cat_home|float <= 40 %}prob-low{% endif %}">{{ game.cat_home }}%</td>
+                    <td class="{% if game.elo_home|float >= 60 %}prob-high{% elif game.elo_home|float <= 40 %}prob-low{% endif %}">{{ game.elo_home }}%</td>
                     <td class="{% if game.meta_home|float >= 60 %}prob-high{% elif game.meta_home|float <= 40 %}prob-low{% endif %}">{{ game.meta_home }}%</td>
                 </tr>
                 {% endfor %}
@@ -2284,8 +2079,8 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
-        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads &amp; Totals Results</a>
+        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Results</a>
+        <a href="/sport/{{ sport }}/spreads" class="tab">📈 Spreads & Totals</a>
     </div>
     
     <div class="results-container">
@@ -2294,37 +2089,28 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
         <div class="test-info">Tested on {{ performance.total_games }} completed games</div>
         
         <div class="models-grid">
-            <!-- Rating-Based Models -->
-            <div class="model-card" style="border-color: #1e40af;">
-                <div class="model-name" style="color: #60a5fa;">📊 Grinder2</div>
-                <div class="model-accuracy">{{ performance.glicko2.accuracy if performance.glicko2 else 'N/A' }}{% if performance.glicko2 %}%{% endif %}</div>
-                <div class="model-record">{% if performance.glicko2 %}{{ performance.glicko2.correct }}-{{ performance.glicko2.total - performance.glicko2.correct }}{% else %}No data{% endif %}</div>
+            <div class="model-card">
+                <div class="model-name">Elo Rating</div>
+                <div class="model-accuracy">{{ performance.elo.accuracy }}%</div>
+                <div class="model-record">{{ performance.elo.correct }}-{{ performance.elo.total - performance.elo.correct }}</div>
             </div>
             
-            <div class="model-card" style="border-color: #7c3aed;">
-                <div class="model-name" style="color: #a78bfa;">🎯 Takedown</div>
-                <div class="model-accuracy">{{ performance.trueskill.accuracy if performance.trueskill else 'N/A' }}{% if performance.trueskill %}%{% endif %}</div>
-                <div class="model-record">{% if performance.trueskill %}{{ performance.trueskill.correct }}-{{ performance.trueskill.total - performance.trueskill.correct }}{% else %}No data{% endif %}</div>
-            </div>
-            
-            <div class="model-card" style="border-color: #059669;">
-                <div class="model-name" style="color: #34d399;">📊 Edge</div>
-                <div class="model-accuracy">{{ performance.elo.accuracy if performance.elo else 'N/A' }}{% if performance.elo %}%{% endif %}</div>
-                <div class="model-record">{% if performance.elo %}{{ performance.elo.correct }}-{{ performance.elo.total - performance.elo.correct }}{% else %}No data{% endif %}</div>
-            </div>
-            
-            <!-- ML Models -->
-            <div class="model-card" style="border-color: #dc2626;">
-                <div class="model-name" style="color: #f87171;">🤖 XSharp</div>
+            <div class="model-card">
+                <div class="model-name">XGBoost</div>
                 <div class="model-accuracy">{{ performance.xgboost.accuracy }}%</div>
                 <div class="model-record">{{ performance.xgboost.correct }}-{{ performance.xgboost.total - performance.xgboost.correct }}</div>
             </div>
             
-            <!-- Sharp Consensus -->
-            <div class="model-card ensemble" style="grid-column: span 2;">
-                <div class="model-name">🏆 Sharp Consensus</div>
-                <div class="model-accuracy" style="font-size: 4em;">{{ performance.ensemble.accuracy }}%</div>
-                <div class="model-record" style="font-size: 1.4em;">{{ performance.ensemble.correct }}-{{ performance.ensemble.total - performance.ensemble.correct }}</div>
+            <div class="model-card">
+                <div class="model-name">CatBoost</div>
+                <div class="model-accuracy">{{ performance.catboost.accuracy }}%</div>
+                <div class="model-record">{{ performance.catboost.correct }}-{{ performance.catboost.total - performance.catboost.correct }}</div>
+            </div>
+            
+            <div class="model-card ensemble">
+                <div class="model-name">🏆 Meta Ensemble</div>
+                <div class="model-accuracy">{{ performance.ensemble.accuracy }}%</div>
+                <div class="model-record">{{ performance.ensemble.correct }}-{{ performance.ensemble.total - performance.ensemble.correct }}</div>
             </div>
         </div>
         {% else %}
@@ -2349,7 +2135,7 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     .games-table tr:hover { background: rgba(255, 255, 255, 0.05); }
     .prob-correct { color: #10b981; font-weight: bold; }
     .prob-wrong { color: #ef4444; }
-    .daily-models { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .daily-models { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
     .daily-model-card { background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 15px; text-align: center; }
     .daily-model-card.best { border: 2px solid #10b981; background: rgba(16, 185, 129, 0.1); }
     .model-label { font-size: 0.9em; opacity: 0.8; margin-bottom: 5px; }
@@ -2363,96 +2149,91 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - Daily Results</h1>
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
-        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads &amp; Totals Results</a>
+        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Results</a>
+        <a href="/sport/{{ sport }}/spreads" class="tab">📈 Spreads & Totals</a>
     </div>
-    {% if daily_results and overall_stats %}
-        {% set ens = overall_stats.ensemble %}
-        {% set total_games = ens.total %}
-        {% set units_won = (ens.correct * 0.91) - (ens.total - ens.correct) %}
-        {% set roi = (units_won / ens.total * 100)|round(1) if ens.total > 0 else 0 %}
-        <!-- Overall performance header -->
-        <div style="background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 15px; padding: 25px; margin-bottom: 25px;">
-            <h2 style="text-align: center; margin: 0 0 20px 0; font-size: 1.8em;">🏆 Overall Model Performance &mdash; {{ ens.total }} Games</h2>
-            <!-- Per-model grid -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
-                {% for m_label, m_key in [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Sharp Consensus','ensemble')] %}
-                {% set m = overall_stats[m_key] %}
-                <div style="background: rgba(255,255,255,0.08); border-radius: 10px; padding: 15px; text-align: center; {% if m_key == 'ensemble' %}border: 2px solid #fbbf24; grid-column: span 4;{% endif %}">
-                    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 5px;">{{ m_label }}</div>
-                    <div style="font-size: {% if m_key == 'ensemble' %}2.8em{% else %}1.9em{% endif %}; font-weight: bold; color: {% if m.accuracy >= 55 %}#10b981{% elif m.accuracy >= 50 %}#fbbf24{% else %}#ef4444{% endif %};">{{ m.accuracy }}%</div>
-                    <div style="font-size: 0.9em; opacity: 0.85;">{{ m.correct }}-{{ m.total - m.correct }}</div>
+    {% if daily_results %}
+        {% set all_games = [] %}
+        {% for date in sorted_dates %}
+            {% set _ = all_games.extend(daily_results[date].games) %}
+        {% endfor %}
+        {% set total_games = all_games|length %}
+        {% set meta_correct = all_games|selectattr('ens_correct')|list|length %}
+        {% set meta_wrong = total_games - meta_correct %}
+        {% set meta_accuracy = (meta_correct / total_games * 100)|round(1) if total_games > 0 else 0 %}
+        {% set units_won = (meta_correct * 0.91) - meta_wrong %}
+        {% set roi = (units_won / total_games * 100)|round(1) if total_games > 0 else 0 %}
+        <div style="background: linear-gradient(135deg, #10b981, #059669); border-radius: 15px; padding: 25px; margin-bottom: 30px; text-align: center;">
+            <h2 style="margin: 0 0 20px 0; font-size: 1.8em;">🏆 Overall Performance</h2>
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px;">
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Record</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ meta_correct }}-{{ meta_wrong }}</div>
                 </div>
-                {% endfor %}
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Accuracy</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ meta_accuracy }}%</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Total Games</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ total_games }}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Units (1u/bet)</div>
+                    <div style="font-size: 2em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %}">{{ "+" if units_won > 0 else "" }}{{ units_won|round(2) }}u</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">ROI</div>
+                    <div style="font-size: 2em; font-weight: bold; color: {% if roi >= 0 %}#fbbf24{% else %}#ef4444{% endif %}">{{ "+" if roi > 0 else "" }}{{ roi }}%</div>
+                </div>
             </div>
-            <!-- Sharp Consensus financials -->
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 15px;">
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">Units Won (Sharp Consensus, -110)</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}{{ units_won|round(2) }}u</div>
-                </div>
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">ROI</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if roi >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if roi > 0 else "" }}{{ roi }}%</div>
-                </div>
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">$100/unit P&amp;L</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}${{ (units_won * 100)|round(0) }}</div>
-                </div>
-            </div>
+            <div style="margin-top: 15px; font-size: 0.9em; opacity: 0.8;">💰 Assuming -110 odds (risk 1u to win 0.91u) | $100/unit = ${{ (units_won * 100)|round(2) }}</div>
         </div>
         {% for date in sorted_dates %}
         {% set date_data = daily_results[date] %}
         <div id="date-{{ date }}" class="date-section">
             <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">TODAY</span>{% endif %}</div>
             
-            {% set glicko2_correct = date_data.games|selectattr('glicko2_correct')|list|length %}
-            {% set trueskill_correct = date_data.games|selectattr('trueskill_correct')|list|length %}
             {% set elo_correct = date_data.games|selectattr('elo_correct')|list|length %}
             {% set xgb_correct = date_data.games|selectattr('xgb_correct')|list|length %}
+            {% set cat_correct = date_data.games|selectattr('cat_correct')|list|length %}
             {% set ens_correct = date_data.games|selectattr('ens_correct')|list|length %}
             {% set total_games = date_data.games|length %}
-            {% set best_count = [glicko2_correct, trueskill_correct, elo_correct, xgb_correct, ens_correct]|max %}
+            {% set best_count = [elo_correct, xgb_correct, cat_correct, ens_correct]|max %}
             
             <div class="daily-models">
-                <div class="daily-model-card {% if glicko2_correct == best_count %}best{% endif %}">
-                    <div class="model-label">⭐ Grinder2</div>
-                    <div class="model-accuracy">{{ (glicko2_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ glicko2_correct }}-{{ total_games - glicko2_correct }}</div>
-                </div>
-                <div class="daily-model-card {% if trueskill_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🎯 Takedown</div>
-                    <div class="model-accuracy">{{ (trueskill_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ trueskill_correct }}-{{ total_games - trueskill_correct }}</div>
-                </div>
                 <div class="daily-model-card {% if elo_correct == best_count %}best{% endif %}">
-                    <div class="model-label">📊 Edge</div>
+                    <div class="model-label">Elo</div>
                     <div class="model-accuracy">{{ (elo_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
                     <div class="model-record">{{ elo_correct }}-{{ total_games - elo_correct }}</div>
                 </div>
                 <div class="daily-model-card {% if xgb_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🤖 XSharp</div>
+                    <div class="model-label">XGBoost</div>
                     <div class="model-accuracy">{{ (xgb_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
                     <div class="model-record">{{ xgb_correct }}-{{ total_games - xgb_correct }}</div>
                 </div>
+                <div class="daily-model-card {% if cat_correct == best_count %}best{% endif %}">
+                    <div class="model-label">CatBoost</div>
+                    <div class="model-accuracy">{{ (cat_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
+                    <div class="model-record">{{ cat_correct }}-{{ total_games - cat_correct }}</div>
+                </div>
                 <div class="daily-model-card {% if ens_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🏆 Sharp Consensus</div>
+                    <div class="model-label">🏆 Meta</div>
                     <div class="model-accuracy">{{ (ens_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
                     <div class="model-record">{{ ens_correct }}-{{ total_games - ens_correct }}</div>
                 </div>
             </div>
             
             <table class="games-table">
-                <thead><tr><th>Matchup</th><th>Score</th><th>Grinder2</th><th>Takedown</th><th>Edge</th><th>XSharp</th><th>Sharp Consensus</th></tr></thead>
+                <thead><tr><th>Matchup</th><th>Score</th><th>Elo</th><th>XGBoost</th><th>CatBoost</th><th>Meta</th></tr></thead>
                 <tbody>
                     {% for game in date_data.games %}
                     <tr>
                         <td>{{ game.away }} @ <strong>{{ game.home }}</strong></td>
                         <td><strong>{{ game.away_score }}-{{ game.home_score }}</strong></td>
-                        <td class="{% if game.glicko2_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.glicko2_correct %}✅{% else %}❌{% endif %} {{ game.glicko2_prob }}%</td>
-                        <td class="{% if game.trueskill_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.trueskill_correct %}✅{% else %}❌{% endif %} {{ game.trueskill_prob }}%</td>
                         <td class="{% if game.elo_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.elo_correct %}✅{% else %}❌{% endif %} {{ game.elo_prob }}%</td>
                         <td class="{% if game.xgb_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.xgb_correct %}✅{% else %}❌{% endif %} {{ game.xgb_prob }}%</td>
+                        <td class="{% if game.cat_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.cat_correct %}✅{% else %}❌{% endif %} {{ game.cat_prob }}%</td>
                         <td class="{% if game.ens_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.ens_correct %}✅{% else %}❌{% endif %} {{ game.ens_prob }}%</td>
                     </tr>
                     {% endfor %}
@@ -2590,74 +2371,111 @@ NFL_WEEKLY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
-        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads & Totals Results</a>
+        <a href="/sport/{{ sport }}/results" class="tab active">🎯 Results</a>
+        <a href="/sport/{{ sport }}/spreads" class="tab">📈 Spreads & Totals</a>
     </div>
     
-    {% if weekly_results and overall_stats %}
-        {% set ens = overall_stats.ensemble %}
-        {% set units_won = (ens.correct * 0.91) - (ens.total - ens.correct) %}
-        {% set roi = (units_won / ens.total * 100)|round(1) if ens.total > 0 else 0 %}
-        <!-- Overall per-model performance -->
-        <div style="background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 15px; padding: 25px; margin-bottom: 25px;">
-            <h2 style="text-align: center; margin: 0 0 20px 0; font-size: 1.8em;">🏆 Overall Model Performance &mdash; {{ ens.total }} Games</h2>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
-                {% for m_label, m_key in [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Sharp Consensus','ensemble')] %}
-                {% set m = overall_stats[m_key] %}
-                <div style="background: rgba(255,255,255,0.08); border-radius: 10px; padding: 15px; text-align: center; {% if m_key == 'ensemble' %}border: 2px solid #fbbf24; grid-column: span 4;{% endif %}">
-                    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 4px;">{{ m_label }}</div>
-                    <div style="font-size: {% if m_key == 'ensemble' %}2.8em{% else %}1.9em{% endif %}; font-weight: bold; color: {% if m.accuracy >= 55 %}#10b981{% elif m.accuracy >= 50 %}#fbbf24{% else %}#ef4444{% endif %};">{{ m.accuracy }}%</div>
-                    <div style="font-size: 0.9em; opacity: 0.85;">{{ m.correct }}-{{ m.total - m.correct }}</div>
+    {% if weekly_results %}
+        {% set ns = namespace(total_correct=0, total_games=0) %}
+        {% for week_num in weekly_results|dictsort %}
+            {% set week_data = weekly_results[week_num[0]] %}
+            {% set ns.total_correct = ns.total_correct + week_data.ensemble.correct %}
+            {% set ns.total_games = ns.total_games + week_data.ensemble.total %}
+        {% endfor %}
+        {% set meta_accuracy = (ns.total_correct / ns.total_games * 100)|round(1) if ns.total_games > 0 else 0 %}
+        {% set meta_wrong = ns.total_games - ns.total_correct %}
+        {% set units_won = (ns.total_correct * 0.91) - meta_wrong %}
+        {% set roi = (units_won / ns.total_games * 100)|round(1) if ns.total_games > 0 else 0 %}
+        <div style="background: linear-gradient(135deg, #10b981, #059669); border-radius: 15px; padding: 25px; margin-bottom: 30px; text-align: center;">
+            <h2 style="margin: 0 0 20px 0; font-size: 1.8em;">🏆 Overall Performance</h2>
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px;">
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Record</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ ns.total_correct }}-{{ meta_wrong }}</div>
                 </div>
-                {% endfor %}
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Accuracy</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ meta_accuracy }}%</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Total Games</div>
+                    <div style="font-size: 2em; font-weight: bold;">{{ ns.total_games }}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">Units (1u/bet)</div>
+                    <div style="font-size: 2em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %}">{{ "+" if units_won > 0 else "" }}{{ units_won|round(2) }}u</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.9em; opacity: 0.9; margin-bottom: 5px;">ROI</div>
+                    <div style="font-size: 2em; font-weight: bold; color: {% if roi >= 0 %}#fbbf24{% else %}#ef4444{% endif %}">{{ "+" if roi > 0 else "" }}{{ roi }}%</div>
+                </div>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 15px;">
-                <div><div style="font-size: 0.85em; opacity: 0.8;">Units (Sharp Consensus, -110)</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}{{ units_won|round(2) }}u</div></div>
-                <div><div style="font-size: 0.85em; opacity: 0.8;">ROI</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if roi >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if roi > 0 else "" }}{{ roi }}%</div></div>
-                <div><div style="font-size: 0.85em; opacity: 0.8;">$100/unit P&amp;L</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}${{ (units_won * 100)|round(0) }}</div></div>
-            </div>
+            <div style="margin-top: 15px; font-size: 0.9em; opacity: 0.8;">💰 Assuming -110 odds (risk 1u to win 0.91u) | $100/unit = ${{ (units_won * 100)|round(0) }}</div>
         </div>
-        {% for week_num in weekly_results|dictsort(reverse=true) %}
+        {% for week_num in weekly_results|dictsort %}
         {% set week_data = weekly_results[week_num[0]] %}
-        {% set best_acc = [week_data.glicko2.accuracy, week_data.trueskill.accuracy, week_data.elo.accuracy, week_data.xgboost.accuracy, week_data.ensemble.accuracy]|max %}
         <div class="week-section">
             <div class="week-header">
                 <div class="week-title">🏈 Week {{ week_num[0] }}</div>
                 <div style="opacity: 0.8;">{{ week_data.games|length }} Games</div>
             </div>
+            
             <div class="week-models">
-                {% for wm_label, wm_key in [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Sharp Consensus','ensemble')] %}
-                {% set wm = week_data[wm_key] %}
-                <div class="week-model-card {% if wm.accuracy == best_acc %}best{% endif %}">
-                    <div class="model-label">{{ wm_label }}</div>
-                    <div class="model-perf">{{ wm.accuracy }}%</div>
-                    <div class="model-record">{{ wm.correct }}-{{ wm.total - wm.correct }}</div>
+                <div class="week-model-card {% if week_data.elo.accuracy >= week_data.xgboost.accuracy and week_data.elo.accuracy >= week_data.catboost.accuracy and week_data.elo.accuracy >= week_data.ensemble.accuracy %}best{% endif %}">
+                    <div class="model-label">Elo</div>
+                    <div class="model-perf">{{ week_data.elo.accuracy }}%</div>
+                    <div class="model-record">{{ week_data.elo.correct }}-{{ week_data.elo.total - week_data.elo.correct }}</div>
                 </div>
-                {% endfor %}
+                <div class="week-model-card {% if week_data.xgboost.accuracy >= week_data.elo.accuracy and week_data.xgboost.accuracy >= week_data.catboost.accuracy and week_data.xgboost.accuracy >= week_data.ensemble.accuracy %}best{% endif %}">
+                    <div class="model-label">XGBoost</div>
+                    <div class="model-perf">{{ week_data.xgboost.accuracy }}%</div>
+                    <div class="model-record">{{ week_data.xgboost.correct }}-{{ week_data.xgboost.total - week_data.xgboost.correct }}</div>
+                </div>
+                <div class="week-model-card {% if week_data.catboost.accuracy >= week_data.elo.accuracy and week_data.catboost.accuracy >= week_data.xgboost.accuracy and week_data.catboost.accuracy >= week_data.ensemble.accuracy %}best{% endif %}">
+                    <div class="model-label">CatBoost</div>
+                    <div class="model-perf">{{ week_data.catboost.accuracy }}%</div>
+                    <div class="model-record">{{ week_data.catboost.correct }}-{{ week_data.catboost.total - week_data.catboost.correct }}</div>
+                </div>
+                <div class="week-model-card {% if week_data.ensemble.accuracy >= week_data.elo.accuracy and week_data.ensemble.accuracy >= week_data.xgboost.accuracy and week_data.ensemble.accuracy >= week_data.catboost.accuracy %}best{% endif %}">
+                    <div class="model-label">🏆 Ensemble</div>
+                    <div class="model-perf">{{ week_data.ensemble.accuracy }}%</div>
+                    <div class="model-record">{{ week_data.ensemble.correct }}-{{ week_data.ensemble.total - week_data.ensemble.correct }}</div>
+                </div>
             </div>
+            
             <table class="games-table">
-                <thead><tr>
-                    <th>Date</th><th>Matchup</th><th>Score</th>
-                    <th>Grinder2</th><th>Takedown</th><th>Edge</th>
-                    <th>XSharp</th><th>Sharp Consensus</th>
-                </tr></thead>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Matchup</th>
+                        <th>Score</th>
+                        <th>Elo %</th>
+                        <th>Elo ✓</th>
+                        <th>XGB %</th>
+                        <th>XGB ✓</th>
+                        <th>Cat %</th>
+                        <th>Cat ✓</th>
+                        <th>Ens %</th>
+                        <th>Ens ✓</th>
+                    </tr>
+                </thead>
                 <tbody>
                     {% for game in week_data.games %}
                     <tr>
                         <td>{{ game.date }}</td>
                         <td>
-                            <span class="{% if game.away_score > game.home_score %}winner{% else %}loser{% endif %}">{{ game.away }}</span> @
+                            <span class="{% if game.away_score > game.home_score %}winner{% else %}loser{% endif %}">{{ game.away }}</span> @ 
                             <span class="{% if game.home_score > game.away_score %}winner{% else %}loser{% endif %}">{{ game.home }}</span>
                         </td>
                         <td class="score">{{ game.away_score }} - {{ game.home_score }}</td>
-                        <td class="{% if game.glicko2_correct %}prob-correct{% elif game.glicko2_correct == false %}prob-wrong{% endif %}">{% if game.glicko2_correct is not none %}{% if game.glicko2_correct %}✅{% else %}❌{% endif %} {{ game.glicko2_prob }}%{% else %}N/A{% endif %}</td>
-                        <td class="{% if game.trueskill_correct %}prob-correct{% elif game.trueskill_correct == false %}prob-wrong{% endif %}">{% if game.trueskill_correct is not none %}{% if game.trueskill_correct %}✅{% else %}❌{% endif %} {{ game.trueskill_prob }}%{% else %}N/A{% endif %}</td>
-                        <td class="{% if game.elo_correct %}prob-correct{% elif game.elo_correct == false %}prob-wrong{% endif %}">{% if game.elo_correct is not none %}{% if game.elo_correct %}✅{% else %}❌{% endif %} {{ game.elo_prob }}%{% else %}N/A{% endif %}</td>
-                        <td class="{% if game.xgb_correct %}prob-correct{% elif game.xgb_correct == false %}prob-wrong{% endif %}">{% if game.xgb_correct is not none %}{% if game.xgb_correct %}✅{% else %}❌{% endif %} {{ game.xgb_prob }}%{% else %}N/A{% endif %}</td>
-                        <td class="{% if game.ens_correct %}prob-correct{% elif game.ens_correct == false %}prob-wrong{% endif %}">{% if game.ens_correct is not none %}{% if game.ens_correct %}✅{% else %}❌{% endif %} {{ game.ens_prob }}%{% else %}N/A{% endif %}</td>
+                        <td class="{% if game.elo_correct %}prob-correct{% elif game.elo_correct == False %}prob-wrong{% endif %}">{{ game.elo_prob }}%</td>
+                        <td style="text-align: center; font-size: 1.2em;">{% if game.elo_correct %}<span style="color: #10b981;">✓</span>{% elif game.elo_correct == False %}<span style="color: #ef4444;">✗</span>{% endif %}</td>
+                        <td class="{% if game.xgb_correct %}prob-correct{% elif game.xgb_correct == False %}prob-wrong{% endif %}">{{ game.xgb_prob }}%</td>
+                        <td style="text-align: center; font-size: 1.2em;">{% if game.xgb_correct %}<span style="color: #10b981;">✓</span>{% elif game.xgb_correct == False %}<span style="color: #ef4444;">✗</span>{% endif %}</td>
+                        <td class="{% if game.cat_correct %}prob-correct{% elif game.cat_correct == False %}prob-wrong{% endif %}">{{ game.cat_prob }}%</td>
+                        <td style="text-align: center; font-size: 1.2em;">{% if game.cat_correct %}<span style="color: #10b981;">✓</span>{% elif game.cat_correct == False %}<span style="color: #ef4444;">✗</span>{% endif %}</td>
+                        <td class="{% if game.ens_correct %}prob-correct{% elif game.ens_correct == False %}prob-wrong{% endif %}">{{ game.ens_prob }}%</td>
+                        <td style="text-align: center; font-size: 1.2em;">{% if game.ens_correct %}<span style="color: #10b981;">✓</span>{% elif game.ens_correct == False %}<span style="color: #ef4444;">✗</span>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -2691,7 +2509,6 @@ def get_landing_accuracy(sport):
 @app.route('/')
 def landing_page():
     """Landing page with sport selector (NO unified dashboard)"""
-    log_site_visit('/')
     nhl_accuracy = get_landing_accuracy('NHL')
     nfl_accuracy = get_landing_accuracy('NFL')
     nba_accuracy = get_landing_accuracy('NBA')
@@ -2785,10 +2602,10 @@ def landing_page():
                 <div class="sport-name">NHL</div>
                 <div class="sport-status">Live Now</div>
             </a>
-            <a href="/sport/NFL/predictions" class="sport-card">
+            <a href="/sport/NFL/predictions" class="sport-card active">
                 <div class="sport-icon">🏈</div>
                 <div class="sport-name">NFL</div>
-                <div class="sport-status">Offseason</div>
+                <div class="sport-status">Live Now</div>
             </a>
             <a href="/sport/NBA/predictions" class="sport-card active">
                 <div class="sport-icon">🏀</div>
@@ -2800,10 +2617,10 @@ def landing_page():
                 <div class="sport-name">NCAAB</div>
                 <div class="sport-status">Live Now</div>
             </a>
-            <a href="/sport/NCAAF/predictions" class="sport-card">
+            <a href="/sport/NCAAF/predictions" class="sport-card active">
                 <div class="sport-icon">🏟️</div>
                 <div class="sport-name">NCAAF</div>
-                <div class="sport-status">Offseason</div>
+                <div class="sport-status">Live Now</div>
             </a>
             <a href="/sport/MLB/predictions" class="sport-card">
                 <div class="sport-icon">⚾</div>
@@ -2834,7 +2651,6 @@ def sport_home(sport):
 @app.route('/sport/<sport>/predictions')
 def sport_predictions(sport):
     """Show upcoming predictions for a sport"""
-    log_site_visit(f'/sport/{sport}/predictions')
     if sport not in SPORTS:
         return "Sport not found", 404
     
@@ -2890,14 +2706,12 @@ def sport_results(sport):
     if sport == 'NFL':
         update_nfl_scores()
         weekly_results = calculate_nfl_weekly_performance()
-        overall_stats = compute_overall_stats_from_weekly(weekly_results) if weekly_results else {}
         return render_template_string(
             NFL_WEEKLY_RESULTS_TEMPLATE,
             page=sport,
             sport=sport,
             sport_info=SPORTS[sport],
-            weekly_results=weekly_results,
-            overall_stats=overall_stats
+            weekly_results=weekly_results
         )
     
     if sport == 'NHL':
@@ -2922,7 +2736,6 @@ def sport_results(sport):
             yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
             sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
             
-            overall_stats = compute_overall_stats_from_daily(daily_results)
             return render_template_string(
                 DAILY_RESULTS_TEMPLATE,
                 page=sport,
@@ -2930,8 +2743,7 @@ def sport_results(sport):
                 sport_info=SPORTS[sport],
                 daily_results=daily_results,
                 sorted_dates=sorted_dates,
-                today_date=today_date,
-                overall_stats=overall_stats
+                today_date=today_date
             )
         except Exception as e:
             logger.error(f"Error processing NHL results: {e}")
@@ -2952,13 +2764,14 @@ def sport_results(sport):
         for week, week_data in weekly_results.items():
             for game in week_data['games']:
                 date_key = game['date']
-                daily_results[date_key]['games'].append(game)
+                # Only add games with actual scores (not 0-0)
+                if game.get('home_score', 0) > 0 or game.get('away_score', 0) > 0:
+                    daily_results[date_key]['games'].append(game)
         
-        # Filter to only show dates up to yesterday
+        # Filter to only show dates up to yesterday with games, then sort newest first
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
+        sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday and daily_results[d]['games']], reverse=True)
         
-        overall_stats = compute_overall_stats_from_daily(daily_results)
         return render_template_string(
             DAILY_RESULTS_TEMPLATE,
             page=sport,
@@ -2966,81 +2779,108 @@ def sport_results(sport):
             sport_info=SPORTS[sport],
             daily_results=daily_results,
             sorted_dates=sorted_dates,
-            today_date=today_date,
-            overall_stats=overall_stats
+            today_date=today_date
         )
-
+    
     # Handle NCAAB, NCAAF, MLB, WNBA using generic ESPN-based results
     if sport in ['NCAAB', 'NCAAF', 'MLB', 'WNBA']:
         # Update scores first
         update_espn_scores(sport)
         
-        # Get completed games from database
+        # Get ALL completed games from database for Elo training and results
         conn = get_db_connection()
-        completed_games = conn.execute('''
+        all_completed_games = conn.execute('''
             SELECT g.*, p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
             FROM games g
             LEFT JOIN predictions p ON g.game_id = p.game_id AND p.sport = ?
             WHERE g.sport = ? AND g.home_score IS NOT NULL
-            ORDER BY g.game_date DESC
-            LIMIT 100
+            ORDER BY g.game_date ASC
         ''', (sport, sport)).fetchall()
         conn.close()
         
-        if not completed_games:
+        if not all_completed_games:
             # Show message for offseason sports
             offseason_msg = "" 
             if sport in ['MLB', 'WNBA']:
                 offseason_msg = f"<p>The {SPORTS[sport]['name']} season has ended. Results from the 2025 season will be available next year.</p>"
             return f"<h1>No {SPORTS[sport]['name']} results data available yet.</h1>{offseason_msg}<p><a href='/'>← Back to Home</a></p>"
         
-        # Process into daily results format
+        # Train Elo system
+        elo_ratings = {}
+        K_FACTORS = {'NCAAF': 30, 'NCAAB': 25, 'MLB': 14, 'WNBA': 18}
+        k_factor = K_FACTORS.get(sport, 20)
+        
+        def get_elo(team):
+            return elo_ratings.get(team, 1500)
+        
+        def expected_score(rating_a, rating_b):
+            return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
+            
+        # Process games for results
         from collections import defaultdict
         daily_results = defaultdict(lambda: {'games': []})
         today_date = datetime.now().strftime('%Y-%m-%d')
         
-        for game in completed_games:
-            home_won = game['home_score'] > game['away_score']
+        # We need to process in date order for Elo, but display in reverse date order
+        # So we process all, then we'll sort the keys for display
+        
+        for row in all_completed_games:
+            game = dict(row)
             home_team = game['home_team_id']
             away_team = game['away_team_id']
-            game_date  = game['game_date'][:10] if game['game_date'] else None
-
-            # Stored DB probs
-            elo_prob  = float(game['elo_home_prob']       or 0.5)
-            xgb_prob  = float(game['xgboost_home_prob']   or game['elo_home_prob'] or 0.5)
-            ens_prob  = float(game['win_probability']      or game['elo_home_prob'] or 0.5)
-
-            # V2 model predictions (Glicko-2, TrueSkill)
-            v2 = get_v2_prediction(sport, home_team, away_team, game_date)
-            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-            trueskill_prob = v2.get('trueskill_prob') if v2 else None
-            if v2:
-                xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
-
+            home_score = game['home_score']
+            away_score = game['away_score']
+            
+            # Calculate Elo before update (prediction)
+            home_rating = get_elo(home_team)
+            away_rating = get_elo(away_team)
+            elo_prob_live = expected_score(home_rating, away_rating)
+            
+            # Update Elo
+            actual_home = 1 if home_score > away_score else 0
+            elo_ratings[home_team] = home_rating + k_factor * (actual_home - elo_prob_live)
+            elo_ratings[away_team] = away_rating + k_factor * ((1-actual_home) - (1-elo_prob_live))
+            
+            # Use stored prediction if available, otherwise use calculated Elo
+            # For XGB/Cat/Meta, if missing, we'll fallback to Elo or 50/50 for now
+            # since we can't easily run the full ML pipeline here without more data
+            
+            elo_prob = float(game['elo_home_prob']) if game['elo_home_prob'] is not None else elo_prob_live
+            xgb_prob = float(game['xgboost_home_prob']) if game['xgboost_home_prob'] is not None else elo_prob
+            cat_prob = float(game['logistic_home_prob']) if game['logistic_home_prob'] is not None else elo_prob
+            meta_prob = float(game['win_probability']) if game['win_probability'] is not None else elo_prob
+            
+            home_won = home_score > away_score
+            predicted_home_win = meta_prob > 0.5
+            correct = predicted_home_win == home_won
+            
             game_info = {
-                'date':             game_date or 'Unknown',
-                'home':             home_team,
-                'away':             away_team,
-                'home_score':       game['home_score'],
-                'away_score':       game['away_score'],
-                'home_win':         home_won,
-                'glicko2_prob':     round(glicko2_prob   * 100, 1) if glicko2_prob   is not None else None,
-                'trueskill_prob':   round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
-                'elo_prob':         round(elo_prob  * 100, 1),
-                'xgb_prob':         round(xgb_prob  * 100, 1),
-                'ens_prob':         round(ens_prob  * 100, 1),
-                'glicko2_correct':   (glicko2_prob   > 0.5) == home_won if glicko2_prob   is not None else None,
-                'trueskill_correct': (trueskill_prob > 0.5) == home_won if trueskill_prob is not None else None,
-                'elo_correct':       (elo_prob  > 0.5) == home_won,
-                'xgb_correct':       (xgb_prob  > 0.5) == home_won,
-                'ens_correct':       (ens_prob  > 0.5) == home_won,
+                'date': game['game_date'][:10] if game['game_date'] else 'Unknown',
+                'home': home_team,  # FIX: map to 'home' for template
+                'away': away_team,  # FIX: map to 'away' for template
+                'home_score': home_score,
+                'away_score': away_score,
+                'home_win': home_won,
+                'correct': correct,
+                'elo_correct': (elo_prob > 0.5) == home_won,
+                'xgb_correct': (xgb_prob > 0.5) == home_won,
+                'cat_correct': (cat_prob > 0.5) == home_won,
+                'ens_correct': (meta_prob > 0.5) == home_won,
+                'elo_prob': round(elo_prob * 100, 1),
+                'xgb_prob': round(xgb_prob * 100, 1),
+                'cat_prob': round(cat_prob * 100, 1),
+                'ens_prob': round(meta_prob * 100, 1),
+                'meta_home': round(meta_prob * 100, 1),
+                'elo_home': round(elo_prob * 100, 1),
+                'xgb_home': round(xgb_prob * 100, 1),
+                'cat_home': round(cat_prob * 100, 1)
             }
+            
             daily_results[game_info['date']]['games'].append(game_info)
-
-        sorted_dates = sorted(daily_results.keys(), reverse=True)[:30]
-        overall_stats = compute_overall_stats_from_daily(daily_results)
-
+        
+        # Sort dates reverse for display (newest first)
+        sorted_dates = sorted(daily_results.keys(), reverse=True)[:30]  # Last 30 days
+        
         return render_template_string(
             DAILY_RESULTS_TEMPLATE,
             page=sport,
@@ -3048,8 +2888,7 @@ def sport_results(sport):
             sport_info=SPORTS[sport],
             daily_results=daily_results,
             sorted_dates=sorted_dates,
-            today_date=today_date,
-            overall_stats=overall_stats
+            today_date=today_date
         )
     
     performance = calculate_model_performance(sport)
@@ -3095,7 +2934,13 @@ def get_upcoming_api_games_for_spreads(sport, days_ahead=7):
             date_str = check_date.strftime('%Y%m%d')
             
             try:
-                url = f"{ESPN_ENDPOINTS[sport]}?dates={date_str}"
+                params = f"dates={date_str}"
+                if sport == 'NCAAB':
+                    params += "&groups=50&limit=1000"
+                elif sport == 'NCAAF':
+                    params += "&groups=80&limit=1000"
+                
+                url = f"{ESPN_ENDPOINTS[sport]}?{params}"
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
                 data = response.json()
@@ -3184,47 +3029,93 @@ def get_upcoming_api_games_for_spreads(sport, days_ahead=7):
 
 @app.route('/sport/<sport>/spreads')
 def sport_spread_total_picks(sport):
-    """Redirect to predictions page (spreads now shown inline on predictions card)"""
+    """Show spread and total picks based on predicted scores"""
     if sport not in SPORTS:
         return "Sport not found", 404
-    return redirect(url_for('sport_predictions', sport=sport))
-
-
-def _sport_spread_total_picks_old(sport):
-    """Old spread/total picks implementation (kept for reference)"""
+    
     from score_predictor import ScorePredictor
     predictor = ScorePredictor()
     
     # Get upcoming games from API
     api_games = get_upcoming_api_games_for_spreads(sport, days_ahead=7)
     
-    # If no upcoming games (off-season), show historical spread/total picks from database
-    is_offseason = len(api_games) == 0
-    
-    if is_offseason:
-        # Fetch recent historical games from database with predictions
-        conn = get_db_connection()
-        historical_games = conn.execute('''
-            SELECT g.game_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score
-            FROM games g
-            WHERE g.sport = ?
-              AND g.home_score IS NOT NULL
-              AND g.status = 'final'
-            ORDER BY g.game_date DESC
-            LIMIT 50
-        ''', (sport,)).fetchall()
-        conn.close()
+    # NEW: Enrich with Vegas odds from The Rundown
+    try:
+        rundown = RundownAPI()
         
-        # Convert to format expected by predictor
-        api_games = []
-        for game in historical_games:
-            api_games.append({
-                'home_team_name': game['home_team_id'],
-                'away_team_name': game['away_team_id'],
-                'game_date': game['game_date'][:10] if game['game_date'] else 'Unknown',
-                'actual_home_score': game['home_score'],
-                'actual_away_score': game['away_score'],
-            })
+        # Get unique dates
+        dates = set(g['game_date'] for g in api_games)
+        
+        # Fetch odds for each date
+        rundown_odds = []
+        for d in dates:
+            odds = rundown.get_odds(sport, d)
+            if odds:
+                rundown_odds.extend(odds)
+                
+        # Create lookup map (date + team_slug -> odds)
+        # We'll map both home and away team to the game odds
+        odds_map = {}
+        for game in rundown_odds:
+            # Check if game has valid date (Rundown dates might be ISO strings with time)
+            # We just need the YYYY-MM-DD part
+            if 'T' in game['game_date']:
+                r_date = game['game_date'].split('T')[0]
+            else:
+                r_date = game['game_date']
+            
+            def simple_slug(name):
+                if not name: return ""
+                # Remove common mascot/city distinctions to improve matching
+                # But kept simple for now: lowercase, no spaces/special chars
+                return name.lower().replace(' ', '').replace('-', '').replace('.', '').replace("'", "")
+                
+            h_slug = simple_slug(game['home_team'])
+            a_slug = simple_slug(game['away_team'])
+            
+            odds_map[(r_date, h_slug)] = game
+            odds_map[(r_date, a_slug)] = game
+            
+        # Inject into api_games
+        for game in api_games:
+            home_name = game.get('home_team_name')
+            away_name = game.get('away_team_name')
+            date = game.get('game_date')
+            
+            if not home_name or not away_name:
+                continue
+            
+            def simple_slug_espn(name):
+                if not name: return ""
+                return name.lower().replace(' ', '').replace('-', '').replace('.', '').replace("'", "")
+                
+            h_slug = simple_slug_espn(home_name)
+            a_slug = simple_slug_espn(away_name)
+            
+            # Try home team match
+            odds = odds_map.get((date, h_slug))
+            if not odds:
+                # Try away team match
+                odds = odds_map.get((date, a_slug))
+            
+            # If still no match, try looser matching (contains)
+            if not odds:
+                for k, v in odds_map.items():
+                    k_date, k_slug = k
+                    if k_date == date:
+                        if k_slug in h_slug or h_slug in k_slug or k_slug in a_slug or a_slug in k_slug:
+                            odds = v
+                            break
+                
+            if odds:
+                game['vegas_spread'] = odds.get('vegas_spread')
+                game['vegas_total'] = odds.get('vegas_total')
+                logger.info(f"Matched odds for {home_name} vs {away_name}: Spread {game.get('vegas_spread')}, Total {game.get('vegas_total')}")
+            else:
+                logger.debug(f"No odds match for {home_name} vs {away_name} on {date}")
+                
+    except Exception as e:
+        logger.error(f"Error enriching with Rundown odds: {e}")
     
     # Generate picks from API games using the new method
     picks = predictor.generate_spread_total_picks_from_api_games(sport, api_games)
@@ -3262,8 +3153,7 @@ def _sport_spread_total_picks_old(sport):
     for pick in picks:
         grouped_picks[pick['game_date']].append(pick)
     
-    # Sort dates - most recent first for historical data, chronological for upcoming
-    sorted_dates = sorted(grouped_picks.keys(), reverse=is_offseason)
+    sorted_dates = sorted(grouped_picks.keys())
     
     # Simple template for spread/total picks
     template = """
@@ -3305,22 +3195,14 @@ def _sport_spread_total_picks_old(sport):
         <div class="header">
             <h1>{{ sport_info.icon }} {{ sport_info.name }} - Spread & Total Picks</h1>
             <p>Based on Statistical Model (Team Offensive/Defensive Efficiency)</p>
-            <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px;">Note: Vegas lines not available via free APIs</p>
+            <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px;">Lines provided by The Rundown API</p>
         </div>
         
         <div class="tabs">
             <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
-            <a href="/sport/{{ sport }}/results" class="tab">🎯 Win/Loss Results</a>
+            <a href="/sport/{{ sport }}/results" class="tab">🎯 Results</a>
             <a href="/sport/{{ sport }}/spreads" class="tab active">📈 Spreads & Totals</a>
-            <a href="/sport/{{ sport }}/spreads/results" class="tab">📊 Spread/Total Results</a>
         </div>
-        
-        {% if is_offseason %}
-        <div style="background: rgba(251, 191, 36, 0.2); border: 2px solid #fbbf24; border-radius: 12px; padding: 20px; margin-bottom: 30px; text-align: center;">
-            <p style="font-size: 1.2em; font-weight: 600; color: #fbbf24;">📅 {{ sport_info.name }} is currently in the off-season</p>
-            <p style="opacity: 0.8; margin-top: 10px;">Showing historical spread & total predictions from the most recent games</p>
-        </div>
-        {% endif %}
         
         {% if grouped_picks %}
             {% for date in sorted_dates %}
@@ -3381,7 +3263,7 @@ def _sport_spread_total_picks_old(sport):
                             <span class=\"prediction-value\" style=\"font-size: 0.9em;\">{{ pick.away_team[:3] }}: {{ pick.weighted_total_data.teamB_avg }} | {{ pick.home_team[:3] }}: {{ pick.weighted_total_data.teamA_avg }}</span>
                         </div>
                         <div class=\"prediction-row\">
-                            <span class=\"prediction-label\">Over Trend</span>
+                            <span class=\"prediction-label\" title=\"Based on how many of the last 3 games for EACH team went over the Projected Total (combined max 6)\" style=\"cursor: help; border-bottom: 1px dotted #fbbf24;\">Over Trend ℹ️</span>
                             <span class=\"prediction-value\" style=\"font-size: 0.9em;\">{{ pick.weighted_total_data.combined_over_count }}/6</span>
                         </div>
                         <div class=\"prediction-row\">
@@ -3412,367 +3294,210 @@ def _sport_spread_total_picks_old(sport):
         sport_info=SPORTS[sport],
         grouped_picks=grouped_picks,
         sorted_dates=sorted_dates,
-        today_date=today_date,
-        is_offseason=is_offseason
+        today_date=today_date
     )
 
-SPREAD_TOTAL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
-    '{% block extra_styles %}{% endblock %}',
-    """
-    .page-title { font-size: 2.5em; margin-bottom: 30px; text-align: center; }
-    .section-tabs { display: flex; gap: 10px; margin-bottom: 30px; justify-content: center; }
-    .tab { padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.3s; background: rgba(255, 255, 255, 0.1); color: white; }
-    .tab.active { background: linear-gradient(135deg, #10b981, #059669); }
-    .filter-toggles { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
-    .filter-btn { padding: 10px 20px; border-radius: 8px; border: 2px solid rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.1); color: white; font-weight: 600; cursor: pointer; transition: all 0.3s; }
-    .filter-btn.active { background: linear-gradient(135deg, #10b981, #059669); border-color: #10b981; }
-    .date-section { background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 25px; margin-bottom: 30px; overflow-x: auto; }
-    .date-header { color: #fbbf24; font-size: 1.5em; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
-    .games-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.85em; min-width: 900px; }
-    .games-table th { background: rgba(255, 255, 255, 0.15); padding: 10px 8px; font-weight: bold; color: #fbbf24; border-bottom: 2px solid rgba(255, 255, 255, 0.3); white-space: nowrap; }
-    .games-table th.align-left { text-align: left; }
-    .games-table th.align-right { text-align: right; }
-    .games-table th.align-center { text-align: center; }
-    .games-table td { padding: 10px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap; }
-    .games-table td.align-left { text-align: left; }
-    .games-table td.align-right { text-align: right; }
-    .games-table td.align-center { text-align: center; }
-    .games-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
-    .games-table tbody tr:hover { background: rgba(255, 255, 255, 0.08); }
-    .games-table tr.hidden { display: none; }
-    .result-correct { color: #10b981; font-weight: bold; }
-    .result-incorrect { color: #ef4444; font-weight: bold; }
-    .result-na { color: #9ca3af; opacity: 0.6; }
-    .over { color: #10b981; font-weight: bold; }
-    .under { color: #ef4444; font-weight: bold; }
-    .overall-stats { background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 15px; padding: 30px; margin-bottom: 30px; }
-    .overall-stats h2 { margin: 0 0 20px 0; font-size: 1.6em; text-align: center; color: #10b981; }
-    .model-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-    .model-col { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 20px; }
-    .model-col h3 { text-align: center; margin-bottom: 15px; font-size: 1.1em; }
-    .model-col.naive h3 { color: #a78bfa; }
-    .model-col.xgb h3 { color: #fbbf24; }
-    .model-stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.9em; }
-    .stat-key { opacity: 0.8; }
-    .stat-val { font-weight: 700; }
-    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
-    .stat-card { background: rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 18px; text-align: center; }
-    .stat-card.primary { background: rgba(16, 185, 129, 0.15); border: 2px solid #10b981; }
-    .stat-card-label { font-size: 0.8em; opacity: 0.9; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat-card-value { font-size: 1.9em; font-weight: bold; margin-bottom: 4px; }
-    .stat-card-detail { font-size: 0.85em; opacity: 0.85; }
-    .daily-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-    .daily-stat-card { background: rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; text-align: center; }
-    .stat-label { font-size: 0.85em; opacity: 0.8; margin-bottom: 5px; }
-    .stat-value { font-size: 1.5em; font-weight: bold; color: #fbbf24; }
-    .stat-record { font-size: 0.85em; opacity: 0.9; }
-    .edge-high { color: #f87171; font-weight: 700; }
-    .edge-low { color: #9ca3af; }
-    """
-).replace('{% block content %}{% endblock %}', """
-    <div style="margin-bottom: 20px;">
-        <a href="/" style="display: inline-block; padding: 10px 20px; background: rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; color: white; font-weight: 600;">← Back to Home</a>
-    </div>
-    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - Spread & Total Results</h1>
-    <div class="section-tabs">
-        <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
-        <a href="/sport/{{ sport }}/results" class="tab">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab active">📈 Spreads & Totals Results</a>
-    </div>
-    {% if daily_results %}
-        <div class="overall-stats">
-            <h2>🏆 Overall Performance — {{ total_games }} Games</h2>
-            <div class="model-compare">
-                <div class="model-col naive">
-                <h3>📐 Our Formula (Edge + XSharp)</h3>
-                    <div class="model-stat-row"><span class="stat-key">Spread Accuracy</span><span class="stat-val">{{ "%.1f"|format(naive_spread_correct_pct) }}%</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Record</span><span class="stat-val">{{ naive_spread_correct }}-{{ total_games - naive_spread_correct }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Spread Error</span><span class="stat-val">{{ "%.1f"|format(naive_avg_spread_err) }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Total Error</span><span class="stat-val">{{ "%.1f"|format(naive_avg_total_err) }}</span></div>
-                </div>
-                <div class="model-col xgb">
-                    <h3>🤖 XSharp Model</h3>
-                    {% if has_xgb %}
-                    <div class="model-stat-row"><span class="stat-key">Spread Accuracy</span><span class="stat-val">{{ "%.1f"|format(xgb_spread_correct_pct) }}%</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Record</span><span class="stat-val">{{ xgb_spread_correct }}-{{ total_games - xgb_spread_correct }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Spread Error</span><span class="stat-val">{{ "%.1f"|format(xgb_avg_spread_err) }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Total Error</span><span class="stat-val">{{ "%.1f"|format(xgb_avg_total_err) }}</span></div>
-                    {% else %}
-                    <div style="text-align: center; padding: 20px; opacity: 0.6;">Model not yet trained (need 20+ games)</div>
-                    {% endif %}
-                </div>
-            </div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-card-label">Total Games</div>
-                    <div class="stat-card-value">{{ total_games }}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-card-label">Over / Under</div>
-                    <div class="stat-card-value">{{ total_over }}-{{ total_under }}</div>
-                    <div class="stat-card-detail">{{ "%.1f"|format(over_pct) }}% OVER</div>
-                </div>
-                <div class="stat-card primary">
-                    <div class="stat-card-label">Best Model</div>
-                    <div class="stat-card-value">{% if has_xgb and xgb_spread_correct_pct >= naive_spread_correct_pct %}🤖 XSharp{% else %}📐 Our Formula{% endif %}</div>
-                    <div class="stat-card-detail">{% if has_xgb and xgb_spread_correct_pct >= naive_spread_correct_pct %}{{ "%.1f"|format(xgb_spread_correct_pct) }}%{% else %}{{ "%.1f"|format(naive_spread_correct_pct) }}%{% endif %}</div>
-                </div>
-            </div>
-        </div>
+@app.route('/admin/fixer')
+def prediction_fixer():
+    """Web-based prediction fixer - diagnose and fix missing predictions"""
+    return render_template_string(PREDICTION_FIXER_TEMPLATE)
 
-        <div class="filter-toggles">
-            <button class="filter-btn active" onclick="filterResults('all', this)">All Games</button>
-            <button class="filter-btn" onclick="filterResults('our', this)">✅ Our Formula ✓</button>
-            <button class="filter-btn" onclick="filterResults('xgb', this)">🤖 XSharp ✓</button>
-            <button class="filter-btn" onclick="filterResults('both', this)">🏆 Both Correct</button>
-            <button class="filter-btn" onclick="filterResults('over', this)">⬆️ OVER Games</button>
-            <button class="filter-btn" onclick="filterResults('under', this)">⬇️ UNDER Games</button>
-        </div>
-
-        {% for date in sorted_dates %}
-        {% set date_data = daily_results[date] %}
-        <div id="date-{{ date }}" class="date-section">
-            <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">TODAY</span>{% endif %}</div>
-
-            <div class="daily-stats">
-                <div class="daily-stat-card">
-                    <div class="stat-label">Our Formula (Spread Winner %)</div>
-                    <div class="stat-value">{{ (date_data.naive_spread_correct / date_data.total_games * 100)|round(1) if date_data.total_games > 0 else 0 }}%</div>
-                    <div class="stat-record">{{ date_data.naive_spread_correct }}-{{ date_data.total_games - date_data.naive_spread_correct }} correct</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">XSharp (Spread Winner %)</div>
-                    <div class="stat-value">{{ (date_data.xgb_spread_correct / date_data.total_games * 100)|round(1) if date_data.total_games > 0 else '—' }}%</div>
-                    <div class="stat-record">{{ date_data.xgb_spread_correct }}-{{ date_data.total_games - date_data.xgb_spread_correct }} correct</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">Over / Under</div>
-                    <div class="stat-value">{{ date_data.over_count }}-{{ date_data.under_count }}</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">Games</div>
-                    <div class="stat-value">{{ date_data.total_games }}</div>
-                </div>
-            </div>
-
-            <table class="games-table">
-                <thead>
-                    <tr>
-                        <th class="align-left">Matchup</th>
-                        <th class="align-center">Score</th>
-                        <th class="align-right" style="color: #a78bfa;">Our Sprd</th>
-                        <th class="align-right" style="color: #fbbf24;">XSharp Sprd</th>
-                        <th class="align-right">Actual Margin</th>
-                        <th class="align-center">Our ✓</th>
-                        <th class="align-center">XSharp ✓</th>
-                        <th class="align-right" style="color: #a78bfa;">Our Total</th>
-                        <th class="align-center">O/U</th>
-                        <th class="align-right" style="color: #fbbf24;">XSharp Total</th>
-                        <th class="align-center">XSharp O/U</th>
-                        <th class="align-right">Actual Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for game in date_data.games %}
-                    <tr data-naive-correct="{{ 'true' if game.naive_correct else 'false' }}"
-                        data-xgb-correct="{{ 'true' if game.xgb_correct else 'false' }}"
-                        data-over-result="{{ 'true' if game.over_result else 'false' }}">
-                        <td class="align-left"><strong>{{ game.matchup }}</strong></td>
-                        <td class="align-center" style="font-weight: 700;">{{ game.score }}</td>
-                        <td class="align-right" style="color: #a78bfa;">{{ "%+.1f"|format(game.naive_spread) }}</td>
-                        <td class="align-right" style="color: #fbbf24;">{% if game.xgb_spread is not none %}{{ "%+.1f"|format(game.xgb_spread) }}{% else %}—{% endif %}</td>
-                        <td class="align-right">{{ "%+.1f"|format(game.actual_spread) }}</td>
-                        <td class="align-center {% if game.naive_correct %}result-correct{% else %}result-incorrect{% endif %}" style="font-size: 1.2em;">{% if game.naive_correct %}✅{% else %}❌{% endif %}</td>
-                        <td class="align-center {% if game.xgb_correct is none %}result-na{% elif game.xgb_correct %}result-correct{% else %}result-incorrect{% endif %}" style="font-size: 1.2em;">{% if game.xgb_correct is none %}—{% elif game.xgb_correct %}✅{% else %}❌{% endif %}</td>
-                        <td class="align-right" style="color: #a78bfa;">{{ "%.1f"|format(game.naive_total) }}</td>
-                        <td class="align-center {% if game.over_result %}over{% else %}under{% endif %}" style="font-weight: 600;">{% if game.over_result %}⬆️ OVER{% else %}⬇️ UNDER{% endif %}</td>
-                        <td class="align-right" style="color: #fbbf24;">{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% else %}—{% endif %}</td>
-                        <td class="align-center {% if game.xgb_over_result is none %}result-na{% elif game.xgb_over_result %}over{% else %}under{% endif %}" style="font-weight: 600;">{% if game.xgb_over_result is none %}—{% elif game.xgb_over_result %}⬆️ OVER{% else %}⬇️ UNDER{% endif %}</td>
-                        <td class="align-right">{{ game.actual_total }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endfor %}
-    {% else %}
-    <div style="text-align: center; padding: 60px; opacity: 0.7;">No spread/total results data available yet.</div>
-    {% endif %}
-
-    <script>
-    function filterResults(type, btn) {
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        document.querySelectorAll('.games-table tbody tr').forEach(row => {
-            const naiveOk = row.getAttribute('data-naive-correct') === 'true';
-            const xgbOk  = row.getAttribute('data-xgb-correct')  === 'true';
-            const isOver = row.getAttribute('data-over-result')   === 'true';
-            let hidden = false;
-            if      (type === 'our')   hidden = !naiveOk;
-            else if (type === 'xgb')   hidden = !xgbOk;
-            else if (type === 'both')  hidden = !(naiveOk && xgbOk);
-            else if (type === 'over')  hidden = !isOver;
-            else if (type === 'under') hidden = isOver;
-            row.classList.toggle('hidden', hidden);
-        });
-    }
-    </script>
-""")
-
-@app.route('/sport/<sport>/spreads/results')
-def sport_spread_total_results(sport):
-    """Spread & total results — Naive formula vs XGBoost model comparison"""
-    if sport not in SPORTS:
-        return "Sport not found", 404
-
-    from collections import defaultdict
-
-    sp        = _score_predictor_instance(sport)
-    xgb_model = _get_xgb_spread_model(sport)
-    has_xgb   = xgb_model is not None
-
+@app.route('/admin/fixer/scan')
+def fixer_scan():
+    """Scan for missing predictions and return JSON"""
+    from flask import jsonify
+    
+    sports = ['NHL', 'NBA', 'NFL', 'NCAAB', 'NCAAF']
+    issues = []
+    
     conn = get_db_connection()
-    completed_games = conn.execute('''
-        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
-        FROM games
-        WHERE sport = ?
-          AND home_score IS NOT NULL
-          AND away_score IS NOT NULL
-          AND status = 'final'
-        ORDER BY game_date DESC
-        LIMIT 200
-    ''', (sport,)).fetchall()
+    cursor = conn.cursor()
+    
+    for sport in sports:
+        # Find games with scores but no predictions
+        missing = cursor.execute('''
+            SELECT g.game_id, g.game_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score
+            FROM games g
+            WHERE g.sport = ?
+              AND g.home_score IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM predictions p
+                  WHERE p.sport = ? AND (
+                      p.game_id = g.game_id
+                      OR (
+                          date(p.game_date) = date(g.game_date)
+                          AND p.home_team_id = g.home_team_id
+                          AND p.away_team_id = g.away_team_id
+                      )
+                  )
+              )
+            ORDER BY g.game_date DESC
+            LIMIT 50
+        ''', (sport, sport)).fetchall()
+        
+        for game in missing:
+            issues.append({
+                'sport': sport,
+                'game_id': game['game_id'],
+                'game_date': game['game_date'],
+                'matchup': f"{game['away_team_id']} @ {game['home_team_id']}",
+                'score': f"{game['away_score']}-{game['home_score']}"
+            })
+    
     conn.close()
-
-    daily_results = defaultdict(lambda: {
-        'games': [], 'over_count': 0, 'under_count': 0,
-        'naive_spread_correct': 0, 'xgb_spread_correct': 0, 'total_games': 0
+    
+    return jsonify({
+        'total_issues': len(issues),
+        'issues': issues
     })
 
-    total_over = total_under = 0
-    naive_spread_correct = xgb_spread_correct = 0
-    naive_spread_err_sum = naive_total_err_sum = 0.0
-    xgb_spread_err_sum   = xgb_total_err_sum   = 0.0
-    xgb_game_count = total_games = 0
+@app.route('/admin/fixer/update-scores')
+def fixer_update_scores():
+    """Force update all scores for all sports"""
+    from flask import jsonify
+    import requests
+    
+    try:
+        updated = 0
+        
+        # Update NHL
+        update_nhl_scores()
+        
+        # Update NBA manually with proper team matching
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ESPN_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard'
+        
+        for days_back in range(7):  # Last 7 days
+            check_date = datetime.now() - timedelta(days=days_back)
+            date_str = check_date.strftime('%Y%m%d')
+            url = f'{ESPN_URL}?dates={date_str}'
+            
+            try:
+                response = requests.get(url, timeout=10)
+                data = response.json()
+                
+                for event in data.get('events', []):
+                    competition = event.get('competitions', [{}])[0]
+                    competitors = competition.get('competitors', [])
+                    
+                    if len(competitors) != 2:
+                        continue
+                    
+                    status = event.get('status', {}).get('type', {}).get('name', '')
+                    if status not in ['STATUS_FINAL', 'STATUS_FINAL_OT']:
+                        continue
+                    
+                    home = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+                    away = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+                    
+                    if not home or not away:
+                        continue
+                    
+                    home_team = home.get('team', {}).get('displayName', '')
+                    away_team = away.get('team', {}).get('displayName', '')
+                    home_score = int(home.get('score', 0))
+                    away_score = int(away.get('score', 0))
+                    game_date = check_date.strftime('%Y-%m-%d')
+                    
+                    cursor.execute('''
+                        UPDATE games 
+                        SET home_score = ?, away_score = ?, status = 'final'
+                        WHERE sport = 'NBA' 
+                          AND date(game_date) = ?
+                          AND home_team_id = ?
+                          AND away_team_id = ?
+                          AND (home_score IS NULL OR home_score = 0)
+                    ''', (home_score, away_score, game_date, home_team, away_team))
+                    
+                    if cursor.rowcount > 0:
+                        updated += 1
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
+        
+        # Update NFL
+        update_nfl_scores()
+        
+        return jsonify({
+            'success': True,
+            'updated': updated
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
-    for game in completed_games:
-        try:
-            if sp:
-                pred_home, pred_away, naive_spread, naive_total = sp.predict_score(
-                    game['home_team_id'], game['away_team_id'], sport
-                )
-            else:
-                from score_predictor import ScorePredictor
-                pred_home, pred_away, naive_spread, naive_total = ScorePredictor().predict_score(
-                    game['home_team_id'], game['away_team_id'], sport
-                )
-
-            if not naive_total:
+@app.route('/admin/fixer/fix/<sport>')
+def fixer_fix_sport(sport):
+    """Fix all missing predictions for a sport"""
+    from flask import jsonify
+    
+    try:
+        # Generate all predictions
+        all_predictions = get_upcoming_predictions(sport, days=365)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        fixed_count = 0
+        
+        for pred in all_predictions:
+            # Only fix completed games (have scores)
+            if pred.get('home_score') is None or not pred.get('game_id'):
                 continue
-
-            actual_home   = game['home_score']
-            actual_away   = game['away_score']
-            actual_total  = actual_home + actual_away
-            actual_spread = actual_home - actual_away
-
-            # Over/Under vs naive total
-            over_result = actual_total > naive_total
-            if over_result:
-                total_over += 1
-                daily_results[game['game_date']]['over_count'] += 1
-            else:
-                total_under += 1
-                daily_results[game['game_date']]['under_count'] += 1
-
-            # Naive spread winner accuracy
-            actual_winner = 'home' if actual_spread > 0 else 'away'
-            naive_winner  = 'home' if naive_spread  > 0 else 'away'
-            naive_correct = (naive_winner == actual_winner)
-            if naive_correct:
-                naive_spread_correct += 1
-                daily_results[game['game_date']]['naive_spread_correct'] += 1
-            naive_spread_err_sum += abs(naive_spread - actual_spread)
-            naive_total_err_sum  += abs(naive_total  - actual_total)
-
-            # XGBoost model
-            xgb_spread_val = xgb_total_val = None
-            xgb_correct    = None
-            xgb_spread_edge = xgb_total_edge = None
-            if xgb_model:
+            
+            # Check if prediction exists
+            existing = cursor.execute('''
+                SELECT id FROM predictions 
+                WHERE sport = ? AND (
+                    game_id = ? 
+                    OR (
+                        date(game_date) = date(?)
+                        AND home_team_id = ?
+                        AND away_team_id = ?
+                    )
+                )
+            ''', (sport, pred['game_id'], pred['game_date'], pred['home_team_id'], pred['away_team_id'])).fetchone()
+            
+            if not existing:
                 try:
-                    xgb_pred = xgb_model.predict(game['home_team_id'], game['away_team_id'])
-                    if xgb_pred and xgb_pred[2] is not None:
-                        _, _, xgb_spread_val, xgb_total_val = xgb_pred
-                        xgb_winner  = 'home' if xgb_spread_val > 0 else 'away'
-                        xgb_correct = (xgb_winner == actual_winner)
-                        if xgb_correct:
-                            xgb_spread_correct += 1
-                            daily_results[game['game_date']]['xgb_spread_correct'] += 1
-                        xgb_spread_edge = round(xgb_spread_val - actual_spread, 1)
-                        xgb_total_edge  = round(xgb_total_val  - actual_total,  1)
-                        xgb_spread_err_sum += abs(xgb_spread_val - actual_spread)
-                        xgb_total_err_sum  += abs(xgb_total_val  - actual_total)
-                        xgb_game_count += 1
-                except Exception:
-                    pass
-
-            daily_results[game['game_date']]['games'].append({
-                'matchup':        f"{game['away_team_id']} @ {game['home_team_id']}",
-                'score':          f"{actual_away}-{actual_home}",
-                'naive_spread':   round(naive_spread, 1),
-                'naive_total':    round(naive_total,  1),
-                'naive_correct':  naive_correct,
-                'xgb_spread':     round(xgb_spread_val, 1) if xgb_spread_val is not None else None,
-                'xgb_total':      round(xgb_total_val,  1) if xgb_total_val  is not None else None,
-                'xgb_correct':    xgb_correct,
-                'xgb_spread_edge':   xgb_spread_edge,
-                'xgb_total_edge':    xgb_total_edge,
-                'actual_spread':     round(actual_spread, 1),
-                'actual_total':      actual_total,
-                'over_result':       over_result,
-                'xgb_over_result':   (actual_total > xgb_total_val) if xgb_total_val is not None else None,
-            })
-            daily_results[game['game_date']]['total_games'] += 1
-            total_games += 1
-
-        except Exception as e:
-            logger.error(f"Error calculating spread/total results for {game['game_id']}: {e}")
-            continue
-
-    over_pct                  = (total_over           / total_games    * 100) if total_games    > 0 else 0
-    naive_spread_correct_pct  = (naive_spread_correct / total_games    * 100) if total_games    > 0 else 0
-    xgb_spread_correct_pct    = (xgb_spread_correct   / total_games    * 100) if total_games    > 0 else 0
-    naive_avg_spread_err      = naive_spread_err_sum  / total_games           if total_games    > 0 else 0
-    naive_avg_total_err       = naive_total_err_sum   / total_games           if total_games    > 0 else 0
-    xgb_avg_spread_err        = xgb_spread_err_sum    / xgb_game_count        if xgb_game_count > 0 else 0
-    xgb_avg_total_err         = xgb_total_err_sum     / xgb_game_count        if xgb_game_count > 0 else 0
-
-    yesterday    = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
-    today_date   = datetime.now().strftime('%Y-%m-%d')
-
-    return render_template_string(
-        SPREAD_TOTAL_RESULTS_TEMPLATE,
-        page=sport,
-        sport=sport,
-        sport_info=SPORTS[sport],
-        daily_results=daily_results,
-        sorted_dates=sorted_dates,
-        today_date=today_date,
-        total_games=total_games,
-        total_over=total_over,
-        total_under=total_under,
-        over_pct=over_pct,
-        naive_spread_correct=naive_spread_correct,
-        xgb_spread_correct=xgb_spread_correct,
-        naive_spread_correct_pct=naive_spread_correct_pct,
-        xgb_spread_correct_pct=xgb_spread_correct_pct,
-        naive_avg_spread_err=naive_avg_spread_err,
-        naive_avg_total_err=naive_avg_total_err,
-        xgb_avg_spread_err=xgb_avg_spread_err,
-        xgb_avg_total_err=xgb_avg_total_err,
-        has_xgb=has_xgb
-    )
+                    cursor.execute('''
+                        INSERT INTO predictions (
+                            game_id, sport, league, game_date, 
+                            home_team_id, away_team_id,
+                            elo_home_prob, xgboost_home_prob, 
+                            logistic_home_prob, win_probability,
+                            locked, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+                    ''', (
+                        pred['game_id'], sport, sport, pred['game_date'],
+                        pred['home_team_id'], pred['away_team_id'],
+                        pred['elo_prob'] / 100.0,
+                        pred['xgb_prob'] / 100.0,
+                        pred['cat_prob'] / 100.0,
+                        pred['ensemble_prob'] / 100.0
+                    ))
+                    fixed_count += 1
+                except Exception as e:
+                    logger.error(f"Error fixing {sport} {pred['game_id']}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'sport': sport,
+            'fixed': fixed_count
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/sport/<sport>/ats')
 def sport_ats_picks(sport):
@@ -3806,99 +3531,6 @@ def sport_ats_picks(sport):
         ou_records=ou_records.head(10).to_dict('records') if not ou_records.empty else []
     )
 
-# ============================================================================
-# API ENDPOINTS FOR FRONTEND INTEGRATION
-# ============================================================================
-
-@app.route('/api/picks/<sport>', methods=['GET'])
-def api_get_picks(sport):
-    """API endpoint to get picks for a sport (for Next.js frontend)"""
-    log_site_visit(f'/api/picks/{sport}')
-    
-    if sport.upper() not in SPORTS:
-        return jsonify({'error': 'Sport not found'}), 404
-    
-    try:
-        predictions = get_upcoming_predictions(sport.upper())
-        
-        # Convert to simple JSON format for frontend
-        picks = []
-        for pred in predictions:
-            picks.append({
-                'date': pred['game_date'],
-                'matchup': f"{pred['away_team_id']} @ {pred['home_team_id']}",
-                'homeTeam': pred['home_team_id'],
-                'awayTeam': pred['away_team_id'],
-                'pick': pred['predicted_winner'],
-                'winPercent': pred['ensemble_prob'],
-                'edge': pred.get('elo_prob'),
-                'xsharp': pred.get('xgb_prob'),
-                'grinder2': pred.get('glicko2_prob'),
-                'takedown': pred.get('trueskill_prob')
-            })
-        
-        return jsonify({
-            'sport': sport.upper(),
-            'picks': picks,
-            'count': len(picks)
-        })
-    except Exception as e:
-        logger.error(f"Error in API picks endpoint for {sport}: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/stats/traffic', methods=['GET'])
-def api_get_traffic_stats():
-    """Get site traffic statistics"""
-    try:
-        conn = get_db_connection()
-        
-        # Get today's visits
-        today = datetime.now().strftime('%Y-%m-%d')
-        today_visits = conn.execute('''
-            SELECT COUNT(*) FROM site_visits WHERE visit_date = ?
-        ''', (today,)).fetchone()[0]
-        
-        # Get last 7 days
-        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        week_visits = conn.execute('''
-            SELECT COUNT(*) FROM site_visits WHERE visit_date >= ?
-        ''', (week_ago,)).fetchone()[0]
-        
-        # Get total visits
-        total_visits = conn.execute('SELECT COUNT(*) FROM site_visits').fetchone()[0]
-        
-        # Get top endpoints
-        top_endpoints = conn.execute('''
-            SELECT endpoint, COUNT(*) as count 
-            FROM site_visits 
-            GROUP BY endpoint 
-            ORDER BY count DESC 
-            LIMIT 10
-        ''').fetchall()
-        
-        conn.close()
-        
-        return jsonify({
-            'today': today_visits,
-            'last_7_days': week_visits,
-            'total': total_visits,
-            'top_endpoints': [{'endpoint': row[0], 'count': row[1]} for row in top_endpoints]
-        })
-    except Exception as e:
-        logger.error(f"Error getting traffic stats: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/sports', methods=['GET'])
-def api_get_sports():
-    """Get list of available sports"""
-    return jsonify({
-        'sports': [{
-            'code': code,
-            'name': info['name'],
-            'icon': info['icon']
-        } for code, info in SPORTS.items()]
-    })
-
 import socket  # <- import first
 
 # Try to use port 5000, find another if it's busy
@@ -3913,11 +3545,9 @@ print("\n" + "="*60)
 print("🎯 underdogs.bet - Multi-Sport Prediction Platform")
 print("="*60)
 print("🏒 NHL Predictions - Live (77% Accuracy)")
-print("🏈 NFL Predictions - Season Complete")
+print("🏈 NFL Predictions - Live (84% Accuracy)")
 print("🏀 NBA Predictions - Live Now!")
-print("🎓 NCAAB - Live Now!")
-print("🏟️ NCAAF - Season Complete")
-print("⚾ MLB, 🏀 WNBA - Off Season (Auto-activates)")
+print("⚾ MLB, 🏀 WNBA, 🏟️ NCAAF - Coming Soon")
 print("="*60)
 print("✓ Platform ready!")
 print(f"🌐 Visit http://0.0.0.0:{port}")

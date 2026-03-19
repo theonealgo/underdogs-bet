@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
-    "api>=0.0.7",
     "backtesting>=0.6.5",
     "beautifulsoup4>=4.13.5",
     "colorama>=0.4.6",
@@ -36,3 +35,6 @@ dependencies = [
     "lightgbm>=4.6.0",
     "nhlpy>=0.3.0",
 ]
+
+[tool.setuptools]
+py-modules = ["NHL77FINAL", "nhlschedules"]
