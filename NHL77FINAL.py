@@ -66,6 +66,11 @@ def _cached_get(url: str, timeout: int = 10):
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend integration
 
+@app.context_processor
+def inject_globals():
+    """Make stripe_donation_url available in every template automatically."""
+    return {'stripe_donation_url': STRIPE_DONATION_URL}
+
 @app.after_request
 def add_header(response):
     """Add headers to allow iframe embedding"""
@@ -1769,6 +1774,16 @@ BASE_TEMPLATE = """
         .nav-links a.active {
             color: #fbbf24;
         }
+        .nav-donate-btn {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            color: #000 !important;
+            font-weight: 700 !important;
+            padding: 7px 16px;
+            border-radius: 20px;
+            transition: opacity 0.2s !important;
+            white-space: nowrap;
+        }
+        .nav-donate-btn:hover { opacity: 0.85; color: #000 !important; }
         .container {
             max-width: 1400px;
             margin: 0 auto;
@@ -1816,7 +1831,11 @@ BASE_TEMPLATE = """
             <div class="nav-links" id="navLinks">
                 <a href="/" class="{{ 'active' if page == 'home' else '' }}">Home</a>
                 <a href="/sport/NHL/predictions" class="{{ 'active' if page == 'NHL' else '' }}">🏒 NHL</a>
+                <a href="/sport/NBA/predictions" class="{{ 'active' if page == 'NBA' else '' }}">🏀 NBA</a>
+                <a href="/sport/MLB/predictions" class="{{ 'active' if page == 'MLB' else '' }}">⚾ MLB</a>
                 <a href="/sport/NFL/predictions" class="{{ 'active' if page == 'NFL' else '' }}">🏈 NFL</a>
+                <a href="/sport/NCAAB/predictions" class="{{ 'active' if page == 'NCAAB' else '' }}">🎓 NCAAB</a>
+                <a href="{{ stripe_donation_url }}" target="_blank" class="nav-donate-btn">💛 Donate</a>
             </div>
         </div>
     </div>
@@ -2688,141 +2707,442 @@ def get_landing_accuracy(sport):
     # Fallback to known values if calculation fails
     return {'NHL': 77.0, 'NFL': 56.8}.get(sport, 0.0)
 
+# ── Stripe payment link — replace with your link from dashboard.stripe.com/payment-links
+STRIPE_DONATION_URL = 'https://donate.stripe.com/YOUR_LINK_HERE'
+
 @app.route('/')
 def landing_page():
-    """Landing page with sport selector (NO unified dashboard)"""
+    """Landing page — redesigned with hero, stats, donation, and sport cards"""
     log_site_visit('/')
     nhl_accuracy = get_landing_accuracy('NHL')
     nfl_accuracy = get_landing_accuracy('NFL')
     nba_accuracy = get_landing_accuracy('NBA')
-    
+
     return render_template_string("""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>underdogs.bet - Sports Predictions</title>
+    <title>underdogs.bet — Free AI Sports Predictions</title>
+    <meta name="description" content="Free AI-powered sports predictions for NHL, NBA, NFL, MLB, NCAAB and more. 5-model ensemble powered by machine learning.">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{
+            --gold:#fbbf24;--gold2:#f59e0b;
+            --green:#10b981;--red:#ef4444;
+            --bg:#0f172a;--surface:rgba(255,255,255,0.05);
+            --border:rgba(255,255,255,0.1);
         }
-        .container { max-width: 1200px; width: 100%; }
-        .header {
-            text-align: center;
-            margin-bottom: 50px;
-            color: white;
+        body{
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            background:var(--bg);
+            color:#e2e8f0;
+            min-height:100vh;
+            overflow-x:hidden;
         }
-        .header h1 {
-            font-size: 3.5em;
-            font-weight: 700;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+
+        /* ── Navbar ── */
+        nav{
+            position:sticky;top:0;z-index:100;
+            background:rgba(15,23,42,0.95);
+            backdrop-filter:blur(12px);
+            border-bottom:1px solid var(--border);
+            padding:14px 30px;
+            display:flex;align-items:center;justify-content:space-between;
         }
-        .header p { font-size: 1.3em; opacity: 0.9; }
-        .sports-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 25px;
-            margin-bottom: 30px;
+        .nav-logo{
+            font-size:1.5em;font-weight:800;
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            text-decoration:none;
         }
-        .sport-card {
-            background: white;
-            border-radius: 16px;
-            padding: 35px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            text-decoration: none;
-            color: inherit;
+        .nav-right{display:flex;gap:20px;align-items:center;}
+        .nav-link{color:#94a3b8;text-decoration:none;font-size:0.9em;font-weight:500;transition:color .2s;}
+        .nav-link:hover{color:var(--gold);}
+        .nav-donate{
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            color:#000;font-weight:700;font-size:0.85em;
+            padding:8px 18px;border-radius:20px;
+            text-decoration:none;transition:opacity .2s;white-space:nowrap;
         }
-        .sport-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        .nav-donate:hover{opacity:.85;}
+
+        /* ── Hero ── */
+        .hero{
+            text-align:center;
+            padding:90px 30px 60px;
+            position:relative;
+            overflow:hidden;
         }
-        .sport-icon { font-size: 4em; margin-bottom: 15px; }
-        .sport-name {
-            font-size: 1.8em;
-            font-weight: 700;
-            margin-bottom: 8px;
-            color: #333;
+        .hero::before{
+            content:'';
+            position:absolute;inset:0;
+            background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(99,102,241,.25) 0%,transparent 70%);
+            pointer-events:none;
         }
-        .sport-status { font-size: 1em; color: #666; margin-bottom: 12px; }
-        .sport-accuracy {
-            font-size: 1.4em;
-            font-weight: 700;
-            color: #667eea;
-            margin-top: 10px;
+        .hero-badge{
+            display:inline-flex;align-items:center;gap:8px;
+            background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);
+            color:var(--green);font-size:.82em;font-weight:700;
+            padding:6px 16px;border-radius:20px;margin-bottom:24px;
+            letter-spacing:.5px;
         }
-        .active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        .hero h1{
+            font-size:clamp(2.4em,6vw,4.2em);
+            font-weight:900;
+            line-height:1.1;
+            margin-bottom:18px;
+            background:linear-gradient(135deg,#fff 40%,var(--gold));
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
         }
-        .active .sport-name, .active .sport-status { color: white; }
-        .active .sport-accuracy { color: #fff; font-size: 1.6em; }
-        .coming-soon { opacity: 0.6; cursor: not-allowed; }
-        .coming-soon:hover { transform: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
-        .footer { text-align: center; color: white; margin-top: 40px; opacity: 0.8; }
+        .hero-sub{
+            font-size:clamp(1em,2.5vw,1.3em);
+            color:#94a3b8;
+            max-width:600px;
+            margin:0 auto 36px;
+            line-height:1.6;
+        }
+        .hero-ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+        .btn-primary{
+            background:linear-gradient(135deg,#6366f1,#4f46e5);
+            color:#fff;font-weight:700;font-size:1em;
+            padding:14px 32px;border-radius:10px;
+            text-decoration:none;transition:transform .2s,box-shadow .2s;
+            box-shadow:0 4px 20px rgba(99,102,241,.4);
+        }
+        .btn-primary:hover{transform:translateY(-2px);box-shadow:0 6px 28px rgba(99,102,241,.5);}
+        .btn-donate-hero{
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            color:#000;font-weight:700;font-size:1em;
+            padding:14px 32px;border-radius:10px;
+            text-decoration:none;transition:transform .2s,box-shadow .2s;
+            box-shadow:0 4px 20px rgba(251,191,36,.3);
+        }
+        .btn-donate-hero:hover{transform:translateY(-2px);box-shadow:0 6px 28px rgba(251,191,36,.45);}
+
+        /* ── Stats bar ── */
+        .stats-bar{
+            display:flex;justify-content:center;flex-wrap:wrap;
+            gap:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+            background:rgba(255,255,255,0.03);
+        }
+        .stat-item{
+            flex:1;min-width:140px;max-width:220px;
+            text-align:center;padding:28px 20px;
+            border-right:1px solid var(--border);
+        }
+        .stat-item:last-child{border-right:none;}
+        .stat-num{
+            font-size:2.2em;font-weight:900;
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+        }
+        .stat-label{font-size:.8em;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-top:4px;}
+
+        /* ── Free banner ── */
+        .free-banner{
+            max-width:860px;margin:60px auto 0;
+            background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(5,150,105,.1));
+            border:1px solid rgba(16,185,129,.35);
+            border-radius:16px;padding:28px 36px;
+            display:flex;gap:20px;align-items:flex-start;
+        }
+        .free-icon{font-size:2.2em;flex-shrink:0;}
+        .free-title{font-size:1.15em;font-weight:800;color:var(--green);margin-bottom:6px;}
+        .free-body{font-size:.93em;color:#94a3b8;line-height:1.6;}
+
+        /* ── Sports grid ── */
+        .section{padding:70px 30px;max-width:1200px;margin:0 auto;}
+        .section-title{
+            text-align:center;font-size:1.9em;font-weight:800;
+            margin-bottom:8px;
+        }
+        .section-sub{text-align:center;color:#64748b;font-size:.93em;margin-bottom:40px;}
+        .sports-grid{
+            display:grid;
+            grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+            gap:16px;
+        }
+        .sport-card{
+            background:var(--surface);border:1px solid var(--border);
+            border-radius:14px;padding:28px 20px;
+            text-align:center;text-decoration:none;color:inherit;
+            transition:border-color .2s,transform .2s,box-shadow .2s;
+            position:relative;overflow:hidden;
+        }
+        .sport-card:hover{border-color:var(--gold);transform:translateY(-4px);box-shadow:0 8px 24px rgba(251,191,36,.15);}
+        .sport-card.live{border-color:rgba(16,185,129,.4);}
+        .sport-card.live:hover{border-color:var(--green);box-shadow:0 8px 24px rgba(16,185,129,.2);}
+        .live-dot{
+            position:absolute;top:12px;right:12px;
+            width:8px;height:8px;border-radius:50%;background:var(--green);
+            box-shadow:0 0 0 3px rgba(16,185,129,.25);
+            animation:pulse 1.8s infinite;
+        }
+        @keyframes pulse{
+            0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.25);}
+            50%{box-shadow:0 0 0 7px rgba(16,185,129,.0);}
+        }
+        .sport-icon{font-size:2.8em;margin-bottom:10px;}
+        .sport-name{font-size:1.15em;font-weight:700;margin-bottom:4px;}
+        .sport-status{font-size:.78em;color:#64748b;text-transform:uppercase;letter-spacing:.5px;}
+        .sport-status.live-text{color:var(--green);font-weight:700;}
+
+        /* ── How it works ── */
+        .how-section{
+            background:rgba(255,255,255,.02);
+            border-top:1px solid var(--border);
+            border-bottom:1px solid var(--border);
+        }
+        .steps-grid{
+            display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px;
+        }
+        .step{
+            background:var(--surface);border:1px solid var(--border);
+            border-radius:14px;padding:28px 24px;text-align:center;
+        }
+        .step-num{
+            width:42px;height:42px;border-radius:50%;
+            background:linear-gradient(135deg,#6366f1,#4f46e5);
+            display:flex;align-items:center;justify-content:center;
+            font-weight:900;font-size:1.1em;margin:0 auto 14px;
+        }
+        .step-title{font-weight:700;font-size:1em;margin-bottom:8px;}
+        .step-body{font-size:.86em;color:#64748b;line-height:1.6;}
+
+        /* ── Donation section ── */
+        .donate-section{
+            max-width:720px;margin:0 auto;
+            text-align:center;
+        }
+        .donate-card{
+            background:linear-gradient(135deg,rgba(251,191,36,.1),rgba(245,158,11,.07));
+            border:1px solid rgba(251,191,36,.35);
+            border-radius:20px;padding:48px 40px;
+        }
+        .donate-icon{font-size:3em;margin-bottom:16px;}
+        .donate-title{font-size:1.8em;font-weight:900;margin-bottom:12px;}
+        .donate-body{color:#94a3b8;font-size:.97em;line-height:1.7;margin-bottom:28px;max-width:520px;margin-left:auto;margin-right:auto;}
+        .btn-stripe{
+            display:inline-flex;align-items:center;gap:10px;
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            color:#000;font-weight:800;font-size:1.05em;
+            padding:16px 40px;border-radius:12px;
+            text-decoration:none;transition:transform .2s,box-shadow .2s;
+            box-shadow:0 4px 20px rgba(251,191,36,.35);
+        }
+        .btn-stripe:hover{transform:translateY(-3px);box-shadow:0 8px 30px rgba(251,191,36,.5);}
+        .donate-note{font-size:.78em;color:#475569;margin-top:14px;}
+
+        /* ── Footer ── */
+        .footer{
+            border-top:1px solid var(--border);
+            padding:36px 30px;
+            text-align:center;
+            color:#334155;
+            font-size:.85em;
+        }
+        .footer a{color:#475569;text-decoration:none;}
+        .footer a:hover{color:var(--gold);}
+        .footer-logo{
+            font-size:1.3em;font-weight:800;
+            background:linear-gradient(135deg,var(--gold),var(--gold2));
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            margin-bottom:10px;display:block;
+        }
+
+        /* ── Responsive ── */
+        @media(max-width:640px){
+            .hero{padding:60px 20px 40px;}
+            nav{padding:12px 18px;}
+            .free-banner{flex-direction:column;}
+            .donate-card{padding:36px 24px;}
+            .stat-item{min-width:110px;padding:20px 12px;}
+            .stats-bar{border-left:none;border-right:none;}
+            .nav-right .nav-link{display:none;}
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎯 underdogs.bet</h1>
-            <p>Professional Sports Predictions Powered by Machine Learning</p>
-        </div>
-        <div class="sports-grid">
-            <a href="/sport/NHL/predictions" class="sport-card active">
-                <div class="sport-icon">🏒</div>
-                <div class="sport-name">NHL</div>
-                <div class="sport-status">Live Now</div>
-            </a>
-            <a href="/sport/NFL/predictions" class="sport-card">
-                <div class="sport-icon">🏈</div>
-                <div class="sport-name">NFL</div>
-                <div class="sport-status">Offseason</div>
-            </a>
-            <a href="/sport/NBA/predictions" class="sport-card active">
-                <div class="sport-icon">🏀</div>
-                <div class="sport-name">NBA</div>
-                <div class="sport-status">Live Now</div>
-            </a>
-            <a href="/sport/NCAAB/predictions" class="sport-card active">
-                <div class="sport-icon">🎓</div>
-                <div class="sport-name">NCAAB</div>
-                <div class="sport-status">Live Now</div>
-            </a>
-            <a href="/sport/NCAAF/predictions" class="sport-card">
-                <div class="sport-icon">🏟️</div>
-                <div class="sport-name">NCAAF</div>
-                <div class="sport-status">Offseason</div>
-            </a>
-            <a href="/sport/MLB/predictions" class="sport-card">
-                <div class="sport-icon">⚾</div>
-                <div class="sport-name">MLB</div>
-                <div class="sport-status">Offseason</div>
-            </a>
-            <a href="/sport/WNBA/predictions" class="sport-card">
-                <div class="sport-icon">🏀</div>
-                <div class="sport-name">WNBA</div>
-                <div class="sport-status">Offseason</div>
-            </a>
-        </div>
-        <div class="footer">
-            <p>Select a sport to view predictions, results, and analysis</p>
+
+<!-- Navbar -->
+<nav>
+    <a href="/" class="nav-logo">🎯 underdogs.bet</a>
+    <div class="nav-right">
+        <a href="/sport/NHL/predictions" class="nav-link">🏒 NHL</a>
+        <a href="/sport/NBA/predictions" class="nav-link">🏀 NBA</a>
+        <a href="/sport/MLB/predictions" class="nav-link">⚾ MLB</a>
+        <a href="{{ stripe_url }}" target="_blank" class="nav-donate">💛 Support Us</a>
+    </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+    <div class="hero-badge">✅ 100% Free &nbsp;·&nbsp; No Sign-Up Required</div>
+    <h1>Beat the Books with<br>AI-Powered Picks</h1>
+    <p class="hero-sub">
+        underdogs.bet runs a 5-model ensemble — Grinder2, Takedown, Edge, XSharp &amp; Sharp Consensus —
+        analysing every game so you don't have to.
+    </p>
+    <div class="hero-ctas">
+        <a href="/sport/NHL/predictions" class="btn-primary">📊 View Today's Picks</a>
+        <a href="{{ stripe_url }}" target="_blank" class="btn-donate-hero">💛 Support the Site</a>
+    </div>
+
+    <!-- Free banner -->
+    <div class="free-banner" style="margin-top:48px;">
+        <div class="free-icon">🆓</div>
+        <div>
+            <div class="free-title">Always Free. No Paywalls. No Subscriptions.</div>
+            <div class="free-body">
+                underdogs.bet is completely free to use — every pick, every sport, every day.
+                We run on donations from users who find value in what we build.
+                If our models help you, consider supporting us so we can keep improving.
+            </div>
         </div>
     </div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-bar">
+    <div class="stat-item">
+        <div class="stat-num">6</div>
+        <div class="stat-label">Sports Covered</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-num">5</div>
+        <div class="stat-label">AI Models</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-num">{{ nhl_accuracy }}%</div>
+        <div class="stat-label">NHL Accuracy</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-num">{{ nba_accuracy }}%</div>
+        <div class="stat-label">NBA Accuracy</div>
+    </div>
+    <div class="stat-item">
+        <div class="stat-num">FREE</div>
+        <div class="stat-label">Forever</div>
+    </div>
+</div>
+
+<!-- Sports grid -->
+<div class="section">
+    <h2 class="section-title">Pick Your Sport</h2>
+    <p class="section-sub">Live predictions updated daily. Click any sport to view today's picks.</p>
+    <div class="sports-grid">
+        <a href="/sport/NHL/predictions" class="sport-card live">
+            <div class="live-dot"></div>
+            <div class="sport-icon">🏒</div>
+            <div class="sport-name">NHL</div>
+            <div class="sport-status live-text">Live Now</div>
+        </a>
+        <a href="/sport/NBA/predictions" class="sport-card live">
+            <div class="live-dot"></div>
+            <div class="sport-icon">🏀</div>
+            <div class="sport-name">NBA</div>
+            <div class="sport-status live-text">Live Now</div>
+        </a>
+        <a href="/sport/NCAAB/predictions" class="sport-card live">
+            <div class="live-dot"></div>
+            <div class="sport-icon">🎓</div>
+            <div class="sport-name">NCAAB</div>
+            <div class="sport-status live-text">Live Now</div>
+        </a>
+        <a href="/sport/MLB/predictions" class="sport-card">
+            <div class="sport-icon">⚾</div>
+            <div class="sport-name">MLB</div>
+            <div class="sport-status">Starting Soon</div>
+        </a>
+        <a href="/sport/NFL/predictions" class="sport-card">
+            <div class="sport-icon">🏈</div>
+            <div class="sport-name">NFL</div>
+            <div class="sport-status">Offseason</div>
+        </a>
+        <a href="/sport/NCAAF/predictions" class="sport-card">
+            <div class="sport-icon">🏟️</div>
+            <div class="sport-name">NCAAF</div>
+            <div class="sport-status">Offseason</div>
+        </a>
+        <a href="/sport/WNBA/predictions" class="sport-card">
+            <div class="sport-icon">🏀</div>
+            <div class="sport-name">WNBA</div>
+            <div class="sport-status">Coming Soon</div>
+        </a>
+    </div>
+</div>
+
+<!-- How it works -->
+<div class="how-section">
+    <div class="section">
+        <h2 class="section-title">How It Works</h2>
+        <p class="section-sub">Five independent models vote on every game. The Sharp Consensus is the final call.</p>
+        <div class="steps-grid">
+            <div class="step">
+                <div class="step-num">1</div>
+                <div class="step-title">Live Data Ingestion</div>
+                <div class="step-body">We pull real-time scores, team stats, and schedules from ESPN and official league APIs every day.</div>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <div class="step-title">5-Model Ensemble</div>
+                <div class="step-body">Grinder2 (Glicko-2), Takedown (TrueSkill), Edge (Elo), XSharp (XGBoost), and Sharp Consensus (meta-learner) each generate independent win probabilities.</div>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <div class="step-title">Spread &amp; Total Predictions</div>
+                <div class="step-body">XSharp predicts expected scores, derives the spread and total, and — for NHL — converts to puck-line cover probabilities.</div>
+            </div>
+            <div class="step">
+                <div class="step-num">4</div>
+                <div class="step-title">You Get the Pick</div>
+                <div class="step-body">The Sharp Consensus blends all five models. High-confidence picks are highlighted. All results are tracked so you can verify our accuracy.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Donation -->
+<div class="section">
+    <div class="donate-section">
+        <div class="donate-card">
+            <div class="donate-icon">💛</div>
+            <div class="donate-title">Support underdogs.bet</div>
+            <div class="donate-body">
+                This site is 100% free and always will be. We never charge for picks or lock content behind a paywall.
+                <br><br>
+                If our models are helping your research, a small donation goes directly toward
+                <strong>server costs, data feeds, and paying our developers</strong> who keep the models sharp.
+            </div>
+            <a href="{{ stripe_url }}" target="_blank" class="btn-stripe">
+                <span>💳</span> Donate via Stripe
+            </a>
+            <div class="donate-note">Powered by Stripe · Secure &amp; encrypted · Any amount helps</div>
+        </div>
+    </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+    <span class="footer-logo">🎯 underdogs.bet</span>
+    <p>AI-powered sports predictions — free forever.</p>
+    <p style="margin-top:10px;">
+        <a href="/sport/NHL/predictions">NHL</a> &nbsp;·&nbsp;
+        <a href="/sport/NBA/predictions">NBA</a> &nbsp;·&nbsp;
+        <a href="/sport/MLB/predictions">MLB</a> &nbsp;·&nbsp;
+        <a href="/sport/NFL/predictions">NFL</a> &nbsp;·&nbsp;
+        <a href="/sport/NCAAB/predictions">NCAAB</a> &nbsp;·&nbsp;
+        <a href="{{ stripe_url }}" target="_blank">💛 Donate</a>
+    </p>
+    <p style="margin-top:12px;opacity:.5;">© 2025 underdogs.bet · underdogsbetemail@gmail.com</p>
+</div>
+
 </body>
 </html>
-    """, nhl_accuracy=nhl_accuracy, nfl_accuracy=nfl_accuracy, nba_accuracy=nba_accuracy)
+    """, nhl_accuracy=nhl_accuracy, nfl_accuracy=nfl_accuracy, nba_accuracy=nba_accuracy,
+         stripe_url=STRIPE_DONATION_URL)
 
 @app.route('/sport/<sport>')
 def sport_home(sport):

@@ -64,7 +64,10 @@
 </head>
 <body>
 <div class="container">
-    <a href="/" style="display:inline-block;padding:7px 16px;background:rgba(255,255,255,0.1);border-radius:7px;text-decoration:none;color:white;margin-bottom:14px;font-weight:600;">← Home</a>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <a href="/" style="display:inline-block;padding:7px 16px;background:rgba(255,255,255,0.1);border-radius:7px;text-decoration:none;color:white;font-weight:600;">← Home</a>
+        <a href="{{ stripe_donation_url }}" target="_blank" style="display:inline-block;padding:7px 18px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:7px;text-decoration:none;color:#0f172a;font-weight:700;font-size:0.9em;">💛 Donate</a>
+    </div>
 
     <div class="header">
         <h1>{{ sport_info.icon }} {{ sport_info.name }} — Predictions</h1>
