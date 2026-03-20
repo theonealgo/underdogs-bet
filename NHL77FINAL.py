@@ -688,6 +688,55 @@ def _get_xgb_spread_model(sport):
         return None
 
 
+# ESPN injury endpoints keyed by sport
+_INJURY_ENDPOINTS = {
+    'NBA':   'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries',
+    'NHL':   'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries',
+    'NFL':   'https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries',
+    'MLB':   'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/injuries',
+    'NCAAB': 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/injuries',
+    'WNBA':  'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/injuries',
+}
+
+# Only flag statuses that materially impact a team's chances
+_INJURY_SHOW_STATUSES = {'Out', 'Doubtful', 'Injured Reserve', 'IR', 'Suspended'}
+
+
+def _fetch_injuries(sport: str) -> dict:
+    """
+    Returns {team_display_name: [{name, status, reason}]} for Out/Doubtful players.
+    Uses the 15-min _cached_get cache so it is only fetched once per request cycle.
+    Returns {} silently on any error so a bad injury fetch never breaks predictions.
+    """
+    url = _INJURY_ENDPOINTS.get(sport)
+    if not url:
+        return {}
+    try:
+        data = _cached_get(url, timeout=5)
+        result = {}
+        for team_group in data.get('injuries', []):
+            team_name = team_group.get('displayName', '')
+            players = []
+            for inj in team_group.get('injuries', []):
+                status = inj.get('status', '')
+                if status not in _INJURY_SHOW_STATUSES:
+                    continue
+                athlete = inj.get('athlete', {})
+                short_name = athlete.get('shortName', athlete.get('displayName', '?'))
+                # Extract injury body part from shortComment e.g. "Player (knee) is out..."
+                comment = inj.get('shortComment', '')
+                import re as _re
+                match = _re.search(r'\(([^)]{1,20})\)', comment)
+                reason = match.group(1) if match else ''
+                players.append({'name': short_name, 'status': status, 'reason': reason})
+            if players:
+                result[team_name] = players
+        return result
+    except Exception as _ie:
+        logger.debug(f"[injuries] fetch failed for {sport}: {_ie}")
+        return {}
+
+
 def get_upcoming_predictions(sport, days=365):
     """Get ALL game predictions from season start - both completed and upcoming
     
@@ -954,7 +1003,9 @@ def get_upcoming_predictions(sport, days=365):
     one_month_ahead = today + timedelta(days=30)
     
     predictions = []
-    
+    # Fetch injuries once for the whole request (15-min cache keeps it fast)
+    _injuries = _fetch_injuries(sport)
+
     for game_date, game in all_games_with_dates:
         # Show games from season start up to one month from today
         if game_date >= season_start and game_date <= one_month_ahead:
@@ -1127,6 +1178,16 @@ def get_upcoming_predictions(sport, days=365):
                         game_dict.update(_pl)
                     except Exception as _ple:
                         logger.debug(f"[NHL] puck_line_prob error: {_ple}")
+
+            # ── Injury warnings (upcoming games only) ─────────────────────────
+            if game_dict.get('home_score') is None:
+                _ht = game_dict.get('home_team_id', '')
+                _at = game_dict.get('away_team_id', '')
+                game_dict['home_injuries'] = _injuries.get(_ht, [])
+                game_dict['away_injuries'] = _injuries.get(_at, [])
+            else:
+                game_dict['home_injuries'] = []
+                game_dict['away_injuries'] = []
 
             predictions.append(game_dict)
     
