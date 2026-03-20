@@ -86,7 +86,9 @@ def add_header(response):
     )
     return response
 
-DATABASE = 'sports_predictions_original.db'
+import os as _os
+_DATA_DIR = '/data' if _os.path.isdir('/data') else '.'
+DATABASE = _os.path.join(_DATA_DIR, 'sports_predictions_original.db')
 
 def log_site_visit(endpoint):
     """Track site visits for analytics"""
