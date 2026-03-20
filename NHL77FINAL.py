@@ -511,6 +511,61 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def init_db():
+    """Create all tables if they don't exist (safe to run on every startup)."""
+    conn = sqlite3.connect(DATABASE)
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sport TEXT, league TEXT, game_id TEXT UNIQUE,
+            season INTEGER, game_date TEXT,
+            home_team_id TEXT, away_team_id TEXT,
+            home_score REAL, away_score REAL, status TEXT
+        );
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT, sport TEXT, league TEXT,
+            game_date TEXT, home_team_id TEXT, away_team_id TEXT,
+            elo_home_prob REAL, xgboost_home_prob REAL,
+            logistic_home_prob REAL, meta_home_prob REAL,
+            win_probability REAL, locked INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS site_visits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visit_date TEXT, ip_address TEXT,
+            user_agent TEXT, endpoint TEXT
+        );
+        CREATE TABLE IF NOT EXISTS betting_odds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT, home_moneyline REAL, away_moneyline REAL,
+            spread REAL, total REAL,
+            home_implied_prob REAL, away_implied_prob REAL,
+            num_bookmakers INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS game_goalies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT,
+            home_goalie TEXT, away_goalie TEXT,
+            home_goalie_save_pct REAL, away_goalie_save_pct REAL,
+            home_goalie_gaa REAL, away_goalie_gaa REAL
+        );
+        CREATE TABLE IF NOT EXISTS betting_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT, spread REAL, total REAL
+        );
+    ''')
+    conn.commit()
+    conn.close()
+    logger.info("Database tables initialised.")
+
+
+# Run on every startup — creates tables if missing, no-op if they exist
+try:
+    init_db()
+except Exception as _dbe:
+    logger.warning(f"init_db failed: {_dbe}")
+
 def parse_date(date_str):
     """Parse date string from multiple formats (DD/MM/YYYY or YYYY-MM-DD)"""
     try:
