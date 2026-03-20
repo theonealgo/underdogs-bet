@@ -4365,28 +4365,23 @@ def api_get_sports():
         } for code, info in SPORTS.items()]
     })
 
-import socket  # <- import first
+if __name__ == '__main__':
+    import os, socket
+    # Use $PORT from Railway/Render, fall back to auto-finding a local port
+    env_port = os.environ.get('PORT')
+    if env_port:
+        port = int(env_port)
+    else:
+        port = 5000
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(('0.0.0.0', port)) != 0:
+                    break
+                port += 1
 
-# Try to use port 5000, find another if it's busy
-port = 5000
-while True:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if s.connect_ex(('0.0.0.0', port)) != 0:
-            break
-        port += 1
-
-print("\n" + "="*60)
-print("🎯 underdogs.bet - Multi-Sport Prediction Platform")
-print("="*60)
-print("🏒 NHL Predictions - Live (77% Accuracy)")
-print("🏈 NFL Predictions - Season Complete")
-print("🏀 NBA Predictions - Live Now!")
-print("🎓 NCAAB - Live Now!")
-print("🏟️ NCAAF - Season Complete")
-print("⚾ MLB, 🏀 WNBA - Off Season (Auto-activates)")
-print("="*60)
-print("✓ Platform ready!")
-print(f"🌐 Visit http://0.0.0.0:{port}")
-print("="*60 + "\n")
-
-app.run(debug=False, host='0.0.0.0', port=port, use_reloader=False, threaded=True)
+    print("\n" + "="*60)
+    print("🎯 underdogs.bet - Multi-Sport Prediction Platform")
+    print("="*60)
+    print(f"🌐 Visit http://0.0.0.0:{port}")
+    print("="*60 + "\n")
+    app.run(debug=False, host='0.0.0.0', port=port, use_reloader=False, threaded=True)

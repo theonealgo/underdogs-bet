@@ -1,0 +1,17 @@
+flask>=3.1.2
+flask-cors
+gunicorn
+pandas
+numpy
+requests
+scipy
+scikit-learn
+xgboost
+catboost
+nfl-data-py
+nhl-api-py
+nhlpy
+colorama
+tqdm
+openpyxl
+schedule
