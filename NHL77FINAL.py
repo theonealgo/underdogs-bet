@@ -89,6 +89,8 @@ def add_header(response):
 import os as _os
 _DATA_DIR = '/data' if _os.path.isdir('/data') else '.'
 DATABASE = _os.path.join(_DATA_DIR, 'sports_predictions_original.db')
+# Absolute path to this file's directory — used for template loading
+_BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
 
 def log_site_visit(endpoint):
     """Track site visits for analytics"""
@@ -3399,8 +3401,8 @@ def sport_predictions(sport):
     # Sort dates
     sorted_dates = sorted(grouped_predictions.keys())
     
-    # Load ESPN-style template
-    with open('espn_predictions_template.html', 'r') as f:
+    # Load ESPN-style template (absolute path so Render/gunicorn always finds it)
+    with open(_os.path.join(_BASE_DIR, 'espn_predictions_template.html'), 'r') as f:
         espn_template = f.read()
     
     return render_template_string(
