@@ -2850,10 +2850,12 @@ def get_landing_accuracy(sport):
     try:
         performance = calculate_model_performance(sport)
         if performance and 'ensemble' in performance:
-            return round(performance['ensemble']['accuracy'], 1)
+            acc = round(performance['ensemble']['accuracy'], 1)
+            if acc > 0:  # only use live value if it's a real number
+                return acc
     except:
         pass
-    # Fallback to known values if calculation fails
+    # Fallback to known values if calculation fails or returns 0
     return {'NHL': 77.0, 'NFL': 56.8, 'NBA': 68.5}.get(sport, 0.0)
 
 # ── Stripe payment link — replace with your link from dashboard.stripe.com/payment-links
