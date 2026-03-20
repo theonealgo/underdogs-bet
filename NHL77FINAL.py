@@ -64,7 +64,12 @@ def _cached_get(url: str, timeout: int = 10):
         raise exc
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend integration
+CORS(app, origins=[
+    'https://underdogs.bet',
+    'https://www.underdogs.bet',
+    'http://localhost:3000',
+    'http://localhost:5000',
+])
 
 @app.context_processor
 def inject_globals():
@@ -73,9 +78,12 @@ def inject_globals():
 
 @app.after_request
 def add_header(response):
-    """Add headers to allow iframe embedding"""
+    """Add headers to allow iframe embedding from underdogs.bet"""
     response.headers['X-Frame-Options'] = 'ALLOWALL'
-    response.headers['Content-Security-Policy'] = "frame-ancestors 'self' http://localhost:3000"
+    response.headers['Content-Security-Policy'] = (
+        "frame-ancestors 'self' https://underdogs.bet https://www.underdogs.bet "
+        "http://localhost:3000"
+    )
     return response
 
 DATABASE = 'sports_predictions_original.db'
