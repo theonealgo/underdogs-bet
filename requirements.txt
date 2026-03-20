@@ -1,16 +1,21 @@
+# Web framework
 flask>=3.1.2
 flask-cors
 gunicorn
+
+# Data
 pandas
 numpy
 requests
 scipy
 scikit-learn
 xgboost
-catboost
+
+# Sports data (PyPI packages only — local modules like nhl_api.py are in the repo)
 nfl-data-py
-nhl-api-py
 nhlpy
+
+# Utilities
 colorama
 tqdm
 openpyxl
