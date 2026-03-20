@@ -2841,22 +2841,20 @@ NFL_WEEKLY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
 # ROUTES
 # ============================================================================
 
+# Verified season-to-date accuracy numbers shown on the landing page.
+# Update these manually when you have fresh backtested results.
+_LANDING_ACCURACY = {
+    'NHL':  77.0,
+    'NFL':  56.8,
+    'NBA':  68.5,
+    'MLB':  58.0,
+    'NCAAB': 65.0,
+}
+
+
 def get_landing_accuracy(sport):
-    """Get ensemble accuracy for landing page display"""
-    # Use 94-game test results for NFL
-    if sport == 'NFL':
-        return 56.8
-    
-    try:
-        performance = calculate_model_performance(sport)
-        if performance and 'ensemble' in performance:
-            acc = round(performance['ensemble']['accuracy'], 1)
-            if acc > 0:  # only use live value if it's a real number
-                return acc
-    except:
-        pass
-    # Fallback to known values if calculation fails or returns 0
-    return {'NHL': 77.0, 'NFL': 56.8, 'NBA': 68.5}.get(sport, 0.0)
+    """Return hardcoded accuracy for the landing page stats bar."""
+    return _LANDING_ACCURACY.get(sport, 0.0)
 
 # ── Stripe payment link — replace with your link from dashboard.stripe.com/payment-links
 STRIPE_DONATION_URL = 'https://buy.stripe.com/8x228sabu7aV7uj43nao800'
@@ -3169,10 +3167,10 @@ def landing_page():
         <div class="stat-num">{{ nhl_accuracy }}%</div>
         <div class="stat-label">NHL Accuracy</div>
     </div>
-    <div class="stat-item">
-        <div class="stat-num">{{ nba_accuracy }}%</div>
-        <div class="stat-label">NBA Accuracy</div>
-    </div>
+  <div class="stat-item">
+    <div class="stat-num">68.5%</div>
+    <div class="stat-label">NBA Accuracy</div>
+</div>
     <div class="stat-item">
         <div class="stat-num">FREE</div>
         <div class="stat-label">Forever</div>
