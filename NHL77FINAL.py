@@ -1170,6 +1170,18 @@ def get_upcoming_predictions(sport, days=365):
     
     return predictions
 
+def _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=None):
+    """Weighted blend matching get_upcoming_predictions weights.
+    Avoids v2['home_prob'] which defaults to ~0.49 when team names fail lookup."""
+    _wp = []
+    if glicko2_prob   is not None: _wp.append((glicko2_prob,   0.30))
+    if trueskill_prob is not None: _wp.append((trueskill_prob, 0.30))
+    if xgb_prob       is not None: _wp.append((xgb_prob,       0.25))
+    if elo_prob       is not None: _wp.append((elo_prob,       0.15))
+    _tw = sum(w for _, w in _wp)
+    return sum(p * w for p, w in _wp) / _tw if _tw > 0 else fallback
+
+
 def calculate_nfl_weekly_performance():
     """Calculate NFL model performance week by week using actual stored predictions
     
@@ -1239,7 +1251,7 @@ def calculate_nfl_weekly_performance():
             trueskill_prob = v2.get('trueskill_prob') if v2 else None
             if v2:
                 xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
+                ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
 
             actual_home_win = api_game['home_score'] > api_game['away_score']
 
@@ -1366,7 +1378,7 @@ def calculate_nhl_weekly_performance():
             trueskill_prob = v2.get('trueskill_prob') if v2 else None
             if v2:
                 xgb_prob  = v2.get('xgboost_prob', xgb_prob)
-                meta_prob = v2['home_prob']
+                meta_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=meta_prob)
 
             actual_home_win = game['home_score'] > game['away_score']
 
@@ -1497,7 +1509,7 @@ def calculate_nba_weekly_performance():
             trueskill_prob = v2.get('trueskill_prob') if v2 else None
             if v2:
                 xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
+                ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
 
             actual_home_win = home_score > away_score
 
@@ -1625,7 +1637,7 @@ def calculate_model_performance(sport):
         trueskill_prob = v2.get('trueskill_prob') if v2 else None
         if v2:
             xgb_prob = v2.get('xgboost_prob', xgb_prob)
-            ens_prob = v2['home_prob']
+            ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
 
         for model, prob in [
             ('glicko2',   glicko2_prob),
@@ -1657,6 +1669,28 @@ def calculate_model_performance(sport):
     )
     performance['total_games'] = len(results_data)
     return performance
+
+
+# Sport-specific O/U benchmarks (season average game totals)
+_OU_BENCH = {'NBA': 226.0, 'NHL': 6.1, 'NCAAB': 145.0, 'NCAAF': 56.0, 'MLB': 9.0, 'NFL': 47.0, 'WNBA': 158.0}
+
+
+def _ou_stats(daily_results, sport):
+    """Compute over/under counts from daily_results game scores vs sport benchmark."""
+    bench = _OU_BENCH.get(sport, 0)
+    total_over = total_under = total_games_ou = total_score_sum = 0
+    for dd in daily_results.values():
+        for g in dd.get('games', []):
+            tot = (g.get('away_score') or 0) + (g.get('home_score') or 0)
+            if tot > 0:
+                total_games_ou += 1
+                total_score_sum += tot
+                if tot > bench:
+                    total_over += 1
+                else:
+                    total_under += 1
+    avg_total = round(total_score_sum / total_games_ou, 1) if total_games_ou > 0 else 0
+    return total_over, total_under, total_games_ou, avg_total, bench
 
 
 def compute_overall_stats_from_daily(daily_results):
@@ -2352,136 +2386,190 @@ RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     </div>
 """)
 
-# Daily Results Template (for NHL/NBA)
+# Daily Results Template (for NHL/NBA/NCAAB etc.)
 DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     '{% block extra_styles %}{% endblock %}',
     """
-    .page-title { font-size: 2.5em; margin-bottom: 30px; text-align: center; }
-    .section-tabs { display: flex; gap: 10px; margin-bottom: 30px; justify-content: center; }
-    .tab { padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.3s; background: rgba(255, 255, 255, 0.1); color: white; }
+    .page-title { font-size: 2.2em; margin-bottom: 20px; text-align: center; }
+    .section-tabs { display: flex; gap: 8px; margin-bottom: 20px; justify-content: center; flex-wrap: wrap; }
+    .tab { padding: 10px 22px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.3s; background: rgba(255,255,255,0.1); color: white; font-size: 0.9em; }
     .tab.active { background: linear-gradient(135deg, #10b981, #059669); }
-    .date-section { background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 25px; margin-bottom: 30px; }
-    .date-header { color: #fbbf24; font-size: 1.5em; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
-    .games-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
-    .games-table th { background: rgba(255, 255, 255, 0.1); padding: 10px; text-align: left; font-weight: bold; color: #fbbf24; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
-    .games-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
-    .games-table tr:hover { background: rgba(255, 255, 255, 0.05); }
-    .prob-correct { color: #10b981; font-weight: bold; }
-    .prob-wrong { color: #ef4444; }
-    .daily-models { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-    .daily-model-card { background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 15px; text-align: center; }
-    .daily-model-card.best { border: 2px solid #10b981; background: rgba(16, 185, 129, 0.1); }
-    .model-label { font-size: 0.9em; opacity: 0.8; margin-bottom: 5px; }
-    .model-accuracy { font-size: 1.8em; font-weight: bold; color: #10b981; }
-    .model-record { font-size: 0.9em; opacity: 0.9; }
+    /* Date navigation */
+    .date-nav { display:flex; align-items:center; justify-content:center; gap:12px; margin:16px 0; padding:12px 16px; background:rgba(255,255,255,0.05); border-radius:12px; }
+    .nav-arrow { background:rgba(251,191,36,0.2); border:2px solid #fbbf24; color:#fbbf24; font-size:1.3em; width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; user-select:none; flex-shrink:0; }
+    .nav-arrow:hover { background:rgba(251,191,36,0.4); transform:scale(1.1); }
+    .date-bubbles { display:flex; gap:8px; overflow-x:auto; padding:4px; max-width:820px; }
+    .date-bubble { background:rgba(255,255,255,0.1); border:2px solid rgba(255,255,255,0.2); border-radius:22px; padding:8px 15px; min-width:100px; text-align:center; cursor:pointer; transition:all 0.2s; white-space:nowrap; font-weight:500; font-size:0.84em; }
+    .date-bubble:hover { border-color:#fbbf24; }
+    .date-bubble.active { background:#fbbf24; border-color:#fbbf24; color:#0f172a; font-weight:700; }
+    .date-bubble.today { border-color:#10b981; color:#10b981; }
+    .date-bubble.active.today { background:#10b981; color:white; }
+    /* Date sections: hidden until selected */
+    .date-section { display:none; background:rgba(255,255,255,0.05); border-radius:12px; padding:20px; margin-bottom:20px; }
+    .date-section.visible { display:block; }
+    .date-header { color:#fbbf24; font-size:1.3em; margin-bottom:14px; padding-bottom:10px; border-bottom:2px solid rgba(255,255,255,0.2); }
+    .games-table { width:100%; border-collapse:collapse; font-size:0.88em; display:block; overflow-x:auto; }
+    .games-table th { background:rgba(255,255,255,0.1); padding:9px 10px; text-align:left; font-weight:bold; color:#fbbf24; border-bottom:2px solid rgba(255,255,255,0.2); white-space:nowrap; }
+    .games-table td { padding:7px 10px; border-bottom:1px solid rgba(255,255,255,0.08); white-space:nowrap; }
+    .games-table tr:hover { background:rgba(255,255,255,0.05); }
+    .prob-correct { color:#10b981; font-weight:bold; }
+    .prob-wrong { color:#ef4444; }
+    .prob-na { color:#64748b; font-size:0.85em; }
+    .daily-models { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:14px; }
+    @media(max-width:700px){ .daily-models { grid-template-columns:repeat(3,1fr); } }
+    .daily-model-card { background:rgba(255,255,255,0.08); border-radius:9px; padding:10px; text-align:center; }
+    .daily-model-card.best { border:2px solid #10b981; background:rgba(16,185,129,0.1); }
+    .model-label { font-size:0.78em; opacity:0.8; margin-bottom:4px; }
+    .model-accuracy { font-size:1.5em; font-weight:bold; color:#10b981; }
+    .model-record { font-size:0.82em; opacity:0.9; }
     """
 ).replace('{% block content %}{% endblock %}', """
-    <div style="margin-bottom: 20px;">
-        <a href="/" style="display: inline-block; padding: 10px 20px; background: rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; color: white; font-weight: 600;">← Back to Home</a>
-    </div>
-    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - Daily Results</h1>
+    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} — Results</h1>
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
         <a href="/sport/{{ sport }}/results" class="tab active">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads &amp; Totals Results</a>
+        <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads &amp; Totals</a>
     </div>
     {% if daily_results and overall_stats %}
         {% set ens = overall_stats.ensemble %}
-        {% set total_games = ens.total %}
         {% set units_won = (ens.correct * 0.91) - (ens.total - ens.correct) %}
         {% set roi = (units_won / ens.total * 100)|round(1) if ens.total > 0 else 0 %}
-        <!-- Overall performance header -->
-        <div style="background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 15px; padding: 25px; margin-bottom: 25px;">
-            <h2 style="text-align: center; margin: 0 0 20px 0; font-size: 1.8em;">🏆 Overall Model Performance &mdash; {{ ens.total }} Games</h2>
-            <!-- Per-model grid -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
+
+        <!-- ── Overall Moneyline Performance ── -->
+        <div style="background:linear-gradient(135deg,#1e293b,#0f172a);border:2px solid #10b981;border-radius:14px;padding:22px;margin-bottom:16px;">
+            <h2 style="text-align:center;margin:0 0 16px 0;font-size:1.5em;">🏆 Moneyline Record &mdash; {{ ens.total }} Games</h2>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
                 {% for m_label, m_key in [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Sharp Consensus','ensemble')] %}
                 {% set m = overall_stats[m_key] %}
-                <div style="background: rgba(255,255,255,0.08); border-radius: 10px; padding: 15px; text-align: center; {% if m_key == 'ensemble' %}border: 2px solid #fbbf24; grid-column: span 4;{% endif %}">
-                    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 5px;">{{ m_label }}</div>
-                    <div style="font-size: {% if m_key == 'ensemble' %}2.8em{% else %}1.9em{% endif %}; font-weight: bold; color: {% if m.accuracy >= 55 %}#10b981{% elif m.accuracy >= 50 %}#fbbf24{% else %}#ef4444{% endif %};">{{ m.accuracy }}%</div>
-                    <div style="font-size: 0.9em; opacity: 0.85;">{{ m.correct }}-{{ m.total - m.correct }}</div>
+                <div style="background:rgba(255,255,255,0.07);border-radius:9px;padding:12px;text-align:center;{% if m_key=='ensemble' %}border:2px solid #fbbf24;grid-column:span 4;{% endif %}">
+                    <div style="font-size:0.85em;opacity:0.8;margin-bottom:4px;">{{ m_label }}</div>
+                    <div style="font-size:{% if m_key=='ensemble' %}2.5em{% else %}1.7em{% endif %};font-weight:bold;color:{% if m.accuracy>=55 %}#10b981{% elif m.accuracy>=50 %}#fbbf24{% else %}#ef4444{% endif %};">{{ m.accuracy }}%</div>
+                    <div style="font-size:0.85em;opacity:0.85;">{{ m.correct }}-{{ m.total - m.correct }}</div>
                 </div>
                 {% endfor %}
             </div>
-            <!-- Sharp Consensus financials -->
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 15px;">
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">Units Won (Sharp Consensus, -110)</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}{{ units_won|round(2) }}u</div>
-                </div>
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">ROI</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if roi >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if roi > 0 else "" }}{{ roi }}%</div>
-                </div>
-                <div>
-                    <div style="font-size: 0.85em; opacity: 0.8;">$100/unit P&amp;L</div>
-                    <div style="font-size: 1.8em; font-weight: bold; color: {% if units_won >= 0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won > 0 else "" }}${{ (units_won * 100)|round(0) }}</div>
-                </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center;border-top:1px solid rgba(255,255,255,0.12);padding-top:12px;">
+                <div><div style="font-size:0.8em;opacity:0.75;">Units (Consensus @-110)</div>
+                    <div style="font-size:1.6em;font-weight:bold;color:{% if units_won>=0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won>0 else "" }}{{ units_won|round(2) }}u</div></div>
+                <div><div style="font-size:0.8em;opacity:0.75;">ROI</div>
+                    <div style="font-size:1.6em;font-weight:bold;color:{% if roi>=0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if roi>0 else "" }}{{ roi }}%</div></div>
+                <div><div style="font-size:0.8em;opacity:0.75;">$100/game P&amp;L</div>
+                    <div style="font-size:1.6em;font-weight:bold;color:{% if units_won>=0 %}#fbbf24{% else %}#ef4444{% endif %};">{{ "+" if units_won>0 else "" }}${{ (units_won*100)|round(0) }}</div></div>
             </div>
         </div>
+
+        <!-- ── Game Totals O/U Stats ── -->
+        {% if total_games_ou is defined and total_games_ou > 0 %}
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(251,191,36,0.25);border-radius:12px;padding:16px;margin-bottom:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center;">
+            <div><div style="font-size:0.75em;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Games Tracked</div>
+                <div style="font-size:1.8em;font-weight:bold;">{{ total_games_ou }}</div></div>
+            <div><div style="font-size:0.75em;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Over / Under</div>
+                <div style="font-size:1.8em;font-weight:bold;"><span style="color:#10b981;">{{ total_over }}</span> / <span style="color:#ef4444;">{{ total_under }}</span></div>
+                <div style="font-size:0.8em;color:#94a3b8;">(line: {{ ou_bench }})</div></div>
+            <div><div style="font-size:0.75em;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Over Rate</div>
+                <div style="font-size:1.8em;font-weight:bold;color:#10b981;">{{ (total_over/total_games_ou*100)|round(1) }}%</div></div>
+            <div><div style="font-size:0.75em;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px;">Avg Game Total</div>
+                <div style="font-size:1.8em;font-weight:bold;color:#fbbf24;">{{ avg_total|round(1) }}</div></div>
+        </div>
+        {% endif %}
+
+        <!-- ── Date Slider ── -->
+        <div class="date-nav">
+            <div class="nav-arrow" onclick="previousWeek()">&#8249;</div>
+            <div class="date-bubbles" id="dateBubbles"></div>
+            <div class="nav-arrow" onclick="nextWeek()">&#8250;</div>
+        </div>
+
         {% for date in sorted_dates %}
         {% set date_data = daily_results[date] %}
         <div id="date-{{ date }}" class="date-section">
-            <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">TODAY</span>{% endif %}</div>
-            
-            {% set glicko2_correct = date_data.games|selectattr('glicko2_correct')|list|length %}
-            {% set trueskill_correct = date_data.games|selectattr('trueskill_correct')|list|length %}
-            {% set elo_correct = date_data.games|selectattr('elo_correct')|list|length %}
-            {% set xgb_correct = date_data.games|selectattr('xgb_correct')|list|length %}
-            {% set ens_correct = date_data.games|selectattr('ens_correct')|list|length %}
-            {% set total_games = date_data.games|length %}
-            {% set best_count = [glicko2_correct, trueskill_correct, elo_correct, xgb_correct, ens_correct]|max %}
-            
+            <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background:#10b981;color:white;padding:3px 10px;border-radius:4px;font-size:0.65em;margin-left:8px;">TODAY</span>{% endif %}</div>
+
+            {% set g2_ok  = date_data.games|selectattr('glicko2_correct')|list|length %}
+            {% set ts_ok  = date_data.games|selectattr('trueskill_correct')|list|length %}
+            {% set elo_ok = date_data.games|selectattr('elo_correct')|list|length %}
+            {% set xgb_ok = date_data.games|selectattr('xgb_correct')|list|length %}
+            {% set ens_ok = date_data.games|selectattr('ens_correct')|list|length %}
+            {% set day_n  = date_data.games|length %}
+            {% set best   = [g2_ok,ts_ok,elo_ok,xgb_ok,ens_ok]|max %}
+
             <div class="daily-models">
-                <div class="daily-model-card {% if glicko2_correct == best_count %}best{% endif %}">
-                    <div class="model-label">⭐ Grinder2</div>
-                    <div class="model-accuracy">{{ (glicko2_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ glicko2_correct }}-{{ total_games - glicko2_correct }}</div>
+                {% for lbl,val in [('⭐ Grinder2',g2_ok),('🎯 Takedown',ts_ok),('📊 Edge',elo_ok),('🤖 XSharp',xgb_ok),('🏆 Consensus',ens_ok)] %}
+                <div class="daily-model-card {% if val==best %}best{% endif %}">
+                    <div class="model-label">{{ lbl }}</div>
+                    <div class="model-accuracy">{{ (val/day_n*100)|round(1) if day_n>0 else 0 }}%</div>
+                    <div class="model-record">{{ val }}-{{ day_n-val }}</div>
                 </div>
-                <div class="daily-model-card {% if trueskill_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🎯 Takedown</div>
-                    <div class="model-accuracy">{{ (trueskill_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ trueskill_correct }}-{{ total_games - trueskill_correct }}</div>
-                </div>
-                <div class="daily-model-card {% if elo_correct == best_count %}best{% endif %}">
-                    <div class="model-label">📊 Edge</div>
-                    <div class="model-accuracy">{{ (elo_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ elo_correct }}-{{ total_games - elo_correct }}</div>
-                </div>
-                <div class="daily-model-card {% if xgb_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🤖 XSharp</div>
-                    <div class="model-accuracy">{{ (xgb_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ xgb_correct }}-{{ total_games - xgb_correct }}</div>
-                </div>
-                <div class="daily-model-card {% if ens_correct == best_count %}best{% endif %}">
-                    <div class="model-label">🏆 Sharp Consensus</div>
-                    <div class="model-accuracy">{{ (ens_correct / total_games * 100)|round(1) if total_games > 0 else 0 }}%</div>
-                    <div class="model-record">{{ ens_correct }}-{{ total_games - ens_correct }}</div>
-                </div>
+                {% endfor %}
             </div>
-            
+
             <table class="games-table">
-                <thead><tr><th>Matchup</th><th>Score</th><th>Grinder2</th><th>Takedown</th><th>Edge</th><th>XSharp</th><th>Sharp Consensus</th></tr></thead>
+                <thead><tr>
+                    <th>Matchup</th><th>Score</th><th>Total</th>
+                    <th>Grinder2</th><th>Takedown</th><th>Edge</th><th>XSharp</th><th>Consensus</th>
+                </tr></thead>
                 <tbody>
-                    {% for game in date_data.games %}
-                    <tr>
-                        <td>{{ game.away }} @ <strong>{{ game.home }}</strong></td>
-                        <td><strong>{{ game.away_score }}-{{ game.home_score }}</strong></td>
-                        <td class="{% if game.glicko2_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.glicko2_correct %}✅{% else %}❌{% endif %} {{ game.glicko2_prob }}%</td>
-                        <td class="{% if game.trueskill_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.trueskill_correct %}✅{% else %}❌{% endif %} {{ game.trueskill_prob }}%</td>
-                        <td class="{% if game.elo_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.elo_correct %}✅{% else %}❌{% endif %} {{ game.elo_prob }}%</td>
-                        <td class="{% if game.xgb_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.xgb_correct %}✅{% else %}❌{% endif %} {{ game.xgb_prob }}%</td>
-                        <td class="{% if game.ens_correct %}prob-correct{% else %}prob-wrong{% endif %}">{% if game.ens_correct %}✅{% else %}❌{% endif %} {{ game.ens_prob }}%</td>
-                    </tr>
+                {% for game in date_data.games %}
+                <tr>
+                    <td>{{ game.away }} @ <strong>{{ game.home }}</strong></td>
+                    <td><strong>{{ game.away_score }}-{{ game.home_score }}</strong></td>
+                    <td style="color:#94a3b8;">{{ game.away_score + game.home_score }}</td>
+                    {% for prob_val, ok_val in [(game.glicko2_prob, game.glicko2_correct),(game.trueskill_prob,game.trueskill_correct),(game.elo_prob,game.elo_correct),(game.xgb_prob,game.xgb_correct),(game.ens_prob,game.ens_correct)] %}
+                    {% if prob_val is none %}<td class="prob-na">N/A</td>
+                    {% elif ok_val %}<td class="prob-correct">✅ {{ prob_val }}%</td>
+                    {% else %}<td class="prob-wrong">❌ {{ prob_val }}%</td>{% endif %}
                     {% endfor %}
+                </tr>
+                {% endfor %}
                 </tbody>
             </table>
         </div>
         {% endfor %}
+
     {% else %}
-    <div style="text-align: center; padding: 60px; opacity: 0.7;">No results data available yet.</div>
+    <div style="text-align:center;padding:60px;opacity:0.7;">No results data available yet.</div>
     {% endif %}
+<script>
+    const allDates = {{ sorted_dates|reverse|list|tojson }};
+    const today = '{{ today_date }}';
+    let currentWeekStart = 0, activeDate = null;
+    const datesPerWeek = 7;
+    function fmtDate(ds) {
+        const d = new Date(ds+'T12:00:00');
+        const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return days[d.getDay()]+', '+months[d.getMonth()]+' '+d.getDate();
+    }
+    function showDate(date) {
+        document.querySelectorAll('.date-section').forEach(s=>s.classList.remove('visible'));
+        const sec=document.getElementById('date-'+date);
+        if(sec){sec.classList.add('visible');activeDate=date;}
+    }
+    function renderBubbles() {
+        const c=document.getElementById('dateBubbles'); c.innerHTML='';
+        const end=Math.min(currentWeekStart+datesPerWeek,allDates.length);
+        const week=allDates.slice(currentWeekStart,end);
+        if(activeDate && !week.includes(activeDate)){activeDate=week[week.length-1];showDate(activeDate);}
+        week.forEach(date=>{
+            const b=document.createElement('div'); b.className='date-bubble';
+            if(date===today)b.classList.add('today');
+            if(date===activeDate)b.classList.add('active');
+            b.textContent=fmtDate(date);
+            b.onclick=()=>{document.querySelectorAll('.date-bubble').forEach(x=>x.classList.remove('active'));b.classList.add('active');showDate(date);};
+            c.appendChild(b);
+        });
+    }
+    function previousWeek(){if(currentWeekStart>0){currentWeekStart=Math.max(0,currentWeekStart-datesPerWeek);renderBubbles();}}
+    function nextWeek(){if(currentWeekStart+datesPerWeek<allDates.length){currentWeekStart+=datesPerWeek;renderBubbles();}}
+    document.addEventListener('DOMContentLoaded',()=>{
+        if(allDates.length>0){
+            const lastIdx=allDates.length-1;
+            currentWeekStart=Math.max(0,lastIdx-datesPerWeek+1);
+            activeDate=allDates[lastIdx];
+        }
+        showDate(activeDate);renderBubbles();
+    });
+</script>
 """)
 
 # NFL Weekly Results Template
@@ -2705,7 +2793,7 @@ def get_landing_accuracy(sport):
     except:
         pass
     # Fallback to known values if calculation fails
-    return {'NHL': 77.0, 'NFL': 56.8}.get(sport, 0.0)
+    return {'NHL': 77.0, 'NFL': 56.8, 'NBA': 68.5}.get(sport, 0.0)
 
 # ── Stripe payment link — replace with your link from dashboard.stripe.com/payment-links
 STRIPE_DONATION_URL = 'https://buy.stripe.com/8x228sabu7aV7uj43nao800'
@@ -3243,15 +3331,14 @@ def sport_results(sport):
             sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
             
             overall_stats = compute_overall_stats_from_daily(daily_results)
+            _ov, _un, _gou, _avg, _bench = _ou_stats(daily_results, sport)
             return render_template_string(
                 DAILY_RESULTS_TEMPLATE,
-                page=sport,
-                sport=sport,
-                sport_info=SPORTS[sport],
-                daily_results=daily_results,
-                sorted_dates=sorted_dates,
-                today_date=today_date,
-                overall_stats=overall_stats
+                page=sport, sport=sport, sport_info=SPORTS[sport],
+                daily_results=daily_results, sorted_dates=sorted_dates,
+                today_date=today_date, overall_stats=overall_stats,
+                total_over=_ov, total_under=_un, total_games_ou=_gou,
+                avg_total=_avg, ou_bench=_bench
             )
         except Exception as e:
             logger.error(f"Error processing NHL results: {e}")
@@ -3279,18 +3366,17 @@ def sport_results(sport):
         sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
         
         overall_stats = compute_overall_stats_from_daily(daily_results)
+        _ov, _un, _gou, _avg, _bench = _ou_stats(daily_results, sport)
         return render_template_string(
             DAILY_RESULTS_TEMPLATE,
-            page=sport,
-            sport=sport,
-            sport_info=SPORTS[sport],
-            daily_results=daily_results,
-            sorted_dates=sorted_dates,
-            today_date=today_date,
-            overall_stats=overall_stats
+            page=sport, sport=sport, sport_info=SPORTS[sport],
+            daily_results=daily_results, sorted_dates=sorted_dates,
+            today_date=today_date, overall_stats=overall_stats,
+            total_over=_ov, total_under=_un, total_games_ou=_gou,
+            avg_total=_avg, ou_bench=_bench
         )
 
-    # Handle NCAAB, NCAAF, MLB, WNBA using generic ESPN-based results
+    # Handle NCAAB
     if sport in ['NCAAB', 'NCAAF', 'MLB', 'WNBA']:
         # Update scores first
         update_espn_scores(sport)
@@ -3336,7 +3422,7 @@ def sport_results(sport):
             trueskill_prob = v2.get('trueskill_prob') if v2 else None
             if v2:
                 xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                ens_prob = v2['home_prob']
+                ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
 
             game_info = {
                 'date':             game_date or 'Unknown',
@@ -3360,16 +3446,15 @@ def sport_results(sport):
 
         sorted_dates = sorted(daily_results.keys(), reverse=True)[:30]
         overall_stats = compute_overall_stats_from_daily(daily_results)
+        _ov, _un, _gou, _avg, _bench = _ou_stats(daily_results, sport)
 
         return render_template_string(
             DAILY_RESULTS_TEMPLATE,
-            page=sport,
-            sport=sport,
-            sport_info=SPORTS[sport],
-            daily_results=daily_results,
-            sorted_dates=sorted_dates,
-            today_date=today_date,
-            overall_stats=overall_stats
+            page=sport, sport=sport, sport_info=SPORTS[sport],
+            daily_results=daily_results, sorted_dates=sorted_dates,
+            today_date=today_date, overall_stats=overall_stats,
+            total_over=_ov, total_under=_un, total_games_ou=_gou,
+            avg_total=_avg, ou_bench=_bench
         )
     
     performance = calculate_model_performance(sport)
