@@ -66,6 +66,64 @@ def _cached_get(url: str, timeout: int = 10):
     except Exception as exc:
         raise exc
 
+CORE_API_SPORT_PATHS = {
+    'NBA': ('basketball', 'nba'),
+    'NHL': ('hockey', 'nhl'),
+    'NFL': ('football', 'nfl'),
+    'MLB': ('baseball', 'mlb'),
+    'WNBA': ('basketball', 'wnba'),
+    'NCAAB': ('basketball', 'mens-college-basketball'),
+    'NCAAF': ('football', 'college-football'),
+}
+
+
+def _fetch_live_market_line(sport: str, game_id: str):
+    """
+    Fetch market spread/total for a game from ESPN Core API.
+    Returns {'spread': float|None, 'total': float|None, 'source': str} or None.
+    """
+    sport_path = CORE_API_SPORT_PATHS.get(sport)
+    if not sport_path or not game_id:
+        return None
+
+    event_id = str(game_id).split('_')[-1]
+    if not event_id:
+        return None
+
+    sport_slug, league_slug = sport_path
+    odds_url = (
+        f"http://sports.core.api.espn.com/v2/sports/{sport_slug}/leagues/{league_slug}/"
+        f"events/{event_id}/competitions/{event_id}/odds"
+    )
+
+    try:
+        odds_data = _cached_get(odds_url, timeout=8)
+        items = odds_data.get('items', []) if isinstance(odds_data, dict) else []
+        if not items:
+            return None
+
+        chosen = None
+        for item in items:
+            if item.get('spread') is not None or item.get('overUnder') is not None:
+                chosen = item
+                break
+        if chosen is None:
+            chosen = items[0]
+
+        def _to_num(v):
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+
+        return {
+            'spread': _to_num(chosen.get('spread')),
+            'total': _to_num(chosen.get('overUnder')),
+            'source': 'ESPN Core API (live fallback)',
+        }
+    except Exception:
+        return None
+
 app = Flask(__name__)
 CORS(app, origins=[
     'https://underdogs.bet',
@@ -4035,6 +4093,10 @@ SPREAD_TOTAL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
             N/A is shown when betting line data is unavailable in the database.
             Missing spread lines: {{ missing_spread_lines }} games.
             Missing total lines: {{ missing_total_lines }} games.
+            Latest stored {{ sport }} line date: {{ latest_db_line_date if latest_db_line_date else 'N/A' }}.
+            {% if live_line_fetch_attempted > 0 %}
+            Live fallback fetched {{ live_line_fetch_success }} of {{ live_line_fetch_attempted }} missing recent games.
+            {% endif %}
         </div>
         {% endif %}
 
@@ -4071,12 +4133,12 @@ SPREAD_TOTAL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                     <tr>
                         <td class="left"><strong>{{ game.matchup }}</strong></td>
                         <td>{{ game.score }}</td>
-                        <td>{% if game.market_spread is not none %}{{ "%+.1f"|format(game.market_spread) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{% if game.market_spread is not none %}{{ "%+.1f"|format(game.market_spread) }}{% else %}<span class="na" title="{{ game.line_reason if game.line_reason else 'No market spread found' }}">N/A</span>{% endif %}</td>
                         <td>{% if game.xgb_spread is not none %}{{ "%+.1f"|format(game.xgb_spread) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
                         <td>{{ game.spread_pick if game.spread_pick else 'N/A' }}</td>
                         <td>{{ "%+.1f"|format(game.actual_margin) }}</td>
                         <td>{% if game.pick_covered is none %}<span class="na">N/A</span>{% elif game.pick_covered %}<span class="good">true</span>{% else %}<span class="bad">false</span>{% endif %}</td>
-                        <td>{% if game.market_total is not none %}{{ "%.1f"|format(game.market_total) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{% if game.market_total is not none %}{{ "%.1f"|format(game.market_total) }}{% else %}<span class="na" title="{{ game.line_reason if game.line_reason else 'No market total found' }}">N/A</span>{% endif %}</td>
                         <td>{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
                         <td>{{ game.total_pick if game.total_pick else 'N/A' }}</td>
                         <td>{{ game.actual_total }}</td>
@@ -4104,24 +4166,62 @@ def sport_spread_total_results(sport):
     has_xgb = xgb_model is not None
 
     conn = get_db_connection()
+    latest_db_line_date_row = conn.execute(
+        'SELECT MAX(date(game_date)) AS max_date FROM betting_lines WHERE sport = ?',
+        (sport,)
+    ).fetchone()
+    latest_db_line_date = latest_db_line_date_row['max_date'] if latest_db_line_date_row else None
     completed_games = conn.execute('''
         SELECT
             g.game_id, g.game_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score,
-            bl.spread AS market_spread, bl.total AS market_total
+            COALESCE(bl_game.spread, bl_match.spread) AS market_spread,
+            COALESCE(bl_game.total, bl_match.total) AS market_total
         FROM games g
         LEFT JOIN (
             SELECT game_id, MAX(spread) AS spread, MAX(total) AS total
             FROM betting_lines
+            WHERE sport = ?
             GROUP BY game_id
-        ) bl ON bl.game_id = g.game_id
+        ) bl_game ON bl_game.game_id = g.game_id
+        LEFT JOIN (
+            SELECT date(game_date) AS game_day, home_team, away_team, MAX(spread) AS spread, MAX(total) AS total
+            FROM betting_lines
+            WHERE sport = ?
+            GROUP BY date(game_date), home_team, away_team
+        ) bl_match
+          ON bl_match.game_day = date(g.game_date)
+         AND bl_match.home_team = g.home_team_id
+         AND bl_match.away_team = g.away_team_id
         WHERE g.sport = ?
           AND g.home_score IS NOT NULL
           AND g.away_score IS NOT NULL
           AND g.status = 'final'
         ORDER BY g.game_date DESC
         LIMIT 2000
-    ''', (sport,)).fetchall()
+    ''', (sport, sport, sport)).fetchall()
     conn.close()
+    # Live API fallback for recent missing lines (bounded to keep route fast)
+    live_lines_by_game = {}
+    live_line_fetch_attempted = 0
+    live_line_fetch_success = 0
+    live_fetch_cap = 60
+    live_recent_cutoff = datetime.now() - timedelta(days=3)
+
+    for game in completed_games:
+        if live_line_fetch_attempted >= live_fetch_cap:
+            break
+        if game['market_spread'] is not None and game['market_total'] is not None:
+            continue
+
+        game_date_obj = parse_date(str(game['game_date'])) if game['game_date'] else None
+        if not game_date_obj or game_date_obj < live_recent_cutoff:
+            continue
+
+        live_line_fetch_attempted += 1
+        live_line = _fetch_live_market_line(sport, game['game_id'])
+        if live_line and (live_line.get('spread') is not None or live_line.get('total') is not None):
+            live_lines_by_game[game['game_id']] = live_line
+            live_line_fetch_success += 1
 
     daily_results = defaultdict(lambda: {
         'games': [],
@@ -4178,6 +4278,26 @@ def sport_spread_total_results(sport):
             actual_total = actual_home + actual_away
             market_spread = _to_float(game['market_spread'])
             market_total = _to_float(game['market_total'])
+            line_reason = None
+
+            # Overlay live line data when DB is missing spread/total
+            live_line = live_lines_by_game.get(game['game_id'])
+            if live_line:
+                if market_spread is None:
+                    market_spread = _to_float(live_line.get('spread'))
+                if market_total is None:
+                    market_total = _to_float(live_line.get('total'))
+
+            if market_spread is None or market_total is None:
+                if latest_db_line_date:
+                    line_reason = f"No matched market line in DB (latest {sport} line date: {latest_db_line_date})"
+                else:
+                    line_reason = f"No market line data in DB for {sport}"
+                if game['game_id'] in live_lines_by_game:
+                    if market_spread is None and market_total is not None:
+                        line_reason = "Live fallback found total only; spread unavailable"
+                    elif market_total is None and market_spread is not None:
+                        line_reason = "Live fallback found spread only; total unavailable"
 
             xgb_spread_val = None
             xgb_total_val = None
@@ -4262,6 +4382,7 @@ def sport_spread_total_results(sport):
                 'total_pick': total_pick,
                 'actual_total': int(actual_total),
                 'total_correct': total_correct,
+                'line_reason': line_reason,
             })
             daily_results[date_key]['total_games'] += 1
             daily_results[date_key]['actual_total_sum'] += actual_total
@@ -4305,7 +4426,10 @@ def sport_spread_total_results(sport):
         xgb_avg_total_err=xgb_avg_total_err,
         missing_spread_lines=missing_spread_lines,
         missing_total_lines=missing_total_lines,
-        has_xgb=has_xgb
+        has_xgb=has_xgb,
+        latest_db_line_date=latest_db_line_date,
+        live_line_fetch_attempted=live_line_fetch_attempted,
+        live_line_fetch_success=live_line_fetch_success
     )
 
 @app.route('/sport/<sport>/ats')
