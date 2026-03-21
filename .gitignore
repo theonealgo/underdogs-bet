@@ -1,5 +1,6 @@
 # ── Databases (large & contain user data) ─────────────────────────────────────
 *.db
+!sports_predictions_original.db
 *.sqlite
 *.sqlite3
 
@@ -22,11 +23,12 @@ build/
 .venv/
 venv/
 .Python
-
-# ── Trained model binaries (large, regeneratable) ─────────────────────────────
+# ── Trained model binaries (large, regeneratable) ─────────────────────
 *.pkl
+!models/**/*.pkl
 *.h5
 *.joblib
+catboost_info/
 catboost_info/
 
 # ── Logs ──────────────────────────────────────────────────────────────────────

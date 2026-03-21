@@ -1576,6 +1576,26 @@ def calculate_nhl_weekly_performance():
 
 def calculate_nba_weekly_performance():
     """Calculate NBA model performance week by week using v2 model predictions."""
+    def to_float(val):
+        if val is None:
+            return None
+        if isinstance(val, (float, int)):
+            return float(val)
+        if isinstance(val, bytes):
+            try:
+                import struct
+                if len(val) == 8:
+                    return struct.unpack('d', val)[0]
+                elif len(val) == 4:
+                    return struct.unpack('f', val)[0]
+            except:
+                pass
+            return None
+        try:
+            return float(val)
+        except:
+            return None
+
     try:
         conn = get_db_connection()
         from datetime import datetime, timedelta
@@ -1627,9 +1647,9 @@ def calculate_nba_weekly_performance():
             week = (days_since_start // 7) + 1
 
             # Stored DB predictions
-            elo_prob  = float(game['elo_home_prob'])      if game['elo_home_prob']      is not None else None
-            xgb_prob  = float(game['xgboost_home_prob']) if game['xgboost_home_prob']  is not None else elo_prob
-            ens_prob  = float(game['win_probability'])   if game['win_probability']    is not None else elo_prob
+            elo_prob  = to_float(game['elo_home_prob'])
+            xgb_prob  = to_float(game['xgboost_home_prob']) or elo_prob
+            ens_prob  = to_float(game['win_probability']) or elo_prob
 
             # V2 model predictions (Glicko-2, TrueSkill)
             v2 = get_v2_prediction('NBA', home_team, away_team, game['game_date'])
