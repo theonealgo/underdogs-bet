@@ -10,6 +10,8 @@ requests
 scipy
 scikit-learn
 xgboost
+catboost
+lightgbm
 
 # Sports data (PyPI packages only — local modules like nhl_api.py are in the repo)
 nfl-data-py

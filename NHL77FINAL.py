@@ -1812,7 +1812,6 @@ def calculate_model_performance(sport):
             'correct':  results[model]['correct'],
             'total':    total
         }
-    valid_dates
     valid_dates = [d for d in dates if d is not None]
     performance['date_range'] = (
         f"{min(valid_dates).strftime('%d/%m/%Y')} - {max(valid_dates).strftime('%d/%m/%Y')}"
