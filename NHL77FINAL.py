@@ -3764,7 +3764,7 @@ def _sport_spread_total_picks_old(sport):
             FROM games g
             WHERE g.sport = ?
               AND g.home_score IS NOT NULL
-              AND g.status = 'final'
+          AND g.status = 'final'
             ORDER BY g.game_date DESC
             LIMIT 50
         ''', (sport,)).fetchall()
@@ -3974,337 +3974,321 @@ def _sport_spread_total_picks_old(sport):
 SPREAD_TOTAL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     '{% block extra_styles %}{% endblock %}',
     """
-    .page-title { font-size: 2.5em; margin-bottom: 30px; text-align: center; }
-    .section-tabs { display: flex; gap: 10px; margin-bottom: 30px; justify-content: center; }
-    .tab { padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.3s; background: rgba(255, 255, 255, 0.1); color: white; }
+    .page-title { font-size: 2.2em; margin-bottom: 20px; text-align: center; }
+    .section-tabs { display: flex; gap: 10px; margin-bottom: 20px; justify-content: center; }
+    .tab { padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; background: rgba(255,255,255,0.1); color: white; }
     .tab.active { background: linear-gradient(135deg, #10b981, #059669); }
-    .filter-toggles { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
-    .filter-btn { padding: 10px 20px; border-radius: 8px; border: 2px solid rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.1); color: white; font-weight: 600; cursor: pointer; transition: all 0.3s; }
-    .filter-btn.active { background: linear-gradient(135deg, #10b981, #059669); border-color: #10b981; }
-    .date-section { background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 25px; margin-bottom: 30px; overflow-x: auto; }
-    .date-header { color: #fbbf24; font-size: 1.5em; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
-    .games-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.85em; min-width: 900px; }
-    .games-table th { background: rgba(255, 255, 255, 0.15); padding: 10px 8px; font-weight: bold; color: #fbbf24; border-bottom: 2px solid rgba(255, 255, 255, 0.3); white-space: nowrap; }
-    .games-table th.align-left { text-align: left; }
-    .games-table th.align-right { text-align: right; }
-    .games-table th.align-center { text-align: center; }
-    .games-table td { padding: 10px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap; }
-    .games-table td.align-left { text-align: left; }
-    .games-table td.align-right { text-align: right; }
-    .games-table td.align-center { text-align: center; }
-    .games-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
-    .games-table tbody tr:hover { background: rgba(255, 255, 255, 0.08); }
-    .games-table tr.hidden { display: none; }
-    .result-correct { color: #10b981; font-weight: bold; }
-    .result-incorrect { color: #ef4444; font-weight: bold; }
-    .result-na { color: #9ca3af; opacity: 0.6; }
-    .over { color: #10b981; font-weight: bold; }
-    .under { color: #ef4444; font-weight: bold; }
-    .overall-stats { background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 15px; padding: 30px; margin-bottom: 30px; }
-    .overall-stats h2 { margin: 0 0 20px 0; font-size: 1.6em; text-align: center; color: #10b981; }
-    .model-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-    .model-col { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 20px; }
-    .model-col h3 { text-align: center; margin-bottom: 15px; font-size: 1.1em; }
-    .model-col.naive h3 { color: #a78bfa; }
-    .model-col.xgb h3 { color: #fbbf24; }
-    .model-stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.9em; }
-    .stat-key { opacity: 0.8; }
-    .stat-val { font-weight: 700; }
-    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
-    .stat-card { background: rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 18px; text-align: center; }
-    .stat-card.primary { background: rgba(16, 185, 129, 0.15); border: 2px solid #10b981; }
-    .stat-card-label { font-size: 0.8em; opacity: 0.9; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat-card-value { font-size: 1.9em; font-weight: bold; margin-bottom: 4px; }
-    .stat-card-detail { font-size: 0.85em; opacity: 0.85; }
-    .daily-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-    .daily-stat-card { background: rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 12px; text-align: center; }
-    .stat-label { font-size: 0.85em; opacity: 0.8; margin-bottom: 5px; }
-    .stat-value { font-size: 1.5em; font-weight: bold; color: #fbbf24; }
-    .stat-record { font-size: 0.85em; opacity: 0.9; }
-    .edge-high { color: #f87171; font-weight: 700; }
-    .edge-low { color: #9ca3af; }
+    .overall-stats { background: linear-gradient(135deg, #1e293b, #0f172a); border: 2px solid #10b981; border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+    .overall-stats h2 { text-align: center; margin: 0 0 14px 0; color: #10b981; }
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .stat-card { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; text-align: center; }
+    .stat-label { font-size: 0.8em; opacity: 0.85; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .stat-value { font-size: 1.7em; font-weight: 700; color: #fbbf24; }
+    .stat-detail { font-size: 0.85em; opacity: 0.85; }
+    .note-box { background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.35); border-radius: 10px; padding: 10px 12px; margin-bottom: 15px; font-size: 0.9em; color: #fde68a; }
+    .date-section { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }
+    .date-header { color: #fbbf24; font-size: 1.2em; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 8px; }
+    .daily-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+    .daily-card { background: rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; text-align: center; }
+    .daily-card .k { font-size: 0.78em; opacity: 0.8; }
+    .daily-card .v { font-size: 1.2em; font-weight: 700; color: #fbbf24; }
+    .games-table { width: 100%; border-collapse: collapse; font-size: 0.84em; min-width: 1080px; }
+    .games-table th { background: rgba(255,255,255,0.12); color: #fbbf24; padding: 8px; border-bottom: 2px solid rgba(255,255,255,0.25); text-align: center; }
+    .games-table td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.12); text-align: center; }
+    .games-table td.left, .games-table th.left { text-align: left; }
+    .good { color: #10b981; font-weight: 700; }
+    .bad { color: #ef4444; font-weight: 700; }
+    .na { color: #9ca3af; opacity: 0.9; }
     """
 ).replace('{% block content %}{% endblock %}', """
-    <div style="margin-bottom: 20px;">
-        <a href="/" style="display: inline-block; padding: 10px 20px; background: rgba(255,255,255,0.1); border-radius: 8px; text-decoration: none; color: white; font-weight: 600;">← Back to Home</a>
-    </div>
-    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} - Spread & Total Results</h1>
+    <h1 class="page-title">{{ sport_info.icon }} {{ sport_info.name }} — Spread &amp; Totals Results (XSharp)</h1>
     <div class="section-tabs">
         <a href="/sport/{{ sport }}/predictions" class="tab">📊 Predictions</a>
         <a href="/sport/{{ sport }}/results" class="tab">🎯 Moneyline Results</a>
-        <a href="/sport/{{ sport }}/spreads/results" class="tab active">📈 Spreads & Totals Results</a>
+        <a href="/sport/{{ sport }}/spreads/results" class="tab active">📈 Spreads &amp; Totals Results</a>
     </div>
+
     {% if daily_results %}
         <div class="overall-stats">
-            <h2>🏆 Overall Performance — {{ total_games }} Games</h2>
-            <div class="model-compare">
-                <div class="model-col naive">
-                <h3>📐 Our Formula (Edge + XSharp)</h3>
-                    <div class="model-stat-row"><span class="stat-key">Spread Accuracy</span><span class="stat-val">{{ "%.1f"|format(naive_spread_correct_pct) }}%</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Record</span><span class="stat-val">{{ naive_spread_correct }}-{{ total_games - naive_spread_correct }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Spread Error</span><span class="stat-val">{{ "%.1f"|format(naive_avg_spread_err) }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Total Error</span><span class="stat-val">{{ "%.1f"|format(naive_avg_total_err) }}</span></div>
-                </div>
-                <div class="model-col xgb">
-                    <h3>🤖 XSharp Model</h3>
-                    {% if has_xgb %}
-                    <div class="model-stat-row"><span class="stat-key">Spread Accuracy</span><span class="stat-val">{{ "%.1f"|format(xgb_spread_correct_pct) }}%</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Record</span><span class="stat-val">{{ xgb_spread_correct }}-{{ total_games - xgb_spread_correct }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Spread Error</span><span class="stat-val">{{ "%.1f"|format(xgb_avg_spread_err) }}</span></div>
-                    <div class="model-stat-row"><span class="stat-key">Avg Total Error</span><span class="stat-val">{{ "%.1f"|format(xgb_avg_total_err) }}</span></div>
-                    {% else %}
-                    <div style="text-align: center; padding: 20px; opacity: 0.6;">Model not yet trained (need 20+ games)</div>
-                    {% endif %}
-                </div>
-            </div>
+            <h2>🏆 XSharp Performance — {{ total_games }} Games</h2>
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-card-label">Total Games</div>
-                    <div class="stat-card-value">{{ total_games }}</div>
+                    <div class="stat-label">Spread Cover Accuracy</div>
+                    <div class="stat-value">{{ "%.1f"|format(xgb_spread_cover_pct) }}%</div>
+                    <div class="stat-detail">{{ xgb_spread_covered }} correct / {{ xgb_spread_graded }} graded</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-card-label">Over / Under</div>
-                    <div class="stat-card-value">{{ total_over }}-{{ total_under }}</div>
-                    <div class="stat-card-detail">{{ "%.1f"|format(over_pct) }}% OVER</div>
+                    <div class="stat-label">Total Pick Accuracy</div>
+                    <div class="stat-value">{{ "%.1f"|format(xgb_total_correct_pct) }}%</div>
+                    <div class="stat-detail">{{ xgb_total_correct }} correct / {{ xgb_total_graded }} graded</div>
                 </div>
-                <div class="stat-card primary">
-                    <div class="stat-card-label">Best Model</div>
-                    <div class="stat-card-value">{% if has_xgb and xgb_spread_correct_pct >= naive_spread_correct_pct %}🤖 XSharp{% else %}📐 Our Formula{% endif %}</div>
-                    <div class="stat-card-detail">{% if has_xgb and xgb_spread_correct_pct >= naive_spread_correct_pct %}{{ "%.1f"|format(xgb_spread_correct_pct) }}%{% else %}{{ "%.1f"|format(naive_spread_correct_pct) }}%{% endif %}</div>
+                <div class="stat-card">
+                    <div class="stat-label">Average Error</div>
+                    <div class="stat-value">S {{ "%.1f"|format(xgb_avg_spread_err) }} / T {{ "%.1f"|format(xgb_avg_total_err) }}</div>
+                    <div class="stat-detail">Spread margin / Game total</div>
                 </div>
             </div>
         </div>
 
-        <div class="filter-toggles">
-            <button class="filter-btn active" onclick="filterResults('all', this)">All Games</button>
-            <button class="filter-btn" onclick="filterResults('our', this)">✅ Our Formula ✓</button>
-            <button class="filter-btn" onclick="filterResults('xgb', this)">🤖 XSharp ✓</button>
-            <button class="filter-btn" onclick="filterResults('both', this)">🏆 Both Correct</button>
-            <button class="filter-btn" onclick="filterResults('over', this)">⬆️ OVER Games</button>
-            <button class="filter-btn" onclick="filterResults('under', this)">⬇️ UNDER Games</button>
+        {% if missing_spread_lines > 0 or missing_total_lines > 0 %}
+        <div class="note-box">
+            N/A is shown when betting line data is unavailable in the database.
+            Missing spread lines: {{ missing_spread_lines }} games.
+            Missing total lines: {{ missing_total_lines }} games.
         </div>
+        {% endif %}
 
         {% for date in sorted_dates %}
         {% set date_data = daily_results[date] %}
-        <div id="date-{{ date }}" class="date-section">
-            <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">TODAY</span>{% endif %}</div>
-
-            <div class="daily-stats">
-                <div class="daily-stat-card">
-                    <div class="stat-label">Our Formula (Spread Winner %)</div>
-                    <div class="stat-value">{{ (date_data.naive_spread_correct / date_data.total_games * 100)|round(1) if date_data.total_games > 0 else 0 }}%</div>
-                    <div class="stat-record">{{ date_data.naive_spread_correct }}-{{ date_data.total_games - date_data.naive_spread_correct }} correct</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">XSharp (Spread Winner %)</div>
-                    <div class="stat-value">{{ (date_data.xgb_spread_correct / date_data.total_games * 100)|round(1) if date_data.total_games > 0 else '—' }}%</div>
-                    <div class="stat-record">{{ date_data.xgb_spread_correct }}-{{ date_data.total_games - date_data.xgb_spread_correct }} correct</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">Over / Under</div>
-                    <div class="stat-value">{{ date_data.over_count }}-{{ date_data.under_count }}</div>
-                </div>
-                <div class="daily-stat-card">
-                    <div class="stat-label">Games</div>
-                    <div class="stat-value">{{ date_data.total_games }}</div>
-                </div>
+        <div class="date-section">
+            <div class="date-header">📅 {{ date }}{% if date == today_date %} <span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:0.7em;margin-left:8px;">TODAY</span>{% endif %}</div>
+            <div class="daily-summary">
+                <div class="daily-card"><div class="k">Games</div><div class="v">{{ date_data.total_games }}</div></div>
+                <div class="daily-card"><div class="k">Spread</div><div class="v">{{ date_data.xgb_spread_covered }}/{{ date_data.xgb_spread_graded }}</div></div>
+                <div class="daily-card"><div class="k">Totals</div><div class="v">{{ date_data.xgb_total_correct }}/{{ date_data.xgb_total_graded }}</div></div>
+                <div class="daily-card"><div class="k">Avg Total</div><div class="v">{{ date_data.avg_actual_total }}</div></div>
             </div>
 
             <table class="games-table">
                 <thead>
                     <tr>
-                        <th class="align-left">Matchup</th>
-                        <th class="align-center">Score</th>
-                        <th class="align-right" style="color: #a78bfa;">Our Sprd</th>
-                        <th class="align-right" style="color: #fbbf24;">XSharp Sprd</th>
-                        <th class="align-right">Actual Margin</th>
-                        <th class="align-center">Our ✓</th>
-                        <th class="align-center">XSharp ✓</th>
-                        <th class="align-right" style="color: #a78bfa;">Our Total</th>
-                        <th class="align-center">O/U</th>
-                        <th class="align-right" style="color: #fbbf24;">XSharp Total</th>
-                        <th class="align-center">XSharp O/U</th>
-                        <th class="align-right">Actual Total</th>
+                        <th class="left">Matchup</th>
+                        <th>Score</th>
+                        <th>Market Spread</th>
+                        <th>XSharp Spread</th>
+                        <th>Spread Pick</th>
+                        <th>Actual Margin</th>
+                        <th>Covered?</th>
+                        <th>Market Total</th>
+                        <th>XSharp Total</th>
+                        <th>Total Pick</th>
+                        <th>Actual Total</th>
+                        <th>Total Correct?</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for game in date_data.games %}
-                    <tr data-naive-correct="{{ 'true' if game.naive_correct else 'false' }}"
-                        data-xgb-correct="{{ 'true' if game.xgb_correct else 'false' }}"
-                        data-over-result="{{ 'true' if game.over_result else 'false' }}">
-                        <td class="align-left"><strong>{{ game.matchup }}</strong></td>
-                        <td class="align-center" style="font-weight: 700;">{{ game.score }}</td>
-                        <td class="align-right" style="color: #a78bfa;">{{ "%+.1f"|format(game.naive_spread) }}</td>
-                        <td class="align-right" style="color: #fbbf24;">{% if game.xgb_spread is not none %}{{ "%+.1f"|format(game.xgb_spread) }}{% else %}—{% endif %}</td>
-                        <td class="align-right">{{ "%+.1f"|format(game.actual_spread) }}</td>
-                        <td class="align-center {% if game.naive_correct %}result-correct{% else %}result-incorrect{% endif %}" style="font-size: 1.2em;">{% if game.naive_correct %}✅{% else %}❌{% endif %}</td>
-                        <td class="align-center {% if game.xgb_correct is none %}result-na{% elif game.xgb_correct %}result-correct{% else %}result-incorrect{% endif %}" style="font-size: 1.2em;">{% if game.xgb_correct is none %}—{% elif game.xgb_correct %}✅{% else %}❌{% endif %}</td>
-                        <td class="align-right" style="color: #a78bfa;">{{ "%.1f"|format(game.naive_total) }}</td>
-                        <td class="align-center {% if game.over_result %}over{% else %}under{% endif %}" style="font-weight: 600;">{% if game.over_result %}⬆️ OVER{% else %}⬇️ UNDER{% endif %}</td>
-                        <td class="align-right" style="color: #fbbf24;">{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% else %}—{% endif %}</td>
-                        <td class="align-center {% if game.xgb_over_result is none %}result-na{% elif game.xgb_over_result %}over{% else %}under{% endif %}" style="font-weight: 600;">{% if game.xgb_over_result is none %}—{% elif game.xgb_over_result %}⬆️ OVER{% else %}⬇️ UNDER{% endif %}</td>
-                        <td class="align-right">{{ game.actual_total }}</td>
+                {% for game in date_data.games %}
+                    <tr>
+                        <td class="left"><strong>{{ game.matchup }}</strong></td>
+                        <td>{{ game.score }}</td>
+                        <td>{% if game.market_spread is not none %}{{ "%+.1f"|format(game.market_spread) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{% if game.xgb_spread is not none %}{{ "%+.1f"|format(game.xgb_spread) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{{ game.spread_pick if game.spread_pick else 'N/A' }}</td>
+                        <td>{{ "%+.1f"|format(game.actual_margin) }}</td>
+                        <td>{% if game.pick_covered is none %}<span class="na">N/A</span>{% elif game.pick_covered %}<span class="good">true</span>{% else %}<span class="bad">false</span>{% endif %}</td>
+                        <td>{% if game.market_total is not none %}{{ "%.1f"|format(game.market_total) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+                        <td>{{ game.total_pick if game.total_pick else 'N/A' }}</td>
+                        <td>{{ game.actual_total }}</td>
+                        <td>{% if game.total_correct is none %}<span class="na">N/A</span>{% elif game.total_correct %}<span class="good">true</span>{% else %}<span class="bad">false</span>{% endif %}</td>
                     </tr>
-                    {% endfor %}
+                {% endfor %}
                 </tbody>
             </table>
         </div>
         {% endfor %}
     {% else %}
-    <div style="text-align: center; padding: 60px; opacity: 0.7;">No spread/total results data available yet.</div>
+    <div style="text-align:center;padding:60px;opacity:0.75;">No spread/total results data available yet.</div>
     {% endif %}
-
-    <script>
-    function filterResults(type, btn) {
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        document.querySelectorAll('.games-table tbody tr').forEach(row => {
-            const naiveOk = row.getAttribute('data-naive-correct') === 'true';
-            const xgbOk  = row.getAttribute('data-xgb-correct')  === 'true';
-            const isOver = row.getAttribute('data-over-result')   === 'true';
-            let hidden = false;
-            if      (type === 'our')   hidden = !naiveOk;
-            else if (type === 'xgb')   hidden = !xgbOk;
-            else if (type === 'both')  hidden = !(naiveOk && xgbOk);
-            else if (type === 'over')  hidden = !isOver;
-            else if (type === 'under') hidden = isOver;
-            row.classList.toggle('hidden', hidden);
-        });
-    }
-    </script>
 """)
 
 @app.route('/sport/<sport>/spreads/results')
 def sport_spread_total_results(sport):
-    """Spread & total results — Naive formula vs XGBoost model comparison"""
+    """Spread & total results — XSharp only, graded against market spread/total lines."""
     if sport not in SPORTS:
         return "Sport not found", 404
 
     from collections import defaultdict
 
-    sp        = _score_predictor_instance(sport)
     xgb_model = _get_xgb_spread_model(sport)
-    has_xgb   = xgb_model is not None
+    has_xgb = xgb_model is not None
 
     conn = get_db_connection()
     completed_games = conn.execute('''
-        SELECT game_id, game_date, home_team_id, away_team_id, home_score, away_score
-        FROM games
-        WHERE sport = ?
-          AND home_score IS NOT NULL
-          AND away_score IS NOT NULL
-          AND status = 'final'
-        ORDER BY game_date DESC
-        LIMIT 200
+        SELECT
+            g.game_id, g.game_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score,
+            bl.spread AS market_spread, bl.total AS market_total
+        FROM games g
+        LEFT JOIN (
+            SELECT bl1.game_id, bl1.spread, bl1.total
+            FROM betting_lines bl1
+            INNER JOIN (
+                SELECT game_id, MAX(id) AS max_id
+                FROM betting_lines
+                GROUP BY game_id
+            ) latest ON latest.max_id = bl1.id
+        ) bl ON bl.game_id = g.game_id
+        WHERE g.sport = ?
+          AND g.home_score IS NOT NULL
+          AND g.away_score IS NOT NULL
+          AND g.status = 'final'
+        ORDER BY g.game_date DESC
+        LIMIT 2000
     ''', (sport,)).fetchall()
     conn.close()
 
     daily_results = defaultdict(lambda: {
-        'games': [], 'over_count': 0, 'under_count': 0,
-        'naive_spread_correct': 0, 'xgb_spread_correct': 0, 'total_games': 0
+        'games': [],
+        'xgb_spread_covered': 0,
+        'xgb_spread_graded': 0,
+        'xgb_total_correct': 0,
+        'xgb_total_graded': 0,
+        'total_games': 0,
+        'actual_total_sum': 0.0,
+        'avg_actual_total': 0.0,
     })
 
-    total_over = total_under = 0
-    naive_spread_correct = xgb_spread_correct = 0
-    naive_spread_err_sum = naive_total_err_sum = 0.0
-    xgb_spread_err_sum   = xgb_total_err_sum   = 0.0
-    xgb_game_count = total_games = 0
+    total_games = 0
+    xgb_spread_covered = 0
+    xgb_spread_graded = 0
+    xgb_total_correct = 0
+    xgb_total_graded = 0
+
+    xgb_spread_err_sum = 0.0
+    xgb_spread_err_n = 0
+    xgb_total_err_sum = 0.0
+    xgb_total_err_n = 0
+
+    missing_spread_lines = 0
+    missing_total_lines = 0
+
+    def _to_float(v):
+        try:
+            return float(v) if v is not None else None
+        except Exception:
+            return None
+
+    def _cover_side(home_margin, home_spread_line):
+        # home_margin = home_score - away_score
+        # home_spread_line = market home spread (negative=home favorite)
+        # home covers when home_margin + spread > 0
+        delta = home_margin + home_spread_line
+        if abs(delta) < 1e-9:
+            return 'push'
+        return 'home' if delta > 0 else 'away'
 
     for game in completed_games:
         try:
-            if sp:
-                pred_home, pred_away, naive_spread, naive_total = sp.predict_score(
-                    game['home_team_id'], game['away_team_id'], sport
-                )
-            else:
-                from score_predictor import ScorePredictor
-                pred_home, pred_away, naive_spread, naive_total = ScorePredictor().predict_score(
-                    game['home_team_id'], game['away_team_id'], sport
-                )
-
-            if not naive_total:
+            date_key = (game['game_date'] or '').split()[0]
+            if not date_key:
                 continue
 
-            actual_home   = game['home_score']
-            actual_away   = game['away_score']
-            actual_total  = actual_home + actual_away
-            actual_spread = actual_home - actual_away
+            actual_home = _to_float(game['home_score'])
+            actual_away = _to_float(game['away_score'])
+            if actual_home is None or actual_away is None:
+                continue
 
-            # Over/Under vs naive total
-            over_result = actual_total > naive_total
-            if over_result:
-                total_over += 1
-                daily_results[game['game_date']]['over_count'] += 1
-            else:
-                total_under += 1
-                daily_results[game['game_date']]['under_count'] += 1
+            actual_margin = actual_home - actual_away
+            actual_total = actual_home + actual_away
+            market_spread = _to_float(game['market_spread'])
+            market_total = _to_float(game['market_total'])
 
-            # Naive spread winner accuracy
-            actual_winner = 'home' if actual_spread > 0 else 'away'
-            naive_winner  = 'home' if naive_spread  > 0 else 'away'
-            naive_correct = (naive_winner == actual_winner)
-            if naive_correct:
-                naive_spread_correct += 1
-                daily_results[game['game_date']]['naive_spread_correct'] += 1
-            naive_spread_err_sum += abs(naive_spread - actual_spread)
-            naive_total_err_sum  += abs(naive_total  - actual_total)
+            xgb_spread_val = None
+            xgb_total_val = None
+            spread_pick = None
+            pick_covered = None
+            total_pick = None
+            total_correct = None
 
-            # XGBoost model
-            xgb_spread_val = xgb_total_val = None
-            xgb_correct    = None
-            xgb_spread_edge = xgb_total_edge = None
             if xgb_model:
                 try:
                     xgb_pred = xgb_model.predict(game['home_team_id'], game['away_team_id'])
                     if xgb_pred and xgb_pred[2] is not None:
                         _, _, xgb_spread_val, xgb_total_val = xgb_pred
-                        xgb_winner  = 'home' if xgb_spread_val > 0 else 'away'
-                        xgb_correct = (xgb_winner == actual_winner)
-                        if xgb_correct:
-                            xgb_spread_correct += 1
-                            daily_results[game['game_date']]['xgb_spread_correct'] += 1
-                        xgb_spread_edge = round(xgb_spread_val - actual_spread, 1)
-                        xgb_total_edge  = round(xgb_total_val  - actual_total,  1)
-                        xgb_spread_err_sum += abs(xgb_spread_val - actual_spread)
-                        xgb_total_err_sum  += abs(xgb_total_val  - actual_total)
-                        xgb_game_count += 1
+                        xgb_spread_val = _to_float(xgb_spread_val)
+                        xgb_total_val = _to_float(xgb_total_val)
                 except Exception:
                     pass
 
-            daily_results[game['game_date']]['games'].append({
-                'matchup':        f"{game['away_team_id']} @ {game['home_team_id']}",
-                'score':          f"{actual_away}-{actual_home}",
-                'naive_spread':   round(naive_spread, 1),
-                'naive_total':    round(naive_total,  1),
-                'naive_correct':  naive_correct,
-                'xgb_spread':     round(xgb_spread_val, 1) if xgb_spread_val is not None else None,
-                'xgb_total':      round(xgb_total_val,  1) if xgb_total_val  is not None else None,
-                'xgb_correct':    xgb_correct,
-                'xgb_spread_edge':   xgb_spread_edge,
-                'xgb_total_edge':    xgb_total_edge,
-                'actual_spread':     round(actual_spread, 1),
-                'actual_total':      actual_total,
-                'over_result':       over_result,
-                'xgb_over_result':   (actual_total > xgb_total_val) if xgb_total_val is not None else None,
+            if xgb_spread_val is not None:
+                xgb_spread_err_sum += abs(xgb_spread_val - actual_margin)
+                xgb_spread_err_n += 1
+            if xgb_total_val is not None:
+                xgb_total_err_sum += abs(xgb_total_val - actual_total)
+                xgb_total_err_n += 1
+
+            # Spread grading: compare model spread vs market spread, then check if pick covered
+            if market_spread is None:
+                missing_spread_lines += 1
+            elif xgb_spread_val is not None:
+                model_cover_side = _cover_side(xgb_spread_val, market_spread)
+                actual_cover_side = _cover_side(actual_margin, market_spread)
+
+                if model_cover_side == 'push':
+                    spread_pick = 'PUSH'
+                    pick_covered = None
+                elif actual_cover_side == 'push':
+                    spread_pick = 'HOME' if model_cover_side == 'home' else 'AWAY'
+                    pick_covered = None
+                else:
+                    spread_pick = 'HOME' if model_cover_side == 'home' else 'AWAY'
+                    pick_covered = (model_cover_side == actual_cover_side)
+                    xgb_spread_graded += 1
+                    daily_results[date_key]['xgb_spread_graded'] += 1
+                    if pick_covered:
+                        xgb_spread_covered += 1
+                        daily_results[date_key]['xgb_spread_covered'] += 1
+
+            # Total grading: compare model total vs market total, then actual total vs market total
+            if market_total is None:
+                missing_total_lines += 1
+            elif xgb_total_val is not None:
+                if abs(xgb_total_val - market_total) < 1e-9:
+                    total_pick = 'PUSH'
+                else:
+                    total_pick = 'OVER' if xgb_total_val > market_total else 'UNDER'
+
+                if abs(actual_total - market_total) < 1e-9:
+                    actual_total_side = 'PUSH'
+                else:
+                    actual_total_side = 'OVER' if actual_total > market_total else 'UNDER'
+
+                if total_pick == 'PUSH' or actual_total_side == 'PUSH':
+                    total_correct = None
+                else:
+                    total_correct = (total_pick == actual_total_side)
+                    xgb_total_graded += 1
+                    daily_results[date_key]['xgb_total_graded'] += 1
+                    if total_correct:
+                        xgb_total_correct += 1
+                        daily_results[date_key]['xgb_total_correct'] += 1
+
+            daily_results[date_key]['games'].append({
+                'matchup': f"{game['away_team_id']} @ {game['home_team_id']}",
+                'score': f"{int(actual_away)}-{int(actual_home)}",
+                'market_spread': market_spread,
+                'xgb_spread': round(xgb_spread_val, 1) if xgb_spread_val is not None else None,
+                'spread_pick': spread_pick,
+                'actual_margin': round(actual_margin, 1),
+                'pick_covered': pick_covered,
+                'market_total': market_total,
+                'xgb_total': round(xgb_total_val, 1) if xgb_total_val is not None else None,
+                'total_pick': total_pick,
+                'actual_total': int(actual_total),
+                'total_correct': total_correct,
             })
-            daily_results[game['game_date']]['total_games'] += 1
+            daily_results[date_key]['total_games'] += 1
+            daily_results[date_key]['actual_total_sum'] += actual_total
             total_games += 1
 
         except Exception as e:
             logger.error(f"Error calculating spread/total results for {game['game_id']}: {e}")
             continue
 
-    over_pct                  = (total_over           / total_games    * 100) if total_games    > 0 else 0
-    naive_spread_correct_pct  = (naive_spread_correct / total_games    * 100) if total_games    > 0 else 0
-    xgb_spread_correct_pct    = (xgb_spread_correct   / total_games    * 100) if total_games    > 0 else 0
-    naive_avg_spread_err      = naive_spread_err_sum  / total_games           if total_games    > 0 else 0
-    naive_avg_total_err       = naive_total_err_sum   / total_games           if total_games    > 0 else 0
-    xgb_avg_spread_err        = xgb_spread_err_sum    / xgb_game_count        if xgb_game_count > 0 else 0
-    xgb_avg_total_err         = xgb_total_err_sum     / xgb_game_count        if xgb_game_count > 0 else 0
+    for date_key, date_data in daily_results.items():
+        if date_data['total_games'] > 0:
+            date_data['avg_actual_total'] = round(date_data['actual_total_sum'] / date_data['total_games'], 1)
+        else:
+            date_data['avg_actual_total'] = 0.0
 
-    yesterday    = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    xgb_spread_cover_pct = (xgb_spread_covered / xgb_spread_graded * 100) if xgb_spread_graded > 0 else 0.0
+    xgb_total_correct_pct = (xgb_total_correct / xgb_total_graded * 100) if xgb_total_graded > 0 else 0.0
+    xgb_avg_spread_err = (xgb_spread_err_sum / xgb_spread_err_n) if xgb_spread_err_n > 0 else 0.0
+    xgb_avg_total_err = (xgb_total_err_sum / xgb_total_err_n) if xgb_total_err_n > 0 else 0.0
+
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     sorted_dates = sorted([d for d in daily_results.keys() if d <= yesterday], reverse=True)
-    today_date   = datetime.now().strftime('%Y-%m-%d')
+    today_date = datetime.now().strftime('%Y-%m-%d')
 
     return render_template_string(
         SPREAD_TOTAL_RESULTS_TEMPLATE,
@@ -4315,17 +4299,16 @@ def sport_spread_total_results(sport):
         sorted_dates=sorted_dates,
         today_date=today_date,
         total_games=total_games,
-        total_over=total_over,
-        total_under=total_under,
-        over_pct=over_pct,
-        naive_spread_correct=naive_spread_correct,
-        xgb_spread_correct=xgb_spread_correct,
-        naive_spread_correct_pct=naive_spread_correct_pct,
-        xgb_spread_correct_pct=xgb_spread_correct_pct,
-        naive_avg_spread_err=naive_avg_spread_err,
-        naive_avg_total_err=naive_avg_total_err,
+        xgb_spread_covered=xgb_spread_covered,
+        xgb_spread_graded=xgb_spread_graded,
+        xgb_spread_cover_pct=xgb_spread_cover_pct,
+        xgb_total_correct=xgb_total_correct,
+        xgb_total_graded=xgb_total_graded,
+        xgb_total_correct_pct=xgb_total_correct_pct,
         xgb_avg_spread_err=xgb_avg_spread_err,
         xgb_avg_total_err=xgb_avg_total_err,
+        missing_spread_lines=missing_spread_lines,
+        missing_total_lines=missing_total_lines,
         has_xgb=has_xgb
     )
 
