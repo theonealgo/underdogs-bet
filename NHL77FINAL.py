@@ -4110,13 +4110,9 @@ def sport_spread_total_results(sport):
             bl.spread AS market_spread, bl.total AS market_total
         FROM games g
         LEFT JOIN (
-            SELECT bl1.game_id, bl1.spread, bl1.total
-            FROM betting_lines bl1
-            INNER JOIN (
-                SELECT game_id, MAX(id) AS max_id
-                FROM betting_lines
-                GROUP BY game_id
-            ) latest ON latest.max_id = bl1.id
+            SELECT game_id, MAX(spread) AS spread, MAX(total) AS total
+            FROM betting_lines
+            GROUP BY game_id
         ) bl ON bl.game_id = g.game_id
         WHERE g.sport = ?
           AND g.home_score IS NOT NULL
