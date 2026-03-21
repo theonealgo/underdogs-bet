@@ -22,16 +22,19 @@ from value_predictor import ValuePredictor
 from ats_system import ATSSystem
 
 # V2 PREDICTION SYSTEM - Upgraded architecture
+import os as _os_v2
+_V2_BASE = _os_v2.path.dirname(_os_v2.path.abspath(__file__))
 try:
     from prediction_system_v2 import AdvancedPredictor
     V2_PREDICTORS = {}
     # Load trained models for supported sports
     for sport in ['NHL', 'NFL', 'NBA', 'MLB', 'NCAAF', 'NCAAB']:
         try:
-            V2_PREDICTORS[sport] = AdvancedPredictor.load(sport, f'models/{sport}_v2')
+            _model_path = _os_v2.path.join(_V2_BASE, 'models', f'{sport}_v2')
+            V2_PREDICTORS[sport] = AdvancedPredictor.load(sport, _model_path)
             print(f"✅ Loaded {sport} v2 predictor (Glicko-2 + Ensemble + Calibration)")
         except Exception as e:
-            print(f"⚠️ {sport} v2 model not found, using fallback: {e}")
+            print(f"⚠️ {sport} v2 model not found at {_model_path}: {e}")
     HAS_V2_SYSTEM = len(V2_PREDICTORS) > 0
 except ImportError as e:
     print(f"⚠️ V2 prediction system not available: {e}")
