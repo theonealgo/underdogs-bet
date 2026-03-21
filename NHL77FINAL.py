@@ -878,7 +878,8 @@ def get_upcoming_predictions(sport, days=365):
         # NHL: Pull from ESPN API (to get correct schedule)
         try:
             nhl_api = NHLAPI()
-            api_games = nhl_api.get_recent_and_upcoming_games(days_back=30, days_forward=30)
+            # Keep NHL predictions responsive in production (avoid timeout on huge windows)
+            api_games = nhl_api.get_recent_and_upcoming_games(days_back=10, days_forward=14)
             
             # For each API game, check if prediction exists in DB
             conn = get_db_connection()
@@ -4068,7 +4069,7 @@ SPREAD_TOTAL_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
 
     {% if daily_results %}
         <div class="overall-stats">
-            <h2>🏆 XSharp Performance — {{ total_games }} Games</h2>
+            <h2>🏆 XSharp Performance — {{ total_games }} Games (Last {{ lookback_days }} Days)</h2>
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">Spread Cover Accuracy</div>
@@ -4171,6 +4172,19 @@ def sport_spread_total_results(sport):
         (sport,)
     ).fetchone()
     latest_db_line_date = latest_db_line_date_row['max_date'] if latest_db_line_date_row else None
+    # Use recent completed games so spread/total performance reflects current line availability.
+    lookback_days_map = {
+        'NCAAB': 14,
+        'NBA': 45,
+        'NHL': 45,
+        'NCAAF': 120,
+        'NFL': 120,
+        'MLB': 120,
+        'WNBA': 120,
+    }
+    lookback_days = lookback_days_map.get(sport, 60)
+    lookback_start = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+
     completed_games = conn.execute('''
         SELECT
             g.game_id, g.game_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score,
@@ -4196,16 +4210,18 @@ def sport_spread_total_results(sport):
           AND g.home_score IS NOT NULL
           AND g.away_score IS NOT NULL
           AND g.status = 'final'
+          AND date(g.game_date) >= ?
         ORDER BY g.game_date DESC
         LIMIT 2000
-    ''', (sport, sport, sport)).fetchall()
+    ''', (sport, sport, sport, lookback_start)).fetchall()
     conn.close()
     # Live API fallback for recent missing lines (bounded to keep route fast)
     live_lines_by_game = {}
     live_line_fetch_attempted = 0
     live_line_fetch_success = 0
-    live_fetch_cap = 60
-    live_recent_cutoff = datetime.now() - timedelta(days=3)
+    live_fetch_cap = 120 if sport == 'NCAAB' else 60
+    live_recent_days = 14 if sport == 'NCAAB' else 3
+    live_recent_cutoff = datetime.now() - timedelta(days=live_recent_days)
 
     for game in completed_games:
         if live_line_fetch_attempted >= live_fetch_cap:
@@ -4222,6 +4238,33 @@ def sport_spread_total_results(sport):
         if live_line and (live_line.get('spread') is not None or live_line.get('total') is not None):
             live_lines_by_game[game['game_id']] = live_line
             live_line_fetch_success += 1
+
+    # Persist fetched live lines so subsequent requests rely less on network fallbacks.
+    if live_lines_by_game:
+        try:
+            conn_write = get_db_connection()
+            for game in completed_games:
+                live_line = live_lines_by_game.get(game['game_id'])
+                if not live_line:
+                    continue
+                conn_write.execute('''
+                    INSERT OR REPLACE INTO betting_lines
+                    (sport, game_id, game_date, home_team, away_team, spread, total, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    sport,
+                    game['game_id'],
+                    (game['game_date'] or '').split()[0],
+                    game['home_team_id'],
+                    game['away_team_id'],
+                    live_line.get('spread'),
+                    live_line.get('total'),
+                    'ESPN Core API (live fallback)',
+                ))
+            conn_write.commit()
+            conn_write.close()
+        except Exception as e:
+            logger.debug(f"Live line persistence skipped: {e}")
 
     daily_results = defaultdict(lambda: {
         'games': [],
@@ -4427,6 +4470,7 @@ def sport_spread_total_results(sport):
         missing_spread_lines=missing_spread_lines,
         missing_total_lines=missing_total_lines,
         has_xgb=has_xgb,
+        lookback_days=lookback_days,
         latest_db_line_date=latest_db_line_date,
         live_line_fetch_attempted=live_line_fetch_attempted,
         live_line_fetch_success=live_line_fetch_success
