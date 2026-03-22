@@ -1604,16 +1604,15 @@ def calculate_nhl_weekly_performance():
             if elo_prob is None:
                 elo_prob = meta_prob if meta_prob is not None else xgb_prob
 
-            # V2 model predictions (Glicko-2, TrueSkill) are expensive.
-            # Only run inference when DB is missing xgb/meta for a game.
+            # Always request v2 model probabilities for Grinder2/Takedown grading.
+            # Keep stored xgb/meta as fast-path values and only backfill when missing.
             glicko2_prob = None
             trueskill_prob = None
-            if xgb_prob is None or meta_prob is None:
-                v2 = get_v2_prediction('NHL', game['home_team_id'], game['away_team_id'], game['game_date'])
-                glicko2_prob = v2.get('glicko2_prob') if v2 else None
-                trueskill_prob = v2.get('trueskill_prob') if v2 else None
-                if v2 and xgb_prob is None:
-                    xgb_prob = v2.get('xgboost_prob', xgb_prob)
+            v2 = get_v2_prediction('NHL', game['home_team_id'], game['away_team_id'], game['game_date'])
+            glicko2_prob = v2.get('glicko2_prob') if v2 else None
+            trueskill_prob = v2.get('trueskill_prob') if v2 else None
+            if v2 and xgb_prob is None:
+                xgb_prob = v2.get('xgboost_prob', xgb_prob)
 
             if xgb_prob is None:
                 xgb_prob = elo_prob
