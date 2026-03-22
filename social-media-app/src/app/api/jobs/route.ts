@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
       url,
       screenshot_selector,
       text_selector,
+      template_name,
       platforms,
       schedule_time,
     } = body;
@@ -62,14 +63,15 @@ export async function POST(request: NextRequest) {
 
     db.prepare(`
       INSERT INTO social_jobs
-        (id, name, url, screenshot_selector, text_selector, platforms, schedule_time, is_active, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+        (id, name, url, screenshot_selector, text_selector, template_name, platforms, schedule_time, is_active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `).run(
       id,
       String(name),
       String(url),
       String(screenshot_selector),
       String(text_selector),
+      String(template_name ?? 'Cinematic Default'),
       JSON.stringify(platforms),
       String(schedule_time),
       now,

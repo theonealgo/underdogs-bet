@@ -31,6 +31,11 @@ export async function GET(request: NextRequest) {
       platform_results: row.platform_results
         ? (JSON.parse(row.platform_results as string) as unknown[])
         : null,
+      video_notes: row.video_notes
+        ? (JSON.parse(row.video_notes as string) as string[])
+        : null,
+      watermark_applied: Boolean(row.watermark_applied),
+      credits_used: Number(row.credits_used ?? 0),
     }));
 
     return NextResponse.json(posts);

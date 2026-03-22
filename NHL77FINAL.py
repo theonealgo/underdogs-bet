@@ -45,10 +45,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 import time as _time
+import copy as _copy
 
 # ── Module-level HTTP request cache (15-min TTL) ──────────────────────────────
 _API_CACHE: dict = {}
 _API_TTL = 900  # seconds
+_PREDICTIONS_CACHE: dict = {}
+_PREDICTIONS_TTL_BY_SPORT = {
+    'NHL': 180,
+    'NBA': 180,
+    'NCAAB': 180,
+    'MLB': 240,
+    'NFL': 300,
+    'NCAAF': 300,
+    'WNBA': 240,
+}
 
 
 def _cached_get(url: str, timeout: int = 10):
@@ -873,13 +884,22 @@ def get_upcoming_predictions(sport, days=365):
     USER REQUIREMENT: Show ALL games from season start (Oct 7 for NHL), not just upcoming!
     """
     
+    # Fast in-process cache to avoid repeated heavy prediction recomputation.
+    cache_key = f"{sport}_upcoming_predictions"
+    now_ts = _time.time()
+    cache_ttl = _PREDICTIONS_TTL_BY_SPORT.get(sport, 180)
+    cached = _PREDICTIONS_CACHE.get(cache_key)
+    if cached and (now_ts - cached['ts']) < cache_ttl:
+        return _copy.deepcopy(cached['data'])
+
     # Load game data based on sport
     if sport == 'NHL':
         # NHL: Pull from ESPN API (to get correct schedule)
         try:
             nhl_api = NHLAPI()
-            # Keep NHL predictions responsive in production (avoid timeout on huge windows)
-            api_games = nhl_api.get_recent_and_upcoming_games(days_back=10, days_forward=14)
+            # Keep NHL predictions responsive in production (avoid timeout on huge windows).
+            # This route must stay below common reverse-proxy timeout budgets.
+            api_games = nhl_api.get_recent_and_upcoming_games(days_back=2, days_forward=7)
             
             # For each API game, check if prediction exists in DB
             conn = get_db_connection()
@@ -1358,6 +1378,7 @@ def get_upcoming_predictions(sport, days=365):
             logger.info(f"Saved {saved_count} new NBA predictions to database")
         conn_save.close()
     
+    _PREDICTIONS_CACHE[cache_key] = {'ts': _time.time(), 'data': _copy.deepcopy(predictions)}
     return predictions
 
 def _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=None):
@@ -3454,8 +3475,16 @@ def sport_predictions(sport):
     log_site_visit(f'/sport/{sport}/predictions')
     if sport not in SPORTS:
         return "Sport not found", 404
-    
-    predictions = get_upcoming_predictions(sport)
+    prediction_error = None
+    try:
+        predictions = get_upcoming_predictions(sport)
+    except Exception as e:
+        logger.error(f"Error loading {sport} predictions: {e}")
+        predictions = []
+        prediction_error = (
+            f"N/A — {sport} predictions could not be loaded because an upstream data/model dependency failed. "
+            "Please refresh in a minute."
+        )
     
     # Group predictions by date for NHL/NBA, by week for NFL
     from collections import defaultdict
@@ -3492,6 +3521,7 @@ def sport_predictions(sport):
         sport=sport,
         sport_info=SPORTS[sport],
         predictions=predictions,
+        prediction_error=prediction_error,
         grouped_predictions=grouped_predictions,
         sorted_dates=sorted_dates,
         today_date=today_date,

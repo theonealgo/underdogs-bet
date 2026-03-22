@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '@/lib/db';
 import { captureScreenshotAndText } from '@/lib/screenshot';
-import { generateCaption } from '@/lib/ai';
+import { generateCaption, generateScriptHookVoiceover } from '@/lib/ai';
+import { createVideoExport } from '@/lib/video';
 import { postToAllPlatforms } from '@/lib/social';
-import { v4 as uuidv4 } from 'uuid';
+import {
+  canConsumeCredits,
+  consumeCredits,
+  CREDITS_PER_VIDEO_EXPORT,
+  getUnlimitedSeriesSnapshot,
+} from '@/lib/unlimitedSeries';
 
 export const dynamic = 'force-dynamic';
 // Allow up to 60 s for Puppeteer + OpenAI in production environments
@@ -15,6 +22,7 @@ interface DbJob {
   url: string;
   screenshot_selector: string;
   text_selector: string;
+  template_name: string;
   platforms: string; // stored as JSON string
 }
 
@@ -33,6 +41,16 @@ export async function POST(
   }
 
   const platforms = JSON.parse(job.platforms) as string[];
+  const creditCheck = canConsumeCredits(db, CREDITS_PER_VIDEO_EXPORT);
+  if (!creditCheck.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `N/A — monthly credits are exhausted for this cycle. Needed ${CREDITS_PER_VIDEO_EXPORT}, remaining ${creditCheck.creditsRemaining} of ${creditCheck.monthlyCredits}.`,
+      },
+      { status: 402 },
+    );
+  }
 
   try {
     // ── 1. Screenshot + text extraction ────────────────────────────────────
@@ -42,34 +60,68 @@ export async function POST(
       job.text_selector,
     );
 
-    // ── 2. AI caption generation ────────────────────────────────────────────
+    // ── 2. AI caption + script/hook generation ─────────────────────────────
     const { caption, hashtags } = await generateCaption(
       capture.extractedText ?? job.name,
       job.name,
       platforms,
     );
-
-    // ── 3. Post to social platforms ─────────────────────────────────────────
-    const platformResults = await postToAllPlatforms(
-      platforms,
-      caption,
-      hashtags,
-      capture.screenshotPath,
+    const scriptBlock = await generateScriptHookVoiceover(
+      capture.extractedText ?? caption,
+      job.name,
+      job.template_name || 'Cinematic Default',
     );
 
-    const allSuccess = platformResults.every((r) => r.success);
-    const anySuccess = platformResults.some((r) => r.success);
+    // ── 3. Video export generation ──────────────────────────────────────────
+    const video = await createVideoExport({
+      screenshotPath: capture.screenshotPath,
+      caption,
+      hook: scriptBlock.hook,
+      script: scriptBlock.script,
+      voiceoverText: scriptBlock.voiceover,
+      templateName: job.template_name || 'Cinematic Default',
+      fileStem: `${job.name}_${job.id}`,
+    });
+
+    // ── 4. Auto-post to social platforms ────────────────────────────────────
+    const platformResults = await postToAllPlatforms(platforms, {
+      caption,
+      hashtags,
+      screenshotPath: capture.screenshotPath,
+      videoPath: video.videoPath,
+    });
+
+    const videoReady = video.success && Boolean(video.videoPath);
+    const allSuccess = platformResults.every((r) => r.success) && videoReady;
+    const anySuccess = platformResults.some((r) => r.success) || videoReady;
     const status: string = allSuccess ? 'success' : anySuccess ? 'partial' : 'pending';
 
-    // ── 4. Save to post history ─────────────────────────────────────────────
+    // ── 5. Consume credits only when a downloadable export exists ──────────
+    let creditsUsed = 0;
+    let creditsRemaining = getUnlimitedSeriesSnapshot(db).creditsRemaining;
+    if (videoReady) {
+      const creditState = consumeCredits(db, CREDITS_PER_VIDEO_EXPORT);
+      creditsUsed = CREDITS_PER_VIDEO_EXPORT;
+      creditsRemaining = creditState.creditsRemaining;
+    }
+
+    const videoNotes = [
+      ...(capture.error ? [`N/A — screenshot note: ${capture.error}`] : []),
+      ...(video.reason ? [video.reason] : []),
+      ...video.notes,
+    ];
+
+    // ── 6. Save to post history ─────────────────────────────────────────────
     const postId = uuidv4();
     const now = new Date().toISOString();
 
     db.prepare(`
       INSERT INTO post_history
         (id, job_id, job_name, caption, hashtags, screenshot_path, extracted_text,
-         platforms, status, platform_results, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         video_path, export_path, captions_path, voiceover_path, template_name,
+         credits_used, watermark_applied, video_notes, platforms, status,
+         platform_results, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       postId,
       job.id,
@@ -78,13 +130,21 @@ export async function POST(
       hashtags,
       capture.screenshotPath,
       capture.extractedText,
+      video.videoPath,
+      video.exportPath,
+      video.captionsPath,
+      video.voiceoverPath,
+      job.template_name || 'Cinematic Default',
+      creditsUsed,
+      video.watermarkApplied ? 1 : 0,
+      JSON.stringify(videoNotes),
       JSON.stringify(platforms),
       status,
       JSON.stringify(platformResults),
       now,
     );
 
-    // ── 5. Update job's last_run ────────────────────────────────────────────
+    // ── 7. Update job's last_run ────────────────────────────────────────────
     db.prepare(
       'UPDATE social_jobs SET last_run = ?, last_status = ? WHERE id = ?',
     ).run(now, status, job.id);
@@ -92,10 +152,20 @@ export async function POST(
     return NextResponse.json({
       success: true,
       postId,
+      hook: scriptBlock.hook,
+      script: scriptBlock.script,
+      voiceoverText: scriptBlock.voiceover,
       caption,
       hashtags,
       screenshotPath: capture.screenshotPath,
+      videoPath: video.videoPath,
+      exportPath: video.exportPath,
+      captionsPath: video.captionsPath,
+      voiceoverPath: video.voiceoverPath,
       extractedText: capture.extractedText,
+      creditsUsed,
+      creditsRemaining,
+      videoNotes,
       platformResults,
       status,
     });

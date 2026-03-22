@@ -1,7 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { SocialJob, PostHistory, RunJobResult, CreateJobInput } from '@/types';
+import type {
+  SocialJob,
+  PostHistory,
+  RunJobResult,
+  CreateJobInput,
+  PlanSnapshot,
+} from '@/types';
 
 // ─── Platform config ───────────────────────────────────────────────────────────
 const PLATFORMS = [
@@ -22,6 +28,7 @@ const EMPTY_FORM: CreateJobInput = {
   url: '',
   screenshot_selector: '',
   text_selector: '',
+  template_name: 'Cinematic Default',
   platforms: [],
   schedule_time: '09:00',
 };
@@ -30,6 +37,8 @@ const EMPTY_FORM: CreateJobInput = {
 export default function SocialMediaGeneratorPage() {
   const [jobs, setJobs] = useState<SocialJob[]>([]);
   const [posts, setPosts] = useState<PostHistory[]>([]);
+  const [planSnapshot, setPlanSnapshot] = useState<PlanSnapshot | null>(null);
+  const [loadingPlan, setLoadingPlan] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(true);
 
   // Modal state
@@ -69,7 +78,19 @@ export default function SocialMediaGeneratorPage() {
     }
   }, []);
 
+  const fetchPlan = useCallback(async () => {
+    try {
+      const res = await fetch('/api/account/plan');
+      if (res.ok) setPlanSnapshot(await res.json() as PlanSnapshot);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingPlan(false);
+    }
+  }, []);
+
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
+  useEffect(() => { void fetchPlan(); }, [fetchPlan]);
 
   // ─── Handlers ───────────────────────────────────────────────────────────────
   async function handleCreateJob(e: React.FormEvent) {
@@ -91,6 +112,7 @@ export default function SocialMediaGeneratorPage() {
       setShowCreateModal(false);
       setForm(EMPTY_FORM);
       await fetchJobs();
+      await fetchPlan();
     } catch (err) {
       setFormError((err as Error).message);
     } finally {
@@ -111,6 +133,7 @@ export default function SocialMediaGeneratorPage() {
       const data = await res.json() as RunJobResult;
       setRunResults((prev) => ({ ...prev, [jobId]: data }));
       await fetchJobs(); // refresh last_run / last_status
+      await fetchPlan(); // refresh credits usage
     } catch (err) {
       setRunResults((prev) => ({
         ...prev,
@@ -164,6 +187,19 @@ export default function SocialMediaGeneratorPage() {
       j.last_run && (!best?.last_run || j.last_run > best.last_run) ? j : best,
     null,
   );
+  const planFeatureLabels = [
+    'Auto-Post Videos',
+    'Voiceovers',
+    'AI generated content',
+    'Script & Hook Generation',
+    'Background music',
+    'AI effects, zooms, transitions',
+    'Cinematic Captions',
+    'No watermark',
+    'Download Videos',
+    'Unlimited Exports',
+    'Unlimited Custom Templates',
+  ];
 
   // ─── Render helpers ──────────────────────────────────────────────────────────
   function StatusBadge({ status }: { status: string | null }) {
@@ -212,6 +248,51 @@ export default function SocialMediaGeneratorPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* ── Plan / entitlement card ───────────────────────────────────────── */}        
+        <section className="mb-8 bg-slate-800/60 rounded-2xl border border-indigo-500/30 p-5">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-indigo-300/80 mb-1">
+                Active Package
+              </p>
+              <h2 className="text-2xl font-bold">
+                {planSnapshot?.planName ?? 'Unlimited Series'}
+              </h2>
+              <p className="text-slate-300 mt-1">5,000 Credits /month</p>
+              <p className="text-slate-500 text-sm mt-1">Auto-Post Videos</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 min-w-[260px]">
+              <div className="rounded-xl bg-slate-900/70 border border-slate-700 p-3">
+                <p className="text-xs text-slate-500">Monthly Credits</p>
+                <p className="text-xl font-bold">{planSnapshot?.monthlyCredits ?? '5,000'}</p>
+              </div>
+              <div className="rounded-xl bg-slate-900/70 border border-slate-700 p-3">
+                <p className="text-xs text-slate-500">Used This Month</p>
+                <p className="text-xl font-bold">{planSnapshot?.creditsUsedThisMonth ?? 0}</p>
+              </div>
+              <div className="rounded-xl bg-slate-900/70 border border-slate-700 p-3">
+                <p className="text-xs text-slate-500">Credits Remaining</p>
+                <p className="text-xl font-bold">{planSnapshot?.creditsRemaining ?? 'N/A'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+            {planFeatureLabels.map((feature) => (
+              <div key={feature} className="flex items-center gap-2 text-slate-200">
+                <span className="text-emerald-400">✓</span>
+                <span>{feature}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 text-xs text-slate-500">
+            {loadingPlan
+              ? 'Loading plan status...'
+              : `Billing cycle: ${planSnapshot?.monthKey ?? 'N/A'} • Active templates: ${planSnapshot?.activeTemplateCount ?? 0}`}
+          </div>
+        </section>
 
         {/* ── Stats ────────────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-4 mb-8">
@@ -313,6 +394,10 @@ export default function SocialMediaGeneratorPage() {
                       🕐 Daily at{' '}
                       <span className="text-white font-mono">{job.schedule_time}</span>
                     </p>
+                    <p className="text-sm text-slate-400 mb-2">
+                      🎬 Template:{' '}
+                      <span className="text-white">{job.template_name || 'Cinematic Default'}</span>
+                    </p>
 
                     {/* Last run */}
                     <div className="text-xs text-slate-500 mb-4 flex items-center gap-2 flex-wrap">
@@ -389,6 +474,20 @@ export default function SocialMediaGeneratorPage() {
                         <>
                           <p className="text-emerald-400 font-semibold">✅ Job completed</p>
 
+                          {result.hook && (
+                            <div>
+                              <p className="text-slate-400 text-xs mb-1">Hook</p>
+                              <p className="text-white leading-snug">{result.hook}</p>
+                            </div>
+                          )}
+
+                          {result.script && (
+                            <div>
+                              <p className="text-slate-400 text-xs mb-1">Script</p>
+                              <p className="text-white leading-snug">{result.script}</p>
+                            </div>
+                          )}
+
                           {result.caption && (
                             <div>
                               <p className="text-slate-400 text-xs mb-1">Caption</p>
@@ -411,6 +510,59 @@ export default function SocialMediaGeneratorPage() {
                               alt="Page screenshot"
                               className="rounded-lg border border-slate-600 max-h-40 w-full object-contain bg-slate-900"
                             />
+                          )}
+
+                          {result.videoPath && (
+                            <div className="space-y-2">
+                              <p className="text-slate-400 text-xs">Generated Video</p>
+                              <video
+                                controls
+                                src={result.videoPath}
+                                className="rounded-lg border border-slate-600 w-full bg-slate-900 max-h-56"
+                              >
+                                {result.captionsPath && (
+                                  <track
+                                    default
+                                    kind="captions"
+                                    src={result.captionsPath}
+                                    label="Cinematic captions"
+                                  />
+                                )}
+                              </video>
+                              {result.exportPath && (
+                                <a
+                                  href={result.exportPath}
+                                  download
+                                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold transition"
+                                >
+                                  ⬇ Download Video
+                                </a>
+                              )}
+                            </div>
+                          )}
+
+                          {result.voiceoverPath && (
+                            <div>
+                              <p className="text-slate-400 text-xs mb-1">Voiceover Track</p>
+                              <audio controls src={result.voiceoverPath} className="w-full" />
+                            </div>
+                          )}
+
+                          {typeof result.creditsUsed === 'number' && (
+                            <p className="text-xs text-slate-400">
+                              Credits used: {result.creditsUsed} · Remaining: {result.creditsRemaining ?? 'N/A'}
+                            </p>
+                          )}
+
+                          {result.videoNotes && result.videoNotes.length > 0 && (
+                            <div className="space-y-1">
+                              <p className="text-slate-400 text-xs">Video Notes</p>
+                              {result.videoNotes.map((note, idx) => (
+                                <p key={`${job.id}_note_${idx}`} className="text-xs text-slate-400">
+                                  • {note}
+                                </p>
+                              ))}
+                            </div>
                           )}
 
                           {result.platformResults && (
@@ -508,6 +660,22 @@ export default function SocialMediaGeneratorPage() {
                   onChange={(e) => setForm({ ...form, text_selector: e.target.value })}
                   placeholder=".results-container"
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono text-sm"
+                />
+              </label>
+
+              {/* Template name */}              
+              <label className="block">
+                <span className="text-sm font-medium text-slate-300 block mb-1">
+                  Video Template Name *{' '}
+                  <span className="font-normal text-slate-500">— unlimited custom templates</span>
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={form.template_name}
+                  onChange={(e) => setForm({ ...form, template_name: e.target.value })}
+                  placeholder="Cinematic Default"
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </label>
 
@@ -646,6 +814,12 @@ export default function SocialMediaGeneratorPage() {
                         <p className="text-xs text-indigo-400 font-mono mb-3">{post.hashtags}</p>
                       )}
 
+                      <div className="text-xs text-slate-400 mb-3 space-y-1">
+                        <p>🎬 Template: {post.template_name ?? 'Cinematic Default'}</p>
+                        <p>💳 Credits used: {post.credits_used ?? 0}</p>
+                        <p>🧼 Watermark: {post.watermark_applied ? 'Applied' : 'No watermark'}</p>
+                      </div>
+
                       <div className="flex gap-4 items-start">
                         {/* Screenshot thumbnail */}
                         {post.screenshot_path && (
@@ -656,6 +830,38 @@ export default function SocialMediaGeneratorPage() {
                               className="w-36 rounded-lg border border-slate-600 object-cover shrink-0 hover:opacity-90 transition"
                             />
                           </a>
+                        )}
+
+                        {/* Video export preview */}
+                        {post.video_path && (
+                          <div className="w-56 shrink-0 space-y-2">
+                            <video
+                              controls
+                              src={post.video_path}
+                              className="w-full rounded-lg border border-slate-600 bg-slate-900"
+                            >
+                              {post.captions_path && (
+                                <track
+                                  default
+                                  kind="captions"
+                                  src={post.captions_path}
+                                  label="Cinematic captions"
+                                />
+                              )}
+                            </video>
+                            {post.export_path && (
+                              <a
+                                href={post.export_path}
+                                download
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-500 transition"
+                              >
+                                ⬇ Download Video
+                              </a>
+                            )}
+                            {post.voiceover_path && (
+                              <audio controls src={post.voiceover_path} className="w-full" />
+                            )}
+                          </div>
                         )}
 
                         {/* Platform results */}
@@ -673,6 +879,17 @@ export default function SocialMediaGeneratorPage() {
                           </div>
                         )}
                       </div>
+
+                      {post.video_notes && post.video_notes.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          <p className="text-xs text-slate-400">Video Notes</p>
+                          {post.video_notes.map((note, idx) => (
+                            <p key={`${post.id}_vnote_${idx}`} className="text-xs text-slate-500">
+                              • {note}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

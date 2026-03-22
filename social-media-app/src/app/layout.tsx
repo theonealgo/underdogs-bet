@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Social Media Generator — underdogs.bet',
-  description: 'Automate daily social media posts from your sports prediction pages',
+  title: 'streamly.blog — AI Video + Social Autopost Platform',
+  description: 'Create faceless AI videos and connect social accounts through built-in OAuth.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

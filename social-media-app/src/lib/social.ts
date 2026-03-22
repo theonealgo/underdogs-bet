@@ -1,52 +1,90 @@
+import { TwitterApi } from 'twitter-api-v2';
 import type { PlatformResult } from '@/types';
+
+export interface SocialPostPayload {
+  caption: string;
+  hashtags: string;
+  screenshotPath: string | null;
+  videoPath: string | null;
+}
+
+function buildPublicAssetUrl(assetPath: string | null): string | null {
+  if (!assetPath) return null;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  return `${baseUrl}${assetPath}`;
+}
+
+function composePostText(payload: SocialPostPayload): string {
+  const lines = [payload.caption, payload.hashtags].filter(Boolean);
+  const videoUrl = buildPublicAssetUrl(payload.videoPath);
+  if (videoUrl) {
+    lines.push(`🎬 Watch & download: ${videoUrl}`);
+  }
+  return lines.join('\n\n').trim();
+}
+
+function trimForTwitter(text: string): string {
+  if (text.length <= 280) return text;
+  return `${text.slice(0, 276)}…`;
+}
 
 // ─── Twitter / X ──────────────────────────────────────────────────────────────
 export async function postToTwitter(
-  caption: string,
-  hashtags: string,
-  _screenshotPath: string | null,
+  payload: SocialPostPayload,
 ): Promise<PlatformResult> {
-  const { TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET } =
-    process.env;
+  const {
+    TWITTER_API_KEY,
+    TWITTER_API_SECRET,
+    TWITTER_ACCESS_TOKEN,
+    TWITTER_ACCESS_SECRET,
+  } = process.env;
 
-  if (!TWITTER_API_KEY || !TWITTER_ACCESS_TOKEN) {
+  if (
+    !TWITTER_API_KEY ||
+    !TWITTER_API_SECRET ||
+    !TWITTER_ACCESS_TOKEN ||
+    !TWITTER_ACCESS_SECRET
+  ) {
     return {
       platform: 'twitter',
       success: false,
       message:
-        'Twitter API not configured — add TWITTER_API_KEY / TWITTER_ACCESS_TOKEN to .env.local',
+        'N/A — Twitter API credentials are incomplete; set TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, and TWITTER_ACCESS_SECRET.',
     };
   }
 
   try {
-    // Wire up: npm install twitter-api-v2
-    // const { TwitterApi } = await import('twitter-api-v2');
-    // const client = new TwitterApi({
-    //   appKey: TWITTER_API_KEY,
-    //   appSecret: TWITTER_API_SECRET!,
-    //   accessToken: TWITTER_ACCESS_TOKEN,
-    //   accessSecret: TWITTER_ACCESS_SECRET!,
-    // });
-    // const tweet = await client.v2.tweet(`${caption}\n\n${hashtags}`);
-    // return { platform: 'twitter', success: true, message: 'Posted', postId: tweet.data.id };
+    const client = new TwitterApi({
+      appKey: TWITTER_API_KEY,
+      appSecret: TWITTER_API_SECRET,
+      accessToken: TWITTER_ACCESS_TOKEN,
+      accessSecret: TWITTER_ACCESS_SECRET,
+    });
 
-    void TWITTER_API_SECRET;
-    void TWITTER_ACCESS_SECRET;
+    const tweetText = trimForTwitter(composePostText(payload));
+    const tweet = await client.v2.tweet(tweetText);
+
+    return {
+      platform: 'twitter',
+      success: true,
+      message: 'Posted to X successfully.',
+      postId: tweet.data.id,
+      url: `https://x.com/i/web/status/${tweet.data.id}`,
+    };
+  } catch (err) {
     return {
       platform: 'twitter',
       success: false,
-      message: 'Twitter posting stub — install twitter-api-v2 and uncomment the code in src/lib/social.ts',
+      message: `N/A — Twitter/X publish failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     };
-  } catch (err) {
-    return { platform: 'twitter', success: false, message: String(err) };
   }
 }
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
 export async function postToInstagram(
-  caption: string,
-  hashtags: string,
-  _screenshotPath: string | null,
+  _payload: SocialPostPayload,
 ): Promise<PlatformResult> {
   const { INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_BUSINESS_ACCOUNT_ID } = process.env;
 
@@ -55,30 +93,21 @@ export async function postToInstagram(
       platform: 'instagram',
       success: false,
       message:
-        'Instagram API not configured — add INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_BUSINESS_ACCOUNT_ID to .env.local',
+        'N/A — Instagram API is not configured (missing INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_BUSINESS_ACCOUNT_ID).',
     };
   }
 
-  try {
-    // Wire up: use the Facebook Graph API for Instagram Business
-    // See https://developers.facebook.com/docs/instagram-api/guides/content-publishing
-    void caption;
-    void hashtags;
-    return {
-      platform: 'instagram',
-      success: false,
-      message: 'Instagram posting stub — implement Facebook Graph API in src/lib/social.ts',
-    };
-  } catch (err) {
-    return { platform: 'instagram', success: false, message: String(err) };
-  }
+  return {
+    platform: 'instagram',
+    success: false,
+    message:
+      'N/A — Instagram auto-post video endpoint wiring is not implemented yet in src/lib/social.ts.',
+  };
 }
 
 // ─── Facebook ─────────────────────────────────────────────────────────────────
 export async function postToFacebook(
-  caption: string,
-  hashtags: string,
-  _screenshotPath: string | null,
+  _payload: SocialPostPayload,
 ): Promise<PlatformResult> {
   const { FACEBOOK_ACCESS_TOKEN, FACEBOOK_PAGE_ID } = process.env;
 
@@ -87,35 +116,27 @@ export async function postToFacebook(
       platform: 'facebook',
       success: false,
       message:
-        'Facebook API not configured — add FACEBOOK_ACCESS_TOKEN / FACEBOOK_PAGE_ID to .env.local',
+        'N/A — Facebook API is not configured (missing FACEBOOK_ACCESS_TOKEN / FACEBOOK_PAGE_ID).',
     };
   }
 
-  try {
-    // Wire up: POST to https://graph.facebook.com/{PAGE_ID}/feed
-    void caption;
-    void hashtags;
-    return {
-      platform: 'facebook',
-      success: false,
-      message: 'Facebook posting stub — implement Graph API POST in src/lib/social.ts',
-    };
-  } catch (err) {
-    return { platform: 'facebook', success: false, message: String(err) };
-  }
+  return {
+    platform: 'facebook',
+    success: false,
+    message:
+      'N/A — Facebook video auto-post endpoint wiring is not implemented yet in src/lib/social.ts.',
+  };
 }
 
 // ─── Dispatch to all platforms ────────────────────────────────────────────────
 export async function postToAllPlatforms(
   platforms: string[],
-  caption: string,
-  hashtags: string,
-  screenshotPath: string | null,
+  payload: SocialPostPayload,
 ): Promise<PlatformResult[]> {
   const handlers: Record<string, () => Promise<PlatformResult>> = {
-    twitter: () => postToTwitter(caption, hashtags, screenshotPath),
-    instagram: () => postToInstagram(caption, hashtags, screenshotPath),
-    facebook: () => postToFacebook(caption, hashtags, screenshotPath),
+    twitter: () => postToTwitter(payload),
+    instagram: () => postToInstagram(payload),
+    facebook: () => postToFacebook(payload),
   };
 
   const settled = await Promise.allSettled(
@@ -125,7 +146,7 @@ export async function postToAllPlatforms(
         : Promise.resolve<PlatformResult>({
             platform: p,
             success: false,
-            message: `Unknown platform: ${p}`,
+            message: `N/A — unknown platform: ${p}`,
           }),
     ),
   );
@@ -136,7 +157,9 @@ export async function postToAllPlatforms(
       : {
           platform: platforms[i],
           success: false,
-          message: (r.reason as Error)?.message ?? 'Unknown error',
+          message: `N/A — platform dispatch failed: ${
+            (r.reason as Error)?.message ?? 'unknown error'
+          }`,
         },
   );
 }

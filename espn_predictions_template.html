@@ -83,6 +83,12 @@
         <a href="/sport/{{ sport }}/spreads/results" class="tab">📈 Spreads &amp; Totals Results</a>
     </div>
 
+    {% if prediction_error %}
+    <div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.35);color:#fecaca;font-size:0.9em;">
+        {{ prediction_error }}
+    </div>
+    {% endif %}
+
     <div class="date-nav">
         <div class="nav-arrow" onclick="previousWeek()">‹</div>
         <div class="date-bubbles" id="dateBubbles"></div>
