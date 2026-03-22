@@ -60,6 +60,16 @@ _PREDICTIONS_TTL_BY_SPORT = {
     'NCAAF': 300,
     'WNBA': 240,
 }
+_SPORT_RESULTS_CACHE: dict = {}
+_SPORT_RESULTS_TTL_BY_SPORT = {
+    'NHL': 300,
+    'NBA': 240,
+    'NCAAB': 240,
+    'MLB': 300,
+    'NCAAF': 300,
+    'NFL': 300,
+    'WNBA': 300,
+}
 
 
 def _cached_get(url: str, timeout: int = 10):
@@ -351,12 +361,13 @@ def update_nhl_scores():
     Gets scores from the last 30 days (to catch any missing games).
     """
     try:
-        logger.info("Fetching NHL scores from API (last 30 days)...")
+        lookback_days = 10
+        logger.info(f"Fetching NHL scores from API (last {lookback_days} days)...")
         
-        # Fetch last 30 days to catch any gaps
+        # Fetch recent window to keep request latency low while still catching missed finals.
         from datetime import datetime, timedelta
         today = datetime.now()
-        start_date = today - timedelta(days=30)
+        start_date = today - timedelta(days=lookback_days)
         
         # NHL team abbreviation to full name mapping
         nhl_team_map = {
@@ -379,7 +390,7 @@ def update_nhl_scores():
         updates_count = 0
         current_date = start_date
         
-        # Iterate through last 30 days
+        # Iterate through lookback window
         while current_date <= today:
             date_str = current_date.strftime('%Y-%m-%d')
             
@@ -1575,21 +1586,41 @@ def calculate_nhl_weekly_performance():
             days_since_start = (game_date - season_start).days
             week = (days_since_start // 7) + 1
             
-            # Extract stored predictions
-            elo_prob  = float(game['elo_home_prob'])       if game['elo_home_prob']       else None
-            xgb_prob  = float(game['xgboost_home_prob'])   if game['xgboost_home_prob']   else elo_prob
-            meta_prob = float(game['meta_home_prob'])      if game['meta_home_prob']       else elo_prob
+            # Extract stored predictions first (fast path)
+            elo_prob = float(game['elo_home_prob']) if game['elo_home_prob'] is not None else None
+            xgb_prob = (
+                float(game['xgboost_home_prob'])
+                if game['xgboost_home_prob'] is not None
+                else None
+            )
+            meta_prob = (
+                float(game['meta_home_prob'])
+                if game['meta_home_prob'] is not None
+                else None
+            )
 
-            if elo_prob is None:
+            if elo_prob is None and xgb_prob is None and meta_prob is None:
                 continue
+            if elo_prob is None:
+                elo_prob = meta_prob if meta_prob is not None else xgb_prob
 
-            # V2 model predictions (Glicko-2, TrueSkill)
-            v2 = get_v2_prediction('NHL', game['home_team_id'], game['away_team_id'], game['game_date'])
-            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
-            trueskill_prob = v2.get('trueskill_prob') if v2 else None
-            if v2:
-                xgb_prob  = v2.get('xgboost_prob', xgb_prob)
-                meta_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=meta_prob)
+            # V2 model predictions (Glicko-2, TrueSkill) are expensive.
+            # Only run inference when DB is missing xgb/meta for a game.
+            glicko2_prob = None
+            trueskill_prob = None
+            if xgb_prob is None or meta_prob is None:
+                v2 = get_v2_prediction('NHL', game['home_team_id'], game['away_team_id'], game['game_date'])
+                glicko2_prob = v2.get('glicko2_prob') if v2 else None
+                trueskill_prob = v2.get('trueskill_prob') if v2 else None
+                if v2 and xgb_prob is None:
+                    xgb_prob = v2.get('xgboost_prob', xgb_prob)
+
+            if xgb_prob is None:
+                xgb_prob = elo_prob
+            if meta_prob is None:
+                meta_prob = _compute_ensemble_prob(
+                    glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=elo_prob
+                )
 
             actual_home_win = game['home_score'] > game['away_score']
 
@@ -3406,7 +3437,7 @@ def landing_page():
             <div class="step">
                 <div class="step-num">2</div>
                 <div class="step-title">5-Model Ensemble</div>
-                <div class="step-body">Grinder2 (Glicko-2), Takedown (TrueSkill), Edge (Elo), XSharp (XGBoost), and Sharp Consensus (meta-learner) each generate independent win probabilities.</div>
+                <div class="step-body">Grinder2, Takedown, Edge, XSharp, and Sharp Consensus each generate independent win probabilities, then the final pick is blended from all five.</div>
             </div>
             <div class="step">
                 <div class="step-num">3</div>
@@ -3548,7 +3579,16 @@ def sport_results(sport):
         )
     
     if sport == 'NHL':
-        update_nhl_scores()
+        cache_key = f'{sport}_moneyline_results_html'
+        cache_ttl = _SPORT_RESULTS_TTL_BY_SPORT.get(sport, 300)
+        cached_page = _SPORT_RESULTS_CACHE.get(cache_key)
+        if cached_page and (_time.time() - cached_page['ts']) < cache_ttl:
+            return cached_page['html']
+
+        try:
+            update_nhl_scores()
+        except Exception as e:
+            logger.error(f"NHL score sync failed (continuing with existing data): {e}")
         weekly_results = calculate_nhl_weekly_performance()
         
         if not weekly_results:
@@ -3571,7 +3611,7 @@ def sport_results(sport):
             
             overall_stats = compute_overall_stats_from_daily(daily_results)
             _ov, _un, _gou, _avg, _bench = _ou_stats(daily_results, sport)
-            return render_template_string(
+            rendered = render_template_string(
                 DAILY_RESULTS_TEMPLATE,
                 page=sport, sport=sport, sport_info=SPORTS[sport],
                 daily_results=daily_results, sorted_dates=sorted_dates,
@@ -3579,6 +3619,8 @@ def sport_results(sport):
                 total_over=_ov, total_under=_un, total_games_ou=_gou,
                 avg_total=_avg, ou_bench=_bench
             )
+            _SPORT_RESULTS_CACHE[cache_key] = {'ts': _time.time(), 'html': rendered}
+            return rendered
         except Exception as e:
             logger.error(f"Error processing NHL results: {e}")
             return f"<h1>Error loading NHL results: {str(e)}</h1>"
