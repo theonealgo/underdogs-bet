@@ -5827,6 +5827,7 @@ BASE_TEMPLATE = """
             .navbar-content { flex-wrap: wrap; justify-content: center; }
             .nav-search-wrap { order: 3; width: 100%; max-width: 100%; }
         }
+        .sport-card:hover { transform:translateY(-3px); border-color:rgba(251,191,36,0.5); box-shadow:0 10px 28px rgba(0,0,0,0.25); }
         @media (max-width: 768px) {
             .navbar-content {
                 display: grid;
@@ -6020,9 +6021,9 @@ _SEO_PICKS_PAGE_FOOTER = """
         <h2 style="color:#fff;font-size:1.2rem;margin:0 0 12px;">Learn More About the Model</h2>
         <p style="margin-bottom:10px;">If you're new to AI sports betting picks, you can learn more about how the system works and how it compares to traditional betting approaches:</p>
         <ul style="margin:0 0 14px 22px;">
-            <li style="margin-bottom:6px;"><a href="/ai-sports-betting-picks-today" style="color:#fbbf24;font-weight:600;text-decoration:none;">AI picks overview</a></li>
-            <li style="margin-bottom:6px;"><a href="/what-are-ai-sports-betting-picks" style="color:#fbbf24;font-weight:600;text-decoration:none;">What AI picks are</a></li>
-            <li style="margin-bottom:6px;"><a href="/our-model-vs-sportsbooks" style="color:#fbbf24;font-weight:600;text-decoration:none;">Model vs sportsbooks</a></li>
+            <li style="margin-bottom:6px;"><a href="/ai-sports-betting-picks-today" style="color:#92400e;font-weight:600;text-decoration:none;">AI picks overview</a></li>
+            <li style="margin-bottom:6px;"><a href="/what-are-ai-sports-betting-picks" style="color:#92400e;font-weight:600;text-decoration:none;">What AI picks are</a></li>
+            <li style="margin-bottom:6px;"><a href="/our-model-vs-sportsbooks" style="color:#92400e;font-weight:600;text-decoration:none;">Model vs sportsbooks</a></li>
         </ul>
         <p style="margin:0;">This helps provide a clearer understanding of the strategy behind the picks and how they are generated.</p>
     </div>
@@ -6076,9 +6077,9 @@ RESPONSIBLE_GAMING_TEMPLATE = BASE_TEMPLATE.replace(
         .rg-wrap{max-width:800px;margin:0 auto;padding:20px 0 60px;}
         .rg-card{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:24px;margin-bottom:18px;}
         .rg-card h1{font-size:1.8em;margin-bottom:12px;}
-        .rg-card h2{font-size:1.2em;margin:6px 0 12px;color:#fbbf24;}
+        .rg-card h2{font-size:1.2em;margin:6px 0 12px;color:#92400e;}
         .rg-card p{color:#334155;line-height:1.7;margin-bottom:12px;}
-        .rg-card a{color:#fbbf24;text-decoration:none;font-weight:600;}
+        .rg-card a{color:#92400e;text-decoration:none;font-weight:600;}
         .rg-card a:hover{text-decoration:underline;}
         .rg-resource{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;margin-bottom:12px;}
         .rg-resource h3{font-size:1em;margin-bottom:6px;color:#e2e8f0;}
@@ -6216,11 +6217,11 @@ DAILY_REPORT_TEMPLATE = BASE_TEMPLATE.replace(
     
     .rpt-header{text-align:center;margin-bottom:28px;}
     .rpt-header h1{font-size:1.8em;margin-bottom:6px;}
-    .rpt-header .rpt-date{color:#fbbf24;font-size:1.15em;font-weight:700;}
+    .rpt-header .rpt-date{color:#92400e;font-size:1.15em;font-weight:700;}
     .rpt-header .rpt-sub{color:#334155;font-size:0.9em;margin-top:6px;}
     .rpt-sport-block{background:#ffffff;border:1px solid rgba(15,23,42,0.14);border-radius:14px;padding:20px;margin-bottom:16px;}
     .rpt-sport-title{font-size:1.1em;font-weight:800;color:#0f172a;margin-bottom:14px;text-align:center;}
-    .rpt-sport-title span{color:#fbbf24;}
+    .rpt-sport-title span{color:#92400e;}
     .rpt-cat-label{font-size:0.72em;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;text-align:center;margin:12px 0 6px;font-weight:600;}
     .rpt-cat-label:first-child{margin-top:0;}
     .rpt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;}
@@ -6228,7 +6229,7 @@ DAILY_REPORT_TEMPLATE = BASE_TEMPLATE.replace(
     .rpt-card.hl{border:2px solid #fbbf24;}
     .rpt-model{font-size:0.72em;opacity:0.85;margin-bottom:3px;}
     .rpt-acc{font-size:1.35em;font-weight:800;}
-    .rpt-acc.g{color:#00C076;}.rpt-acc.y{color:#fbbf24;}.rpt-acc.r{color:#D93025;}.rpt-acc.x{color:#94a3b8;}
+    .rpt-acc.g{color:#047857;}.rpt-acc.y{color:#92400e;}.rpt-acc.r{color:#D93025;}.rpt-acc.x{color:#94a3b8;}
     .rpt-rec{font-size:0.78em;opacity:0.8;}
     .rpt-sou-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
     .rpt-total{text-align:center;font-size:0.9em;color:#334155;margin-bottom:18px;}
@@ -6237,7 +6238,7 @@ DAILY_REPORT_TEMPLATE = BASE_TEMPLATE.replace(
     .rpt-btn{padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:700;font-size:0.88em;transition:all 0.2s;display:inline-flex;align-items:center;gap:7px;border:none;}
     .rpt-btn:hover{opacity:0.85;transform:translateY(-1px);}
     .rpt-btn-copy{background:#ffffff;color:#0f172a;border:1px solid rgba(15,23,42,0.25);cursor:pointer;}
-    .rpt-btn-copy.copied{background:#00C076;border-color:#00C076;}
+    .rpt-btn-copy.copied{background:#00C076;border-color:#047857;}
     .rpt-btn-cta{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;}
     .rpt-share-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:12px;}
     .rpt-btn-group{display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px;}
@@ -6417,10 +6418,10 @@ TRAFFIC_TEMPLATE = BASE_TEMPLATE.replace(
     .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
     .stat-card { background:rgba(255,255,255,0.08); border-radius:10px; padding:14px; text-align:center; border:1px solid rgba(255,255,255,0.12); }
     .stat-label { font-size:0.8em; opacity:0.8; margin-bottom:6px; }
-    .stat-value { font-size:1.8em; font-weight:800; color:#fbbf24; }
+    .stat-value { font-size:1.8em; font-weight:800; color:#92400e; }
     .table-card { background:rgba(255,255,255,0.06); border-radius:12px; padding:16px; border:1px solid rgba(255,255,255,0.1); margin-bottom:16px; }
     table { width:100%; border-collapse: collapse; font-size:0.9em; }
-    th { text-align:left; padding:10px; border-bottom:1px solid rgba(255,255,255,0.15); color:#fbbf24; }
+    th { text-align:left; padding:10px; border-bottom:1px solid rgba(255,255,255,0.15); color:#92400e; }
     td { padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.08); }
     .no-data { text-align:center; padding:40px 12px; opacity:0.75; }
     """
@@ -6431,7 +6432,7 @@ TRAFFIC_TEMPLATE = BASE_TEMPLATE.replace(
     {% endif %}
     {% if traffic_ga_url %}
     <div style="text-align:center;margin-bottom:14px;">
-        <a href="{{ traffic_ga_url }}" target="_blank" style="display:inline-block;padding:8px 14px;border-radius:8px;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.5);color:#fbbf24;text-decoration:none;font-weight:700;">Open Google Analytics</a>
+        <a href="{{ traffic_ga_url }}" target="_blank" style="display:inline-block;padding:8px 14px;border-radius:8px;background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.5);color:#92400e;text-decoration:none;font-weight:700;">Open Google Analytics</a>
     </div>
     {% endif %}
     {% if traffic_error %}
@@ -6910,17 +6911,17 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     .league-slider { display:flex; align-items:center; justify-content:center; gap:10px; margin:10px 0 16px; }
     .league-badges { display:flex; gap:8px; overflow-x:auto; padding:4px; max-width:860px; }
     .league-pill { background:#ffffff; border:2px solid rgba(15,23,42,0.15); border-radius:20px; padding:6px 14px; font-size:0.8em; font-weight:600; white-space:nowrap; cursor:pointer; transition:all 0.2s; color:#0f172a; text-decoration:none; display:inline-flex; align-items:center; }
-    .league-pill.active { background:#fbbf24; border-color:#fbbf24; color:#0f172a; }
-    .league-pill:hover { border-color:#fbbf24; }
+    .league-pill.active { background:#fbbf24; border-color:#92400e; color:#0f172a; }
+    .league-pill:hover { border-color:#92400e; }
     /* Date navigation */
     .date-nav { display:flex; align-items:center; justify-content:center; gap:12px; margin:16px 0; padding:12px 16px; background:#ffffff; border:1px solid rgba(15,23,42,0.12); border-radius:12px; }
-    .nav-arrow { background:rgba(251,191,36,0.2); border:2px solid #fbbf24; color:#fbbf24; font-size:1.3em; width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; user-select:none; flex-shrink:0; }
+    .nav-arrow { background:rgba(251,191,36,0.2); border:2px solid #fbbf24; color:#92400e; font-size:1.3em; width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; user-select:none; flex-shrink:0; }
     .nav-arrow:hover { background:rgba(251,191,36,0.4); transform:scale(1.1); }
     .date-bubbles { display:flex; gap:8px; overflow-x:auto; padding:4px; max-width:820px; }
     .date-bubble { background:#ffffff; border:2px solid rgba(15,23,42,0.2); border-radius:22px; padding:8px 15px; min-width:100px; text-align:center; cursor:pointer; transition:all 0.2s; white-space:nowrap; font-weight:500; font-size:0.84em; color:#0f172a; }
-    .date-bubble:hover { border-color:#fbbf24; }
-    .date-bubble.active { background:#fbbf24; border-color:#fbbf24; color:#0f172a; font-weight:700; }
-    .date-bubble.today { border-color:#00C076; color:#00C076; }
+    .date-bubble:hover { border-color:#92400e; }
+    .date-bubble.active { background:#fbbf24; border-color:#92400e; color:#0f172a; font-weight:700; }
+    .date-bubble.today { border-color:#047857; color:#047857; }
     .date-bubble.active.today { background:#00C076; color:white; }
     /* Date sections */
     .date-section { display:none; background:#ffffff; border:1px solid rgba(15,23,42,0.12); border-radius:12px; padding:20px; margin-bottom:20px; }
@@ -6937,26 +6938,26 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
         transition:border-color 0.2s, box-shadow 0.2s;
     }
     .result-card:hover { border-color:#cbd5e1; box-shadow:0 10px 28px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.08); }
-    .result-status { padding:6px 14px; font-size:0.72em; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; color:#00C076; background:rgba(16,185,129,0.12); }
+    .result-status { padding:6px 14px; font-size:0.72em; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; color:#047857; background:rgba(16,185,129,0.12); }
     .result-body { display:flex; padding:12px 14px; gap:12px; }
     .teams-section { flex:1; min-width:0; }
     .team-row { display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(15,23,42,0.08); }
     .team-row:last-child { border-bottom:none; }
     .team-name { font-size:0.95em; white-space:normal; overflow:visible; text-overflow:clip; word-break:break-word; line-height:1.25; }
     .team-name.winner { font-weight:700; }
-    .score-box { font-size:1.05em; font-weight:700; color:#fbbf24; margin-left:8px; }
+    .score-box { font-size:1.05em; font-weight:700; color:#92400e; margin-left:8px; }
     .model-panel { background:#ffffff; border:1px solid rgba(139,92,246,0.35); border-left:3px solid #8b5cf6; padding:10px 12px; min-width:170px; max-width:200px; display:flex; flex-direction:column; gap:4px; }
     .panel-title { font-size:0.66em; color:#0F172A; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; margin-bottom:2px; }
     .model-row { display:flex; justify-content:space-between; font-size:0.82em; padding:2px 0; }
     .model-lbl { opacity:0.85; }
     .model-right { display:flex; align-items:center; gap:6px; }
     .model-val { font-weight:600; }
-    .ensemble-badge { background:rgba(16,185,129,0.2); border:1px solid #00C076; color:#00C076; padding:5px; border-radius:5px; text-align:center; font-weight:700; margin-top:4px; font-size:0.8em; }
+    .ensemble-badge { background:rgba(16,185,129,0.2); border:1px solid #00C076; color:#047857; padding:5px; border-radius:5px; text-align:center; font-weight:700; margin-top:4px; font-size:0.8em; }
     .result-footer { border-top:1px solid rgba(15,23,42,0.09); padding:8px 12px; display:flex; gap:14px; flex-wrap:wrap; background:#ffffff; }
     .sf-item { display:flex; flex-direction:column; gap:1px; }
     .sf-label { color:#94a3b8; font-size:0.72em; text-transform:uppercase; letter-spacing:0.3px; }
     .sf-val { font-weight:600; font-size:0.85em; color:#0f172a; }
-    .pick-ok { color:#00C076; font-weight:700; }
+    .pick-ok { color:#047857; font-weight:700; }
     .pick-no { color:#D93025; font-weight:700; }
     /* Pick confidence grid (results cards) */
     .pick-conf-bar { border-top:1px solid rgba(15,23,42,0.08); padding:10px 12px 12px; background:#ffffff; }
@@ -6970,15 +6971,15 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
     .pc-name { font-size:0.68em; font-weight:700; color:#0F172A; text-transform:uppercase; letter-spacing:0.3px; white-space:normal; overflow:visible; text-overflow:clip; max-width:100%; width:100%; line-height:1.15; word-break:break-word; min-height:28px; display:flex; align-items:center; justify-content:center; }
     .pc-val { font-size:0.95em; font-weight:800; color:#0f172a; }
     .pc-side { font-size:0.6em; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; padding:2px 6px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; gap:3px; white-space:normal; overflow:visible; text-overflow:clip; max-width:100%; width:100%; box-sizing:border-box; text-align:center; line-height:1.15; word-break:break-word; min-height:24px; }
-    .pc-side.home { color:#00C076; background:rgba(16,185,129,0.15); }
-    .pc-side.away { color:#fbbf24; background:rgba(251,191,36,0.15); }
+    .pc-side.home { color:#047857; background:rgba(16,185,129,0.15); }
+    .pc-side.away { color:#92400e; background:rgba(251,191,36,0.15); }
     .section-ml, .section-spread, .section-total { display:block; }
     .model-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px; }
     @media(max-width:900px){ .model-grid { grid-template-columns:repeat(3,1fr); } }
     .model-card { background:#ffffff; border:1px solid #E2E8F0; border-radius:12px; padding:12px; text-align:center; box-shadow:0 4px 18px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.06); }
     .model-card.highlight { border:2px solid #fbbf24; }
     .model-label { font-size:0.78em; opacity:0.8; margin-bottom:4px; }
-    .model-acc { font-size:1.4em; font-weight:700; color:#00C076; }
+    .model-acc { font-size:1.4em; font-weight:700; color:#047857; }
     .model-rec { font-size:0.82em; opacity:0.85; }
     .daily-tally { background:#ffffff; border:1px solid #E2E8F0; border-radius:12px; padding:16px; margin-bottom:16px; box-shadow:0 4px 18px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.06); }
     .daily-tally h2 { text-align:center; margin:0 0 12px 0; font-size:1.15em; color:#0F172A; font-weight:700; }
@@ -8696,7 +8697,7 @@ def landing_page():
             background:rgba(239,68,68,0.12);
         }
         .up-label{color:#0f172a;}
-        .up-units{font-size:1.05em;font-weight:900;color:#00C076;}
+        .up-units{font-size:1.05em;font-weight:900;color:#047857;}
         .units-pill.negative .up-units{color:#D93025;}
         .up-rec{color:#475569;font-size:0.82em;}
 
@@ -8770,6 +8771,7 @@ def landing_page():
             .navbar-content { flex-wrap: wrap; justify-content: center; }
             .nav-search-wrap { order: 3; width: 100%; max-width: 100%; }
         }
+        .sport-card:hover { transform:translateY(-3px); border-color:rgba(251,191,36,0.5); box-shadow:0 10px 28px rgba(0,0,0,0.25); }
         @media (max-width: 768px) {
             body{
                 background:#ffffff;
@@ -8905,19 +8907,19 @@ def landing_page():
     <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:14px;padding:20px 24px;">
         <div style="display:flex;justify-content:center;gap:20px;flex-wrap:wrap;text-align:center;">
             <div style="min-width:120px;">
-                <div style="font-size:1.8em;font-weight:900;color:#00C076;">{{ games_graded }}+</div>
+                <div style="font-size:1.8em;font-weight:900;color:#047857;">{{ games_graded }}+</div>
                 <div style="font-size:0.75em;color:#475569;font-weight:600;">Games Graded</div>
             </div>
             <div style="min-width:120px;">
-                <div style="font-size:1.8em;font-weight:900;color:#00C076;">{{ sports_covered }}</div>
+                <div style="font-size:1.8em;font-weight:900;color:#047857;">{{ sports_covered }}</div>
                 <div style="font-size:0.75em;color:#475569;font-weight:600;">Sports Covered</div>
             </div>
             <div style="min-width:120px;">
-                <div style="font-size:1.8em;font-weight:900;color:#00C076;">5</div>
+                <div style="font-size:1.8em;font-weight:900;color:#047857;">5</div>
                 <div style="font-size:0.75em;color:#475569;font-weight:600;">AI Models</div>
             </div>
             <div style="min-width:120px;">
-                <div style="font-size:1.8em;font-weight:900;color:#00C076;">Daily</div>
+                <div style="font-size:1.8em;font-weight:900;color:#047857;">Daily</div>
                 <div style="font-size:0.75em;color:#475569;font-weight:600;">Updates</div>
             </div>
         </div>
@@ -8929,7 +8931,7 @@ def landing_page():
 {% if todays_picks %}
 <div class="section" style="padding-top:24px;padding-bottom:8px;">
     <div style="text-align:center;margin-bottom:8px;">
-        <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:#00C076;font-size:0.78em;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;padding:5px 14px;border-radius:999px;">
+        <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:#047857;font-size:0.78em;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;padding:5px 14px;border-radius:999px;">
             <span style="display:inline-block;width:8px;height:8px;background:#00C076;border-radius:50%;animation:pulseDot 1.6s infinite;"></span>
             Winning Results Tracked Daily
         </span>
@@ -8939,11 +8941,11 @@ def landing_page():
     <div style="display:flex;flex-direction:column;gap:14px;max-width:600px;margin:0 auto;">
         {% for tp in todays_picks %}
         {% set _disp_pct = tp.prob if tp.prob >= 50 else (100 - tp.prob)|round(1) %}
-        <a href="/{{ tp.slug }}" style="display:block;background:#ffffff;border:1px solid rgba(15,23,42,0.18);border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:transform .18s, border-color .18s, box-shadow .18s;" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='rgba(251,191,36,0.5)';this.style.boxShadow='0 10px 22px rgba(15,23,42,0.12)';" onmouseout="this.style.transform='none';this.style.borderColor='rgba(15,23,42,0.18)';this.style.boxShadow='none';">
-            <div style="font-size:0.68em;color:#fbbf24;text-transform:uppercase;letter-spacing:0.6px;font-weight:800;margin-bottom:8px;">{{ tp.sport }}</div>
+        <a href="/{{ tp.slug }}" class="top-pick-card" style="display:block;background:#ffffff;border:1px solid rgba(15,23,42,0.18);border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:transform .18s, border-color .18s, box-shadow .18s;">
+            <div style="font-size:0.68em;color:#92400e;text-transform:uppercase;letter-spacing:0.6px;font-weight:800;margin-bottom:8px;">{{ tp.sport }}</div>
             <div style="font-weight:800;font-size:1.02em;color:#0f172a;line-height:1.35;margin-bottom:10px;">{{ tp.away }} <span style="color:#64748b;font-weight:600;">vs</span> {{ tp.home }}</div>
             <div style="display:flex;align-items:baseline;gap:10px;">
-                <span style="color:#00C076;font-size:0.9em;font-weight:800;">▶ {{ tp.pick }}</span>
+                <span style="color:#047857;font-size:0.9em;font-weight:800;">▶ {{ tp.pick }}</span>
                 <span style="color:#0f172a;font-weight:800;">{{ _disp_pct }}%</span>
                 <span style="color:#64748b;font-size:0.78em;font-weight:600;">Moneyline</span>
             </div>
@@ -8951,7 +8953,7 @@ def landing_page():
         {% endfor %}
     </div>
 </div>
-<style>@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:0.4;}}</style>
+<style>@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:0.4;}} .top-pick-card:hover{transform:translateY(-2px);border-color:rgba(251,191,36,0.5);box-shadow:0 10px 22px rgba(15,23,42,0.12);} .daily-results-cta:hover{transform:translateY(-2px);}</style>
 {% endif %}
 
 <!-- Sports grid -->
@@ -8960,13 +8962,13 @@ def landing_page():
     <p class="section-sub" style="color:#334155;">Live model projections updated daily</p>
     <div class="sports-grid">
         {% for s in landing_sports %}
-        <a href="/{{ s.seo_slug }}" class="sport-card {% if s.is_live %}live{% endif %}" style="transition:transform .18s, border-color .18s, box-shadow .18s;" onmouseover="this.style.transform='translateY(-3px)';this.style.borderColor='rgba(251,191,36,0.5)';this.style.boxShadow='0 10px 28px rgba(0,0,0,0.35)';" onmouseout="this.style.transform='none';this.style.borderColor='';this.style.boxShadow='none';">
+        <a href="/{{ s.seo_slug }}" class="sport-card {% if s.is_live %}live{% endif %}" style="transition:transform .18s, border-color .18s, box-shadow .18s;">
             {% if s.is_live %}<div class="live-dot"></div>{% endif %}
             <div class="sport-icon">{{ s.icon }}</div>
             <div class="sport-name">{{ s.name }}</div>
             <div class="sport-status {% if s.is_live %}live-text{% endif %}">{{ s.status }}</div>
             <div style="margin-top:8px;font-size:0.72em;color:#334155;">Today’s projections available</div>
-            <div style="margin-top:4px;font-size:0.78em;color:#fbbf24;font-weight:700;">View Picks →</div>
+            <div style="margin-top:4px;font-size:0.78em;color:#92400e;font-weight:700;">View Picks →</div>
         </a>
         {% endfor %}
     </div>
@@ -9019,9 +9021,9 @@ def landing_page():
 <div style="max-width:720px;margin:44px auto 32px;padding:0 24px;">
     <div style="position:relative;overflow:hidden;border-radius:16px;border:1px solid rgba(15,23,42,0.16);background:#ffffff;">
         <div style="position:relative;padding:32px 28px;text-align:center;">
-            <h2 style="font-size:1.5em;font-weight:900;color:#fbbf24;">Daily Betting Results Report</h2>
+            <h2 style="font-size:1.5em;font-weight:900;color:#0f172a;">Daily Betting Results Report</h2>
             <p style="color:#334155;font-size:0.9em;margin:10px 0 20px;max-width:480px;margin-left:auto;margin-right:auto;">Yesterday's performance across all sports and models &mdash; tracked, transparent, verified.</p>
-            <a href="/results" style="display:inline-block;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;padding:14px 32px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;box-shadow:0 4px 20px rgba(251,191,36,0.3);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">View Full Results</a>
+            <a href="/results" class="daily-results-cta" style="display:inline-block;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;padding:14px 32px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;box-shadow:0 4px 20px rgba(251,191,36,0.3);transition:transform 0.2s;">View Full Results</a>
         </div>
     </div>
 </div>
@@ -9099,20 +9101,20 @@ def landing_page():
             <a href="/nba-picks" class="landing-price-cta landing-price-cta--light" style="text-align:center;background:#fff;color:#0f172a;border:1px solid rgba(15,23,42,0.32);border-radius:10px;font-weight:800;text-decoration:none;font-size:0.9em;box-shadow:0 2px 8px rgba(15,23,42,0.08);">View Free Picks</a>
         </div>
         <div class="landing-price-card" style="background:#fffdf5;border:1px solid rgba(251,191,36,0.5);border-radius:14px;padding:24px;">
-            <h3 style="font-size:1.05em;font-weight:800;margin:0 0 8px;color:#fbbf24;">Full AI Model Access</h3>
-            <div style="font-size:0.78em;color:#fde68a;font-weight:700;margin:0 0 10px;text-transform:uppercase;letter-spacing:0.4px;line-height:1.35;min-height:2.7em;">Everything in Free, plus</div>
+            <h3 style="font-size:1.05em;font-weight:800;margin:0 0 8px;color:#92400e;">Full AI Model Access</h3>
+            <div style="font-size:0.78em;color:#334155;font-weight:700;margin:0 0 10px;text-transform:uppercase;letter-spacing:0.4px;line-height:1.35;min-height:2.7em;">Everything in Free, plus</div>
             <ul class="landing-price-list" style="list-style:none;padding:0;margin:0;font-size:0.9em;color:#0f172a;line-height:1.65;display:flex;flex-direction:column;gap:10px;">
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Spread betting models (edge-based pricing)</span></li>
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Over/Under totals with projected game flow</span></li>
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Predicted final scores (simulation-based outputs)</span></li>
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Enhanced multi-model consensus signals</span></li>
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Player props picks and projections</span></li>
-                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#fbbf24;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Model performance page access</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Spread betting models (edge-based pricing)</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Over/Under totals with projected game flow</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Predicted final scores (simulation-based outputs)</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Enhanced multi-model consensus signals</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Player props picks and projections</span></li>
+                <li style="display:flex;align-items:flex-start;gap:8px;"><span style="color:#92400e;flex-shrink:0;margin-top:2px;">&#10003;</span><span>Model performance page access</span></li>
             </ul>
             <a href="/plans" class="landing-price-cta landing-price-cta--gold" style="text-align:center;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.9em;box-shadow:0 4px 18px rgba(251,191,36,0.25);">Unlock Model Edge</a>
         </div>
     </div>
-    <p style="max-width:860px;margin:14px auto 0;text-align:center;font-size:0.8em;color:#94a3b8;line-height:1.5;">Free moneyline picks and premium spreads, totals, and scores are all updated daily as schedules, injuries, and markets change.</p>
+    <p style="max-width:860px;margin:14px auto 0;text-align:center;font-size:0.8em;color:#475569;line-height:1.5;">Free moneyline picks and premium spreads, totals, and scores are all updated daily as schedules, injuries, and markets change.</p>
     <div style="max-width:860px;margin:16px auto 0;background:#ffffff;border:1px solid rgba(15,23,42,0.2);border-radius:14px;padding:16px 18px;">
         <h3 style="font-size:1.1em;font-weight:800;color:#92400e;margin:0 0 14px;text-align:center;letter-spacing:0.02em;">Underdogs.bet Performance Stats</h3>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;color:#0f172a;font-size:0.88em;font-weight:700;">
@@ -9128,6 +9130,7 @@ def landing_page():
         .landing-price-card { display:flex; flex-direction:column; min-height:100%; }
         .landing-price-card .landing-price-list { flex:1 1 auto; min-height:16.5rem; }
         .landing-price-cta { display:flex; align-items:center; justify-content:center; margin-top:auto; min-height:48px; padding:0 22px; box-sizing:border-box; flex-shrink:0; }
+        .sport-card:hover { transform:translateY(-3px); border-color:rgba(251,191,36,0.5); box-shadow:0 10px 28px rgba(0,0,0,0.25); }
         @media (max-width: 768px) {
             .landing-pricing-row { grid-template-columns:1fr !important; }
             .landing-price-card .landing-price-list { min-height:0; }
@@ -11324,7 +11327,7 @@ def _predictions_fallback_page(sport, filter_date=None):
     <style>
         body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;}
         .card{max-width:680px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:24px;text-align:center;}
-        a{color:#fbbf24;text-decoration:none;font-weight:700;}
+        a{color:#92400e;text-decoration:none;font-weight:700;}
     </style>
 </head>
 <body>
