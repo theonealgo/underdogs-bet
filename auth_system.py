@@ -15,6 +15,15 @@ Env vars needed:
     STRIPE_PRICE_MONTHLY    - Stripe Price ID for $9.99/mo
     STRIPE_PRICE_YEARLY     - Stripe Price ID for $99/yr
     SECRET_KEY              - Flask session secret (auto-generated if missing)
+
+Local premium testing (never set on production):
+    LOCAL_DEV_LOGIN_PASSWORD  - if set, enables /auth/local-dev-login (see route).
+    LOCAL_DEV_LOGIN_EMAIL     - optional; default localdev@underdogs.local
+    ALLOW_LOCAL_DEV_LOGIN=1   - allow the dev login from non-loopback IPs (e.g. LAN).
+
+Strip premium paywall locally (still requires login where routes check auth first):
+    DISABLE_PREMIUM_PAYWALL=1   - any logged-in user is treated as premium (omit on Render).
+    (alias) LOCAL_DISABLE_PAYWALL=1
 """
 
 import os
@@ -162,6 +171,20 @@ def _load_user_by_id(user_id):
     return None
 
 
+def _local_dev_login_password_configured() -> str:
+    """Return stripped password env value, or empty string if disabled."""
+    return (os.environ.get('LOCAL_DEV_LOGIN_PASSWORD') or '').strip()
+
+
+def _local_dev_login_request_allowed() -> bool:
+    if not _local_dev_login_password_configured():
+        return False
+    if (os.environ.get('ALLOW_LOCAL_DEV_LOGIN') or '').strip() == '1':
+        return True
+    ra = (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
+    return ra in ('127.0.0.1', '::1', 'localhost')
+
+
 def _load_user_by_email(email):
     """Load user from database by email."""
     try:
@@ -254,9 +277,16 @@ def init_auth(app, db_path=None):
     # Inject is_premium into all templates
     @app.context_processor
     def inject_auth():
+        def _template_premium():
+            if not current_user.is_authenticated:
+                return False
+            if _premium_paywall_disabled():
+                return True
+            return current_user.premium_active
+
         return {
             'user': current_user,
-            'is_premium': current_user.premium_active if current_user.is_authenticated else False,
+            'is_premium': _template_premium(),
             'is_logged_in': current_user.is_authenticated,
         }
 
@@ -357,6 +387,7 @@ def login_page():
         error_msg=error_msg,
         google_enabled=bool(GOOGLE_CLIENT_ID),
         page='login',
+        local_dev_login_enabled=bool(_local_dev_login_password_configured()),
     )
 
 
@@ -386,6 +417,54 @@ def login_submit():
     login_user(user, remember=True)
     _set_session_token(user.id)
     return redirect(request.args.get('next', '/'))
+
+
+@auth_bp.route('/auth/local-dev-login', methods=['GET', 'POST'])
+def local_dev_login():
+    """
+    One-shot premium session for local testing. Disabled unless LOCAL_DEV_LOGIN_PASSWORD is set.
+    Only works from loopback unless ALLOW_LOCAL_DEV_LOGIN=1.
+    """
+    expected = _local_dev_login_password_configured()
+    if not expected:
+        return ('Not found', 404)
+    if not _local_dev_login_request_allowed():
+        return ('Local dev login only from this machine (or set ALLOW_LOCAL_DEV_LOGIN=1).', 403)
+
+    if request.method == 'GET':
+        return render_template(
+            'local_dev_login.html',
+            page='login',
+            next_url=(request.args.get('next') or '/').strip() or '/',
+        )
+
+    pw = (request.form.get('password') or '').strip()
+    if not secrets.compare_digest(pw, expected):
+        return redirect(url_for('auth.local_dev_login', next=request.form.get('next') or '/', error='1'))
+
+    email = (os.environ.get('LOCAL_DEV_LOGIN_EMAIL') or 'localdev@underdogs.local').strip().lower()
+    conn = _get_db()
+    row = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+    if not row:
+        ph = generate_password_hash(secrets.token_hex(24))
+        conn.execute(
+            'INSERT INTO users (email, name, is_premium, password_hash) VALUES (?, ?, 1, ?)',
+            (email, 'Local Dev', ph),
+        )
+    else:
+        conn.execute('UPDATE users SET is_premium = 1 WHERE id = ?', (row['id'],))
+    conn.commit()
+    conn.close()
+
+    user = _load_user_by_email(email)
+    if not user:
+        return ('Failed to create local dev user', 500)
+    login_user(user, remember=True)
+    _set_session_token(user.id)
+    nxt = (request.form.get('next') or request.args.get('next') or '/').strip() or '/'
+    if not nxt.startswith('/'):
+        nxt = '/'
+    return redirect(nxt)
 
 
 @auth_bp.route('/signup', methods=['GET'])
@@ -625,10 +704,18 @@ def _deactivate_premium_by_customer(stripe_customer_id):
 
 # ─── Helper: check premium in views ──────────────────────────────────────────
 
+def _premium_paywall_disabled() -> bool:
+    """True when local/dev env explicitly turns off Stripe premium checks."""
+    v = (os.environ.get('DISABLE_PREMIUM_PAYWALL') or os.environ.get('LOCAL_DISABLE_PAYWALL') or '').strip().lower()
+    return v in ('1', 'true', 'yes', 'on')
+
+
 def is_premium_user():
     """Check if current request is from a premium user."""
     if not current_user.is_authenticated:
         return False
+    if _premium_paywall_disabled():
+        return True
     return current_user.premium_active
 
 

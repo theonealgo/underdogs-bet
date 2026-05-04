@@ -181,7 +181,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        <div class="perf-note">52.4% is the break-even win rate for standard -110 lines. Buckets with sample size under 10 are shown in amber (small sample).</div>
+        <div class="perf-note">Each cell is wins on the model&rsquo;s picked side, bucketed by <strong>confidence</strong> (max(p, 1−p)×100 on home-win probability). If the database row is missing columns, probabilities are filled from the v2 stack so every model can grade (set <code>PERFORMANCE_V2_FALLBACK=0</code> to disable). Predictions are matched by <code>game_id</code>, then by game date + teams if IDs differ. 52.4% is the break-even win rate for standard -110 lines. Buckets with sample size under 10 are shown in amber (small sample).</div>
         <div class="perf-tools">
             <a href="/performance/audit.csv?sport={{ selected_sport }}&last_n={{ selected_last_n or '50' }}">Download audit CSV (Excel)</a>
         </div>

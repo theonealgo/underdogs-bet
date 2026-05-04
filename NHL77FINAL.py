@@ -10145,7 +10145,46 @@ _PERF_BUCKET_ORDER = [
     '<20%',
 ]
 _PERF_SPORT_OPTIONS = ['NBA', 'NHL', 'MLB', 'NFL', 'NCAAB', 'NCAAF']
-_PERF_ENABLE_V2_FALLBACK = (_os.environ.get('PERFORMANCE_V2_FALLBACK', '0').strip().lower() in ('1', 'true', 'yes', 'on'))
+# Default ON: stored prediction rows are often sparse; v2 backfill matches the page docstring.
+# Set PERFORMANCE_V2_FALLBACK=0 for strict DB-only / audit-style runs.
+_perf_fb_raw = _os.environ.get('PERFORMANCE_V2_FALLBACK', '1').strip().lower()
+_PERF_ENABLE_V2_FALLBACK = _perf_fb_raw not in ('0', 'false', 'no', 'off')
+
+
+def _perf_fetch_prediction_row(conn, sport: str, game_id, game_date, home, away):
+    """
+    Match predictions to games: prefer game_id, then same calendar date + teams
+    (handles ID drift between games and predictions tables).
+    """
+    sport_u = (sport or '').upper()
+    cols = 'elo_home_prob, logistic_home_prob, xgboost_home_prob, catboost_home_prob, meta_home_prob'
+    gid = str(game_id).strip() if game_id is not None else ''
+    h, a = str(home or '').strip(), str(away or '').strip()
+
+    def _q(sql, params):
+        return conn.execute(sql, params).fetchone()
+
+    row = _q(
+        f'SELECT {cols} FROM predictions WHERE UPPER(sport) = ? AND game_id = ? '
+        f'ORDER BY id DESC LIMIT 1',
+        (sport_u, gid),
+    )
+    if row is not None:
+        return row
+    if not game_date or (not h and not a):
+        return None
+    row = _q(
+        f'SELECT {cols} FROM predictions WHERE UPPER(sport) = ? AND date(game_date) = date(?) '
+        f'AND home_team_id = ? AND away_team_id = ? ORDER BY id DESC LIMIT 1',
+        (sport_u, game_date, h, a),
+    )
+    if row is not None:
+        return row
+    return _q(
+        f'SELECT {cols} FROM predictions WHERE UPPER(sport) = ? AND date(game_date) = date(?) '
+        f'AND home_team_id = ? AND away_team_id = ? ORDER BY id DESC LIMIT 1',
+        (sport_u, game_date, a, h),
+    )
 
 
 def _perf_parse_team_key(key: str):
@@ -10274,14 +10313,6 @@ def _build_performance_page_data(
     sport_rows = {}
     team_rows = {}
 
-    pred_sql_exact = """
-        SELECT elo_home_prob, logistic_home_prob, xgboost_home_prob, catboost_home_prob, meta_home_prob
-        FROM predictions
-        WHERE UPPER(sport) = ? AND game_id = ?
-        ORDER BY created_at DESC, id DESC
-        LIMIT 1
-    """
-
     for g in games:
         sport = (g['sport'] or '').upper()
         game_id = g['game_id']
@@ -10298,7 +10329,7 @@ def _build_performance_page_data(
             continue
         home_won = hs > aw
 
-        pred = conn.execute(pred_sql_exact, (sport, game_id)).fetchone()
+        pred = _perf_fetch_prediction_row(conn, sport, game_id, date_key, home, away)
 
         elo_prob = _flt(pred['elo_home_prob']) if pred else None
         logi_prob = _flt(pred['logistic_home_prob']) if pred else None
@@ -10721,19 +10752,6 @@ def performance_audit_csv():
         'prob_source',           # O
     ])
 
-    pred_sql_exact = """
-        SELECT
-            elo_home_prob,
-            logistic_home_prob,
-            xgboost_home_prob,
-            catboost_home_prob,
-            meta_home_prob
-        FROM predictions
-        WHERE UPPER(sport) = ? AND game_id = ?
-        ORDER BY created_at DESC, id DESC
-        LIMIT 1
-    """
-
     def _bucket_for_conf(confidence):
         if confidence >= 85: return '85%+'
         if confidence >= 80: return '80-84%'
@@ -10762,7 +10780,7 @@ def performance_audit_csv():
         home_won = hs > aw
         actual_winner = home if home_won else away
 
-        pred = conn.execute(pred_sql_exact, (row_sport, r['game_id'])).fetchone()
+        pred = _perf_fetch_prediction_row(conn, row_sport, r['game_id'], r['game_date'], home, away)
         elo_prob = _flt(pred['elo_home_prob']) if pred else None
         logi_prob = _flt(pred['logistic_home_prob']) if pred else None
         xgb_prob = _flt(pred['xgboost_home_prob']) if pred else None
