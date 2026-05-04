@@ -64,15 +64,18 @@ export async function fetchPlayers(league) {
   return readJsonResponse(r);
 }
 
-export async function fetchProps({ league, propType, side }) {
+export async function fetchProps({ league, propType, side, date }) {
   const q = new URLSearchParams({ league });
   if (propType) q.set("prop_type", propType);
   if (side) q.set("side", side);
+  if (date) q.set("date", date);
   const r = await fetchWithTimeout(`${API_BASE}/props?${q.toString()}`);
   return readJsonResponse(r);
 }
 
-export async function fetchResults(league) {
-  const r = await fetchWithTimeout(`${API_BASE}/results?league=${encodeURIComponent(league)}`);
+export async function fetchResults(league, date) {
+  const q = new URLSearchParams({ league });
+  if (date) q.set("date", date);
+  const r = await fetchWithTimeout(`${API_BASE}/results?${q.toString()}`);
   return readJsonResponse(r);
 }

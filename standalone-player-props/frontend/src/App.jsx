@@ -2,14 +2,28 @@ import React, { useEffect, useMemo, useState } from "react";
 import { fetchProps, fetchResults } from "./api";
 
 const LEAGUES = ["NBA", "NHL", "NFL", "MLB", "SOCCER", "NCAAB", "WNBA", "NCAAF", "NCAAW"];
-/** Display names aligned with main site branding (internal keys stay in API only). */
-const MODEL_LABELS = [
-  ["glicko2", "Grinder2"],
-  ["trueskill", "Takedown"],
-  ["xgboost", "Edge"],
-  ["xsharp", "XSharp"],
-  ["sharp_consensus", "Sharp Consensus"],
+
+/** [header, apiKey] — public names only; apiKey is internal engine field. */
+const MODEL_COLUMNS = [
+  ["Grinder2", "glicko2"],
+  ["Takedown", "trueskill"],
+  ["Edge", "xsharp"],
+  ["XSharp", "xgboost"],
+  ["Sharp Consensus", "sharp_consensus"],
 ];
+
+function isoDateInEastern(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return `${y}-${m}-${day}`;
+}
 
 function initialViewFromUrl() {
   try {
@@ -62,10 +76,15 @@ export default function App() {
   const [selectedLeague, setSelectedLeague] = useState(initialLeagueFromDomAndUrl);
   const [propType, setPropType] = useState("");
   const [side, setSide] = useState("");
+  const [propsSlateDate, setPropsSlateDate] = useState(() => isoDateInEastern());
+  const [resultsDate, setResultsDate] = useState("");
+  const [gradedDateLabel, setGradedDateLabel] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({
     league: "",
     propType: "",
     side: "",
+    slateDate: "",
+    resultsDate: "",
   });
   const [view, setView] = useState(initialViewFromUrl);
   const [resultsRows, setResultsRows] = useState([]);
@@ -73,22 +92,39 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [shareStatus, setShareStatus] = useState("");
+  const [sharePreviewUrl, setSharePreviewUrl] = useState("");
+
+  useEffect(() => {
+    const lg = initialLeagueFromDomAndUrl();
+    if (!lg) return;
+    setSelectedLeague(lg);
+    setAppliedFilters({
+      league: lg,
+      propType: "",
+      side: "",
+      slateDate: isoDateInEastern(),
+      resultsDate: "",
+    });
+  }, []);
 
   useEffect(() => {
     try {
       const u = new URL(window.location.href);
       u.searchParams.set("view", view);
+      if (appliedFilters.league) u.searchParams.set("league", appliedFilters.league);
+      else u.searchParams.delete("league");
       window.history.replaceState({}, "", u);
     } catch {
       /* ignore */
     }
-  }, [view]);
+  }, [view, appliedFilters.league]);
 
   useEffect(() => {
     if (!appliedFilters.league) {
       setPropsRows([]);
       setResultsRows([]);
       setResultsSummary(null);
+      setGradedDateLabel("");
       setLoading(false);
       return;
     }
@@ -101,12 +137,17 @@ export default function App() {
             league: appliedFilters.league,
             propType: appliedFilters.propType,
             side: appliedFilters.side,
+            date: appliedFilters.slateDate || undefined,
           });
           setPropsRows(r.items || []);
         } else {
-          const rr = await fetchResults(appliedFilters.league);
+          const rr = await fetchResults(
+            appliedFilters.league,
+            appliedFilters.resultsDate || undefined,
+          );
           setResultsRows(rr.items || []);
           setResultsSummary(rr.summary || null);
+          setGradedDateLabel(rr.graded_date || "");
         }
       } catch (e) {
         const msg =
@@ -121,6 +162,7 @@ export default function App() {
         } else {
           setResultsRows([]);
           setResultsSummary(null);
+          setGradedDateLabel("");
         }
       } finally {
         setLoading(false);
@@ -136,21 +178,41 @@ export default function App() {
 
   const topProps = useMemo(() => propsRows.slice(0, 30), [propsRows]);
   const shareProps = useMemo(() => topProps.slice(0, 3), [topProps]);
-  const shareDate = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      }),
-    []
-  );
+
+  useEffect(() => {
+    if (view !== "props" || shareProps.length === 0) {
+      setSharePreviewUrl("");
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        const card = document.getElementById("propsShareCard");
+        if (!card || cancelled) return;
+        const html2canvas = (await import("html2canvas")).default;
+        const canvas = await html2canvas(card, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
+        if (!cancelled) setSharePreviewUrl(canvas.toDataURL("image/png"));
+      } catch {
+        if (!cancelled) setSharePreviewUrl("");
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [view, shareProps, appliedFilters.league]);
+  const shareDate = useMemo(() => {
+    const d = appliedFilters.slateDate || isoDateInEastern();
+    return d;
+  }, [appliedFilters.slateDate]);
 
   function applyFilters() {
     setAppliedFilters({
       league: selectedLeague,
       propType,
       side,
+      slateDate: propsSlateDate,
+      resultsDate,
     });
   }
 
@@ -176,7 +238,7 @@ export default function App() {
         }
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `player-props-${appliedFilters.league.toLowerCase()}-${shareDate.replace(/\s+/g, "-")}.png`;
+        a.download = `player-props-${appliedFilters.league.toLowerCase()}-${shareDate}.png`;
         a.click();
         setShareStatus("Image saved.");
       }, "image/png");
@@ -220,12 +282,14 @@ export default function App() {
   return (
     <div className="app">
       <header className="hero">
-        <h1>{view === "props" ? "Top Props" : "Props Results"}</h1>
+        <h1>Player Props</h1>
         {view === "props" ? (
-          <p className="hero-lede">Projections for today&apos;s and tomorrow&apos;s games (US/Eastern slate).</p>
+          <p className="hero-lede">
+            Picks for the slate date you choose (US/Eastern). Use <strong>Results</strong> to grade against box scores (NBA).
+          </p>
         ) : (
           <p className="hero-lede">
-            Graded picks vs the line (NBA uses yesterday&apos;s box scores ET). Other sports show a directional proxy until full grading ships.
+            Graded vs closing lines from ESPN box scores. Pick a game date to review past slates (NBA). Leave date empty to use the latest completed slate we find.
           </p>
         )}
         {apiError ? (
@@ -235,14 +299,28 @@ export default function App() {
         ) : null}
       </header>
 
+      <div className="props-tabs" role="tablist" aria-label="Props views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "props"}
+          className={`props-tab${view === "props" ? " active" : ""}`}
+          onClick={() => setView("props")}
+        >
+          Picks
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "results"}
+          className={`props-tab${view === "results" ? " active" : ""}`}
+          onClick={() => setView("results")}
+        >
+          Results
+        </button>
+      </div>
+
       <section className="filters">
-        <label>
-          Page
-          <select value={view} onChange={(e) => setView(e.target.value)}>
-            <option value="props">Picks (today + tomorrow)</option>
-            <option value="results">Results</option>
-          </select>
-        </label>
         <label>
           Sport
           <select value={selectedLeague} onChange={(e) => setSelectedLeague(e.target.value)}>
@@ -254,6 +332,26 @@ export default function App() {
             ))}
           </select>
         </label>
+        {view === "props" ? (
+          <label>
+            Slate date (ET)
+            <input
+              type="date"
+              value={propsSlateDate}
+              onChange={(e) => setPropsSlateDate(e.target.value)}
+            />
+          </label>
+        ) : (
+          <label>
+            Game date
+            <input
+              type="date"
+              value={resultsDate}
+              onChange={(e) => setResultsDate(e.target.value)}
+            />
+            <span className="field-hint">Optional — blank = latest slate</span>
+          </label>
+        )}
         <label>
           Prop Type
           <select value={propType} onChange={(e) => setPropType(e.target.value)}>
@@ -285,6 +383,12 @@ export default function App() {
         </h2>
         {view === "results" && resultsSummary ? (
           <p className="results-summary">
+            {gradedDateLabel ? (
+              <>
+                <span style={{ fontWeight: 800 }}>Box score date:</span> {gradedDateLabel}
+                {" · "}
+              </>
+            ) : null}
             Overall: {resultsSummary.overall?.wins ?? 0}-{resultsSummary.overall?.losses ?? 0}
             {" | "}
             {Object.entries(resultsSummary.by_prop_type || {})
@@ -307,7 +411,7 @@ export default function App() {
                       <th>Line</th>
                       <th>Projection</th>
                       <th>Pick</th>
-                      {MODEL_LABELS.map(([, label]) => (
+                      {MODEL_COLUMNS.map(([label]) => (
                         <th key={label} className="model-col" title="Model confidence on this side">
                           {label}
                         </th>
@@ -323,9 +427,11 @@ export default function App() {
                         <td>{r.line ?? "-"}</td>
                         <td>{r.projection}</td>
                         <td>{r.picked_side}</td>
-                        {MODEL_LABELS.map(([key]) => (
-                          <td key={`${r.player_id}-${r.prop_type}-${key}`} className="model-col">
-                            {r.model_confidence && r.model_confidence[key] != null ? `${r.model_confidence[key]}%` : "—"}
+                        {MODEL_COLUMNS.map(([, apiKey]) => (
+                          <td key={`${r.player_id}-${r.prop_type}-${apiKey}`} className="model-col">
+                            {r.model_confidence && r.model_confidence[apiKey] != null
+                              ? `${r.model_confidence[apiKey]}%`
+                              : "—"}
                           </td>
                         ))}
                       </tr>
@@ -363,34 +469,45 @@ export default function App() {
             </table>
           </div>
         )}
-      </section>
 
-      {view === "props" ? (
-        <section className="panel share-panel">
-          <h2>Share Top 3 Props Image</h2>
-          <p className="results-summary">Save or share an image of the top 3 props. Date is shown at the bottom.</p>
-          <div className="share-actions">
-            <button type="button" className="run-btn" onClick={saveShareImage}>Save Image</button>
-            <button type="button" className="run-btn secondary-btn" onClick={shareImage}>Share Image</button>
+        {view === "props" ? (
+          <div className="share-panel-inner">
+            <h3 className="share-subhead">Top 3 props — share image</h3>
+            <p className="results-summary">Preview updates from the table above. Save or share for social.</p>
+            <div className="share-actions">
+              <button type="button" className="run-btn" onClick={saveShareImage}>
+                Save image
+              </button>
+              <button type="button" className="run-btn secondary-btn" onClick={shareImage}>
+                Share image
+              </button>
+            </div>
+            {shareStatus ? <p className="results-summary">{shareStatus}</p> : null}
+            {sharePreviewUrl ? (
+              <div className="props-share-preview-wrap">
+                <img src={sharePreviewUrl} alt="Top three player props preview" className="props-share-preview-img" />
+              </div>
+            ) : null}
+            <div id="propsShareCard" className="props-share-card">
+              <div className="props-share-head">{appliedFilters.league} Top Props</div>
+              {shareProps.length === 0 ? (
+                <div className="props-share-empty">No props available.</div>
+              ) : (
+                shareProps.map((r, idx) => (
+                  <div className="props-share-row" key={`${r.player_id}-${r.prop_type}-${idx}`}>
+                    <div className="ps-player">{r.player_name}</div>
+                    <div className="ps-prop">{formatPropType(r.prop_type)}</div>
+                    <div className="ps-pick">
+                      {r.picked_side} {r.line ?? "-"}
+                    </div>
+                  </div>
+                ))
+              )}
+              <div className="props-share-date">{shareDate}</div>
+            </div>
           </div>
-          {shareStatus ? <p className="results-summary">{shareStatus}</p> : null}
-          <div id="propsShareCard" className="props-share-card">
-            <div className="props-share-head">{appliedFilters.league} Top Props</div>
-            {shareProps.length === 0 ? (
-              <div className="props-share-empty">No props available.</div>
-            ) : (
-              shareProps.map((r, idx) => (
-                <div className="props-share-row" key={`${r.player_id}-${r.prop_type}-${idx}`}>
-                  <div className="ps-player">{r.player_name}</div>
-                  <div className="ps-prop">{formatPropType(r.prop_type)}</div>
-                  <div className="ps-pick">{r.picked_side} {r.line ?? "-"}</div>
-                </div>
-              ))
-            )}
-            <div className="props-share-date">{shareDate}</div>
-          </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
     </div>
   );
 }

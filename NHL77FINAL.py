@@ -32,7 +32,6 @@ import requests
 from nba_sportsdata_api import NBASportsDataAPI
 from nhl_api import NHLAPI
 from value_predictor import ValuePredictor
-from ats_system import ATSSystem
 from soccer_models import build_soccer_model_bundle
 
 # V2 PREDICTION SYSTEM - Upgraded architecture
@@ -5937,7 +5936,6 @@ BASE_TEMPLATE = """
                 <a href="/soccer-picks">Soccer</a>
                 {% endif %}
                 <a href="/player-props">Player Props</a>
-                <a href="/player-props/results">Props results</a>
                 <a href="/plans">Pricing</a>
             </div>
             <div class="nav-search-wrap">
@@ -7038,12 +7036,12 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
         <a href="/sport/{{ sport }}/results" class="tab active">🎯 Results</a>
         <a href="/player-props?league={{ sport }}" class="tab">🎲 Props</a>
     </div>
-        {% set model_cards = [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Consensus','ensemble')] %}
+        {% set model_cards = [('⭐ Grinder2','glicko2'),('🎯 Takedown','trueskill'),('📊 Edge','elo'),('🤖 XSharp','xgboost'),('🏆 Sharp Consensus','ensemble')] %}
         {% set label_glicko2 = 'Grinder2' %}
         {% set label_trueskill = 'Takedown' %}
         {% set label_elo = 'Edge' %}
         {% set label_xgb = 'XSharp' %}
-        {% set label_ensemble = 'Consensus' %}
+        {% set label_ensemble = 'Sharp Consensus' %}
         {% if daily_results and overall_stats %}
         {% if soccer_leagues %}
         <div class="league-slider">
@@ -7186,7 +7184,7 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
             <div style="text-align:center;margin-bottom:14px;"><span onclick="var b=document.getElementById('seasonInfoBox');b.style.display=b.style.display==='none'?'block':'none';" style="cursor:pointer;font-size:0.75em;color:#475569;border:1px solid rgba(15,23,42,0.18);border-radius:12px;padding:3px 10px;background:#f8fafc;">ⓘ What do these numbers mean?</span></div>
             <div class="roi-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">
                 <div style="background:#f8fafc;border:1px solid rgba(15,23,42,0.12);border-radius:9px;padding:14px;text-align:center;">
-                    <div style="font-size:0.8em;opacity:0.85;margin-bottom:4px;color:#334155;">🎯 Moneyline (Consensus)</div>
+                    <div style="font-size:0.8em;opacity:0.85;margin-bottom:4px;color:#334155;">🎯 Moneyline (Sharp Consensus)</div>
                     <div style="font-size:2em;font-weight:bold;color:{% if ens.accuracy>=55 %}#00C076{% elif ens.accuracy>=50 %}#fbbf24{% else %}#D93025{% endif %};">{{ ens.accuracy }}%</div>
                     <div style="font-size:0.85em;opacity:0.9;color:#334155;">{{ ens.correct }}-{{ ens.total - ens.correct }} ({{ ens.total }} games)</div>
                 </div>
@@ -7769,7 +7767,7 @@ def _weekly_banner_message_for_sport(sport, start_dt, end_dt):
         ('trueskill', 'Takedown'),
         ('elo', 'Edge'),
         ('xgboost', 'XSharp'),
-        ('ensemble', 'Consensus'),
+        ('ensemble', 'Sharp Consensus'),
     ]
     best_key = None
     best_label = None
@@ -8112,6 +8110,10 @@ def landing_page():
               AND (g.home_score IS NULL OR g.game_id IS NULL)
               AND p.win_probability IS NOT NULL
               AND p.sport IN ('NHL', 'NBA', 'MLB', 'SOCCER')
+              AND TRIM(COALESCE(p.home_team_id, '')) != ''
+              AND TRIM(COALESCE(p.away_team_id, '')) != ''
+              AND UPPER(TRIM(COALESCE(p.home_team_id, ''))) NOT IN ('TBD', 'TBA', 'N/A')
+              AND UPPER(TRIM(COALESCE(p.away_team_id, ''))) NOT IN ('TBD', 'TBA', 'N/A')
             ORDER BY p.game_date ASC
             LIMIT 80
         ''', (_tp_today,)).fetchall()
@@ -8119,8 +8121,12 @@ def landing_page():
         _candidates = []
         for _tp in _tp_rows:
             _ens_home = float(_tp['win_probability'])
-            _home = _tp['home_team_id']
-            _away = _tp['away_team_id']
+            _home = (_tp['home_team_id'] or '').strip()
+            _away = (_tp['away_team_id'] or '').strip()
+            if not _home or not _away:
+                continue
+            if _home.upper() in ('TBD', 'TBA', 'N/A') or _away.upper() in ('TBD', 'TBA', 'N/A'):
+                continue
             _home_picked = _ens_home >= 0.5
             _pick_prob = _ens_home if _home_picked else (1.0 - _ens_home)
             _pick = _home if _home_picked else _away
@@ -8911,7 +8917,6 @@ def landing_page():
             <a href="/soccer-picks">Soccer</a>
             {% endif %}
             <a href="/player-props">Player Props</a>
-            <a href="/player-props/results">Props results</a>
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
@@ -9101,7 +9106,7 @@ def landing_page():
             </div>
             <div class="step">
                 <div class="step-num">4</div>
-                <div class="step-title">Consensus</div>
+                <div class="step-title">Sharp Consensus</div>
                 <div class="step-body">All models combine into one pick—highlighting real edges.</div>
             </div>
         </div>
@@ -10121,7 +10126,7 @@ def api_performance_data():
     })
 
 
-_PERF_MODEL_ORDER = ['Grinder2', 'Takedown', 'Edge', 'XSharp', 'Consensus']
+_PERF_MODEL_ORDER = ['Grinder2', 'Takedown', 'Edge', 'XSharp', 'Sharp Consensus']
 _PERF_BUCKET_ORDER = [
     '85%+',
     '80-84%',
@@ -10143,7 +10148,66 @@ _PERF_SPORT_OPTIONS = ['NBA', 'NHL', 'MLB', 'NFL', 'NCAAB', 'NCAAF']
 _PERF_ENABLE_V2_FALLBACK = (_os.environ.get('PERFORMANCE_V2_FALLBACK', '0').strip().lower() in ('1', 'true', 'yes', 'on'))
 
 
-def _build_performance_page_data(sport_filter: str = '', last_n: int | None = None):
+def _perf_parse_team_key(key: str):
+    """`NBA|Lakers` style keys from the performance team picker."""
+    if not key or '|' not in key:
+        return None, None
+    sport, tid = key.split('|', 1)
+    sport = (sport or '').strip().upper()
+    tid = (tid or '').strip()
+    return (sport, tid) if sport and tid else (None, None)
+
+
+def _performance_upcoming_matchup_note(sport_filter: str, team1_key: str, team2_key: str):
+    """If both teams are chosen and we have an upcoming (unscored) game in `games`, return a short note."""
+    s1, t1 = _perf_parse_team_key(team1_key)
+    s2, t2 = _perf_parse_team_key(team2_key)
+    if not s1 or not s2 or s1 != s2 or not t1 or not t2 or t1 == t2:
+        return None
+    if sport_filter and s1 != sport_filter:
+        return None
+    try:
+        et = ZoneInfo('America/New_York')
+        d0 = datetime.now(et).date()
+        conn = get_db_connection()
+        try:
+            for i in range(5):
+                gd = (d0 + timedelta(days=i)).strftime('%Y-%m-%d')
+                row = conn.execute(
+                    """
+                    SELECT game_date, home_team_id, away_team_id
+                    FROM games
+                    WHERE UPPER(sport) = ?
+                      AND date(game_date) = date(?)
+                      AND home_score IS NULL
+                      AND away_score IS NULL
+                      AND (
+                          (home_team_id = ? AND away_team_id = ?)
+                          OR (home_team_id = ? AND away_team_id = ?)
+                      )
+                    ORDER BY game_id DESC
+                    LIMIT 1
+                    """,
+                    (s1, gd, t1, t2, t2, t1),
+                ).fetchone()
+                if row:
+                    h = row['home_team_id']
+                    a = row['away_team_id']
+                    gday = row['game_date']
+                    return f"Scheduled slate ({gday}): {a} @ {h}."
+            return None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _build_performance_page_data(
+    sport_filter: str = '',
+    last_n: int | None = None,
+    team1_key: str = '',
+    team2_key: str = '',
+):
     """
     Build performance using Excel-style logic:
       - Confidence bucket from picked-side confidence (max(p, 1-p) * 100)
@@ -10180,6 +10244,7 @@ def _build_performance_page_data(sport_filter: str = '', last_n: int | None = No
 
     conn = get_db_connection()
     games = conn.execute(game_sql, tuple(game_params)).fetchall()
+    team_ids_seen = set()
 
     def _flt(v):
         try:
@@ -10223,6 +10288,10 @@ def _build_performance_page_data(sport_filter: str = '', last_n: int | None = No
         date_key = g['game_date']
         home = g['home_team_id']
         away = g['away_team_id']
+        if str(home or '').strip():
+            team_ids_seen.add((sport, str(home).strip()))
+        if str(away or '').strip():
+            team_ids_seen.add((sport, str(away).strip()))
         hs = _flt(g['home_score'])
         aw = _flt(g['away_score'])
         if hs is None or aw is None or hs == aw:
@@ -10270,7 +10339,7 @@ def _build_performance_page_data(sport_filter: str = '', last_n: int | None = No
             'Takedown': trueskill_prob if trueskill_prob is not None else logi_prob,
             'Edge': elo_prob,
             'XSharp': xgb_prob,
-            'Consensus': meta_prob,
+            'Sharp Consensus': meta_prob,
         }
 
         for model in _PERF_MODEL_ORDER:
@@ -10363,7 +10432,34 @@ def _build_performance_page_data(sport_filter: str = '', last_n: int | None = No
 
     team_chart_rows.sort(key=lambda x: (-x['total_n'], x['team']))
     team_chart_rows = team_chart_rows[:120]
-    return main_table, sport_tables, team_chart_rows
+
+    perf_team_options = []
+    for sp, tid in sorted(team_ids_seen, key=lambda x: (x[0], str(x[1]).lower())):
+        if sport_filter and sp != sport_filter:
+            continue
+        if not tid:
+            continue
+        val = f"{sp}|{tid}"
+        perf_team_options.append({'value': val, 'label': f"{sp} — {tid}"})
+
+    row_by_key = {f"{r['sport']}|{r['team']}": r for r in team_chart_rows}
+    matchup_rows = []
+    seen_m = set()
+    for raw in ((team1_key or '').strip(), (team2_key or '').strip()):
+        if not raw or raw in seen_m:
+            continue
+        if raw in row_by_key:
+            matchup_rows.append(row_by_key[raw])
+            seen_m.add(raw)
+
+    matchup_note = _performance_upcoming_matchup_note(sport_filter, team1_key or '', team2_key or '')
+    rk = set(row_by_key.keys())
+    team_matchup_warnings = []
+    for raw in ((team1_key or '').strip(), (team2_key or '').strip()):
+        if raw and raw not in rk and raw not in team_matchup_warnings:
+            team_matchup_warnings.append(raw)
+
+    return main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings
 
 
 @app.route('/player-props/results')
@@ -10464,6 +10560,7 @@ def player_props_api_props():
     if not is_premium_user():
         return redirect('/plans')
     league = (request.args.get('league') or '').strip().upper()
+    slate_date = (request.args.get('date') or '').strip()[:10] or None
     prop_type = (request.args.get('prop_type') or '').strip() or None
     side = (request.args.get('side') or '').strip() or None
     min_ev_raw = (request.args.get('min_ev') or '').strip()
@@ -10478,7 +10575,7 @@ def player_props_api_props():
         supported = set(getattr(config_mod, 'SUPPORTED_LEAGUES', []))
         if league not in supported:
             return jsonify({'detail': f'Unsupported league: {league}'}), 400
-        data = engine_mod.get_league_data(league)
+        data = engine_mod.get_league_data(league, slate_date_str=slate_date)
         rows = engine_mod.filter_props(data.get('props', []), prop_type=prop_type, side=side, min_ev=min_ev)
         resp = {'league': league, 'count': len(rows), 'items': rows}
         if 'excluded_players' in data:
@@ -10499,12 +10596,13 @@ def player_props_api_results():
     if not is_premium_user():
         return redirect('/plans')
     league = (request.args.get('league') or '').strip().upper()
+    result_date = (request.args.get('date') or '').strip()[:10] or None
     try:
         engine_mod, config_mod = _load_props_modules()
         supported = set(getattr(config_mod, 'SUPPORTED_LEAGUES', []))
         if league not in supported:
             return jsonify({'detail': f'Unsupported league: {league}'}), 400
-        return jsonify(engine_mod.get_league_results(league))
+        return jsonify(engine_mod.get_league_results(league, result_date_str=result_date))
     except Exception as exc:
         return jsonify({'detail': str(exc)}), 500
 
@@ -10523,18 +10621,28 @@ def performance_page():
     if last_n_raw in ('50', '100', '200'):
         last_n = int(last_n_raw)
 
-    main_table, sport_tables, team_chart_rows = _build_performance_page_data(sport_filter=sport, last_n=last_n)
+    team1 = (request.args.get('team1') or '').strip()
+    team2 = (request.args.get('team2') or '').strip()
+    main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings = _build_performance_page_data(
+        sport_filter=sport, last_n=last_n, team1_key=team1, team2_key=team2
+    )
     return render_template(
         'performance.html',
         page='performance',
         selected_sport=sport,
         selected_last_n=(str(last_n) if last_n else ''),
+        selected_team1=team1,
+        selected_team2=team2,
         sport_options=_PERF_SPORT_OPTIONS,
         model_order=_PERF_MODEL_ORDER,
         bucket_order=_PERF_BUCKET_ORDER,
         main_table=main_table,
         sport_tables=sport_tables,
         team_chart_rows=team_chart_rows,
+        perf_team_options=perf_team_options,
+        matchup_rows=matchup_rows,
+        matchup_note=matchup_note,
+        team_matchup_warnings=team_matchup_warnings,
     )
 
 
@@ -11108,12 +11216,19 @@ def daily_report_page():
             if not tally or tally.get('games', 0) == 0:
                 continue
             _model_payload = []
+            _share_model_public = {
+                'glicko2': 'Grinder2',
+                'trueskill': 'Takedown',
+                'elo': 'Edge',
+                'xgboost': 'XSharp',
+                'ensemble': 'Sharp Consensus',
+            }
             for mk in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
                 mt = tally.get(mk, {}) or {}
                 total_m = mt.get('total', 0) or 0
                 correct_m = mt.get('correct', 0) or 0
                 _model_payload.append({
-                    'label': mk.upper(),
+                    'label': _share_model_public.get(mk, mk),
                     'acc': f"{mt.get('accuracy', 0)}%" if total_m > 0 else "—",
                     'record': f"{correct_m}-{max(total_m - correct_m, 0)}" if total_m > 0 else "",
                 })
@@ -11165,13 +11280,13 @@ def daily_report_page():
         ('trueskill', '🎯 Takedown'),
         ('elo', '📊 Edge'),
         ('xgboost', '🤖 XSharp'),
-        ('ensemble', '🏆 Consensus'),
+        ('ensemble', '🏆 Sharp Consensus'),
     ]
 
     share_text = f"underdogs.bet Daily Report — {report_display}%0A"
     ens = agg_models.get('ensemble', {})
     if ens.get('total', 0) > 0:
-        share_text += f"Consensus: {ens['accuracy']}% ({ens['correct']}-{ens['total'] - ens['correct']})%0A"
+        share_text += f"Sharp Consensus: {ens['accuracy']}% ({ens['correct']}-{ens['total'] - ens['correct']})%0A"
     share_text += f"{total_games} games graded%0Ahttps://www.underdogs.bet/daily-report"
 
     rendered = render_template_string(DAILY_REPORT_TEMPLATE,
@@ -12301,7 +12416,10 @@ def sport_spread_total_picks(sport):
     """Redirect to predictions page (spreads now shown inline on predictions card)"""
     if sport not in SPORTS:
         return "Sport not found", 404
-    return redirect(url_for('sport_predictions', sport=sport))
+    slug = SPORT_SEO_SLUGS.get(sport)
+    if slug:
+        return redirect(f'/{slug}', code=301)
+    return "Sport not found", 404
 
 
 
@@ -12315,35 +12433,13 @@ def sport_spread_total_results(sport):
 
 @app.route('/sport/<sport>/ats')
 def sport_ats_picks(sport):
-    """Show ATS betting picks for a sport"""
+    """Legacy /sport/X/ats URL — inline ATS/spread context lives on the main picks page."""
     if sport not in SPORTS:
         return "Sport not found", 404
-    
-    # Initialize ATS system
-    ats = ATSSystem()
-    
-    # Get all picks for next 7 days
-    all_picks = ats.get_all_picks(sport, days_ahead=7)
-    
-    ml_picks = all_picks['moneyline']
-    spread_picks = all_picks['spread']
-    total_picks = all_picks['totals']
-    
-    # Get ATS records for context
-    ats_records = ats.calculate_ats_records(sport, lookback_days=30)
-    ou_records = ats.calculate_over_under_records(sport, lookback_days=30)
-    
-    return render_template_string(
-        ATS_PICKS_TEMPLATE,
-        page=sport,
-        sport=sport,
-        sport_info=SPORTS[sport], sport_bg_image=SPORT_BG_IMAGES.get(sport, ''),
-        ml_picks=ml_picks,
-        spread_picks=spread_picks,
-        total_picks=total_picks,
-        ats_records=ats_records.head(10).to_dict('records') if not ats_records.empty else [],
-        ou_records=ou_records.head(10).to_dict('records') if not ou_records.empty else []
-    )
+    slug = SPORT_SEO_SLUGS.get(sport)
+    if slug:
+        return redirect(f'/{slug}', code=301)
+    return "Sport not found", 404
 
 @app.route('/admin/traffic')
 def admin_traffic():

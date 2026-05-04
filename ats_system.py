@@ -376,12 +376,13 @@ class ATSSystem:
         Uses the formula from rules: spread = expected_home_score - expected_away_score
         """
         # Use best available probability (meta > xgboost > elo)
-        prob = df['meta_home_prob'].fillna(
-            df['xgboost_home_prob'].fillna(
-                df['elo_home_prob'].fillna(0.5)
-            )
-        )
-        
+        prob = pd.to_numeric(
+            df['meta_home_prob'].fillna(
+                df['xgboost_home_prob'].fillna(df['elo_home_prob'].fillna(0.5))
+            ),
+            errors='coerce',
+        ).fillna(0.5)
+
         # Convert probability to point spread
         # Empirical formula: spread ≈ 25 * (prob - 0.5) for basketball
         # Adjust multiplier by sport

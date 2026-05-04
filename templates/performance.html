@@ -27,6 +27,8 @@
 .perf-green{background:rgba(16,185,129,0.18);}
 .perf-gray{background:#f1f5f9;color:#94a3b8;}
 .perf-gray .perf-win,.perf-gray .perf-rec,.perf-gray .perf-n{color:#94a3b8;}
+.perf-small{background:rgba(251,191,36,0.12);border:1px dashed rgba(180,83,9,0.35);}
+.perf-small .perf-n{font-size:0.7rem;color:#92400e;font-weight:700;}
 .perf-note{margin-top:10px;color:#475569;font-size:0.84rem;}
 .perf-tools{margin-top:10px;display:flex;justify-content:flex-end;}
 .perf-tools a{font-size:0.83rem;text-decoration:none;color:#00529B;font-weight:800;}
@@ -46,9 +48,67 @@
 .team-mini th,.team-mini td{padding:5px 6px;font-size:0.78rem;border-bottom:1px solid #E0E4E8;text-align:left;color:#334155;}
 .team-mini th{font-weight:800;color:#0f172a;background:#F8FAFC;}
 .team-mini tr:last-child td{border-bottom:none;}
+.perf-matchup-spotlight{
+    margin:0 0 20px;padding:16px 18px;border-radius:12px;border:1px solid rgba(0,82,155,0.25);
+    background:linear-gradient(180deg,rgba(0,82,155,0.06),#fff);
+}
+.perf-matchup-spotlight h3{margin:0 0 8px;font-size:1.05rem;font-weight:900;color:#0f172a;}
+.perf-matchup-note{margin:0 0 12px;font-size:0.88rem;color:#00529B;font-weight:700;}
+.perf-matchup-warn{margin:0 0 12px;font-size:0.84rem;color:#92400e;font-weight:600;}
+.perf-matchup-grid{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    gap:14px;
+    align-items:start;
+}
+@media(max-width:900px){
+    .perf-matchup-grid{grid-template-columns:1fr; }
+    .perf-matchup-vs{order:-1;text-align:center;padding:4px 0;}
+}
+.perf-matchup-vs{
+    align-self:center;
+    font-weight:900;
+    font-size:1.1rem;
+    color:#64748b;
+    padding:12px 6px;
+    text-align:center;
+}
 {% endblock %}
 
 {% block content %}
+{% macro team_perf_card(row) %}
+<div class="team-card">
+    <h3>{{ row.team }} <span style="color:#64748b;font-size:0.8rem;">({{ row.sport }})</span></h3>
+    <table class="team-mini">
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Record</th>
+                <th>Win %</th>
+                <th title="Total number of model predictions involving this team. May exceed total games due to multiple bet types per game.">Sample Size</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for model in model_order %}
+                {% set md = row.models[model] %}
+            <tr>
+                <td>{{ model }}</td>
+                {% if md %}
+                <td>{{ md.wins }}-{{ md.losses }}</td>
+                <td>{{ md.win_pct }}%</td>
+                <td>{{ md.n }}</td>
+                {% else %}
+                <td>&mdash;</td>
+                <td>&mdash;</td>
+                <td>0</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
 <div class="perf-wrap">
     <div class="perf-card">
         <div class="perf-head">
@@ -73,6 +133,22 @@
                     <option value="200" {% if selected_last_n == '200' %}selected{% endif %}>Last 200</option>
                 </select>
             </label>
+            <label>Team A (matchup)
+                <select name="team1">
+                    <option value="">— optional —</option>
+                    {% for opt in perf_team_options %}
+                    <option value="{{ opt.value }}" {% if opt.value == selected_team1 %}selected{% endif %}>{{ opt.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>Team B (matchup)
+                <select name="team2">
+                    <option value="">— optional —</option>
+                    {% for opt in perf_team_options %}
+                    <option value="{{ opt.value }}" {% if opt.value == selected_team2 %}selected{% endif %}>{{ opt.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
             <button type="submit">Apply</button>
         </form>
 
@@ -94,7 +170,8 @@
                         {% if not cell %}
                         <td><div class="perf-stat perf-gray"><div class="perf-win">&mdash;</div><div class="perf-rec">&mdash;</div><div class="perf-n">Sample Size: 0</div></div></td>
                         {% elif cell.n < 10 %}
-                        <td><div class="perf-stat perf-gray"><div class="perf-win">&mdash;</div><div class="perf-rec">&mdash;</div><div class="perf-n">Sample Size: {{ cell.n }}</div></div></td>
+                            {% set cls = 'perf-red' if cell.win_pct < 52 else ('perf-yellow' if cell.win_pct < 55 else 'perf-green') %}
+                        <td><div class="perf-stat perf-small {{ cls }}"><div class="perf-win">{{ cell.win_pct }}%</div><div class="perf-rec">{{ cell.wins }}-{{ cell.losses }}</div><div class="perf-n">Sample Size: {{ cell.n }} (small)</div></div></td>
                         {% else %}
                             {% set cls = 'perf-red' if cell.win_pct < 52 else ('perf-yellow' if cell.win_pct < 55 else 'perf-green') %}
                         <td><div class="perf-stat {{ cls }}"><div class="perf-win">{{ cell.win_pct }}%</div><div class="perf-rec">{{ cell.wins }}-{{ cell.losses }}</div><div class="perf-n">Sample Size: {{ cell.n }}</div></div></td>
@@ -104,7 +181,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        <div class="perf-note">52.4% is the break-even win rate for standard -110 lines.</div>
+        <div class="perf-note">52.4% is the break-even win rate for standard -110 lines. Buckets with sample size under 10 are shown in amber (small sample).</div>
         <div class="perf-tools">
             <a href="/performance/audit.csv?sport={{ selected_sport }}&last_n={{ selected_last_n or '50' }}">Download audit CSV (Excel)</a>
         </div>
@@ -134,7 +211,8 @@
                             {% if not cell %}
                             <td><div class="perf-stat perf-gray"><div class="perf-win">&mdash;</div><div class="perf-rec">&mdash;</div><div class="perf-n">Sample Size: 0</div></div></td>
                             {% elif cell.n < 10 %}
-                            <td><div class="perf-stat perf-gray"><div class="perf-win">&mdash;</div><div class="perf-rec">&mdash;</div><div class="perf-n">Sample Size: {{ cell.n }}</div></div></td>
+                                {% set cls = 'perf-red' if cell.win_pct < 52 else ('perf-yellow' if cell.win_pct < 55 else 'perf-green') %}
+                            <td><div class="perf-stat perf-small {{ cls }}"><div class="perf-win">{{ cell.win_pct }}%</div><div class="perf-rec">{{ cell.wins }}-{{ cell.losses }}</div><div class="perf-n">Sample Size: {{ cell.n }} (small)</div></div></td>
                             {% else %}
                                 {% set cls = 'perf-red' if cell.win_pct < 52 else ('perf-yellow' if cell.win_pct < 55 else 'perf-green') %}
                             <td><div class="perf-stat {{ cls }}"><div class="perf-win">{{ cell.win_pct }}%</div><div class="perf-rec">{{ cell.wins }}-{{ cell.losses }}</div><div class="perf-n">Sample Size: {{ cell.n }}</div></div></td>
@@ -154,44 +232,41 @@
     <div class="perf-card sport-block">
         <h2 class="sport-title">Team Model Performance</h2>
         <p class="team-explainer">
-            This table shows how each model has performed on all predictions involving each team.
-            Includes spreads, totals, and moneyline picks.
-            Timeframe: current season (regular season + playoffs).
+            Pick two teams above and click <strong>Apply</strong> to spotlight their model hit rates side by side—useful when they meet on the schedule.
+            The full grid below lists teams that appear in the current game sample (moneyline / spread / total picks).
             Multiple picks per game may result in sample sizes greater than 82.
         </p>
+        {% if matchup_rows %}
+        <div class="perf-matchup-spotlight">
+            <h3>Matchup spotlight</h3>
+            {% if matchup_note %}
+            <p class="perf-matchup-note">{{ matchup_note }}</p>
+            {% endif %}
+            <div class="perf-matchup-grid">
+                {% if matchup_rows|length > 0 %}
+                {{ team_perf_card(matchup_rows[0]) }}
+                {% endif %}
+                <div class="perf-matchup-vs">vs</div>
+                {% if matchup_rows|length > 1 %}
+                {{ team_perf_card(matchup_rows[1]) }}
+                {% else %}
+                <div class="team-card" style="display:flex;align-items:center;justify-content:center;color:#64748b;font-size:0.9rem;font-weight:600;">
+                    Select Team B to compare.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% if team_matchup_warnings %}
+        <p class="perf-matchup-warn">
+            No performance row for: {% for k in team_matchup_warnings %}<code>{{ k }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+            Try a larger &ldquo;Last N&rdquo;, choose <strong>All</strong> sports, or confirm the team name matches the database.
+        </p>
+        {% endif %}
         {% if team_chart_rows %}
         <div class="team-grid">
             {% for row in team_chart_rows %}
-            <div class="team-card">
-                <h3>{{ row.team }} <span style="color:#64748b;font-size:0.8rem;">({{ row.sport }})</span></h3>
-                <table class="team-mini">
-                    <thead>
-                        <tr>
-                            <th>Model</th>
-                            <th>Record</th>
-                            <th>Win %</th>
-                            <th title="Total number of model predictions involving this team. May exceed total games due to multiple bet types per game.">Sample Size</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for model in model_order %}
-                            {% set md = row.models[model] %}
-                        <tr>
-                            <td>{{ model }}</td>
-                            {% if md %}
-                            <td>{{ md.wins }}-{{ md.losses }}</td>
-                            <td>{{ md.win_pct }}%</td>
-                            <td>{{ md.n }}</td>
-                            {% else %}
-                            <td>&mdash;</td>
-                            <td>&mdash;</td>
-                            <td>0</td>
-                            {% endif %}
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+            {{ team_perf_card(row) }}
             {% endfor %}
         </div>
         {% else %}

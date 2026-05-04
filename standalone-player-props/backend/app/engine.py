@@ -20,7 +20,7 @@ from .data_sources import (
 _CACHE: Dict[str, Dict] = {}
 _RESULTS_CACHE: Dict[str, Dict] = {}
 # Bust in-process cache when player/gamelog pipeline semantics change.
-_CACHE_SCHEMA = "gmlog-align-v1"
+_CACHE_SCHEMA = "gmlog-align-v2"
 _TEAM_STATS_CACHE: Dict[str, Dict] = {}
 _MODEL_WEIGHTS = {
     "xgboost": 0.25,
@@ -246,9 +246,19 @@ def _parse_made(value: str) -> float:
         return 0.0
 
 
-def _build_league_payload(league: str, schedule_override: Optional[List[Dict]] = None) -> Dict:
+def _build_league_payload(
+    league: str,
+    schedule_override: Optional[List[Dict]] = None,
+    slate_date_str: Optional[str] = None,
+) -> Dict:
     if schedule_override is not None:
         schedule = schedule_override
+    elif slate_date_str:
+        try:
+            d_only = datetime.strptime(str(slate_date_str).strip()[:10], "%Y-%m-%d").date()
+            schedule = fetch_schedule_and_teams(league, target_date=d_only, strict_day=True)
+        except ValueError:
+            schedule = []
     else:
         now_et = datetime.now(ZoneInfo("America/New_York"))
         d0 = now_et.date()
@@ -363,21 +373,52 @@ def _build_league_payload(league: str, schedule_override: Optional[List[Dict]] =
     return payload
 
 
-def get_league_data(league: str) -> Dict:
+def get_league_data(league: str, slate_date_str: Optional[str] = None) -> Dict:
     league_u = league.upper().split(":", 1)[0] if league else ""
-    cache_key = f"{league_u}:{_CACHE_SCHEMA}"
+    sd = (slate_date_str or "").strip()[:10] if slate_date_str else ""
+    cache_key = f"{league_u}:{sd or 'auto'}:{_CACHE_SCHEMA}"
     now = time.time()
     cached = _CACHE.get(cache_key)
     if cached and (now - cached["ts"]) < CACHE_TTL_SECONDS:
         return cached["payload"]
-    payload = _build_league_payload(league_u)
+    payload = _build_league_payload(league_u, slate_date_str=sd or None)
     _CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
 
 
-def get_league_results(league: str) -> Dict:
+def _et_date_from_str(result_date_str: Optional[str]) -> Optional[datetime]:
+    if not result_date_str:
+        return None
+    try:
+        return datetime.strptime(str(result_date_str).strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _nba_stat_row_from_vals(idx: Dict[str, int], vals: List) -> Dict[str, Optional[float]]:
+    def _cell(key: str) -> Optional[float]:
+        if key not in idx or idx[key] >= len(vals):
+            return None
+        raw = vals[idx[key]]
+        if key == "3PT":
+            return _parse_made(raw)
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "points": _cell("PTS"),
+        "rebounds": _cell("REB"),
+        "assists": _cell("AST"),
+        "threes": _cell("3PT"),
+    }
+
+
+def get_league_results(league: str, result_date_str: Optional[str] = None) -> Dict:
     league_u = league.upper().split(":", 1)[0] if league else ""
-    cache_key = f"{league_u}:{_CACHE_SCHEMA}"
+    dkey = (result_date_str or "").strip()[:10] if result_date_str else "auto"
+    cache_key = f"{league_u}:{dkey}:results:{_CACHE_SCHEMA}"
     now = time.time()
     cached = _RESULTS_CACHE.get(cache_key)
     if cached and (now - cached["ts"]) < 300:
@@ -418,15 +459,41 @@ def get_league_results(league: str) -> Dict:
                     "projection": p.get("projection"),
                 }
             )
-        payload = {"league": league_u, "count": len(rows), "items": rows, "summary": summary}
+        payload = {
+            "league": league_u,
+            "count": len(rows),
+            "items": rows,
+            "summary": summary,
+            "graded_date": None,
+        }
         _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
         return payload
-    ydate = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).date()
-    y_schedule = fetch_schedule_and_teams(league_u, target_date=ydate)
+
+    et_now = datetime.now(ZoneInfo("America/New_York"))
+    parsed = _et_date_from_str(result_date_str)
+    if (result_date_str or "").strip() and parsed:
+        target_dates = [parsed.date()]
+    elif (result_date_str or "").strip():
+        target_dates = []
+    else:
+        # Default: most recent completed slate (yesterday first, then scan back).
+        start = (et_now - timedelta(days=1)).date()
+        target_dates = [start - timedelta(days=i) for i in range(14)]
+
+    y_schedule: List[Dict] = []
+    used_date = None
+    for cand in target_dates:
+        rows = fetch_schedule_and_teams(league_u, target_date=cand, strict_day=True)
+        if rows:
+            y_schedule = rows
+            used_date = cand.isoformat()
+            break
     if not y_schedule:
-        return {"league": league_u, "count": 0, "items": []}
+        empty_summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
+        return {"league": league_u, "count": 0, "items": [], "summary": empty_summary, "graded_date": None}
+
     data = _build_league_payload(league_u, schedule_override=y_schedule)
-    player_stat_map = {}
+    player_stat_map: Dict[str, Dict[str, Optional[float]]] = {}
     for g in y_schedule:
         event_id = g.get("event_id")
         if not event_id:
@@ -445,25 +512,38 @@ def get_league_results(league: str) -> Dict:
                 labels = stats_group[0].get("labels") or []
                 idx = {k: i for i, k in enumerate(labels)}
                 for ath in stats_group[0].get("athletes") or []:
-                    name = (ath.get("athlete") or {}).get("displayName")
+                    athlete = ath.get("athlete") or {}
+                    aid = str(athlete.get("id") or "").strip()
+                    name = (athlete.get("displayName") or "").strip()
                     vals = ath.get("stats") or []
-                    if not name:
+                    if not vals:
                         continue
-                    pts = float(vals[idx["PTS"]]) if "PTS" in idx and idx["PTS"] < len(vals) else None
-                    reb = float(vals[idx["REB"]]) if "REB" in idx and idx["REB"] < len(vals) else None
-                    ast = float(vals[idx["AST"]]) if "AST" in idx and idx["AST"] < len(vals) else None
-                    threes = _parse_made(vals[idx["3PT"]]) if "3PT" in idx and idx["3PT"] < len(vals) else None
-                    player_stat_map[name.lower()] = {"points": pts, "rebounds": reb, "assists": ast, "threes": threes}
+                    blob = _nba_stat_row_from_vals(idx, vals)
+                    if aid:
+                        player_stat_map[aid] = blob
+                    if name:
+                        player_stat_map[name.lower()] = blob
         except Exception:
             continue
+
     rows = []
     summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
-    for p in (data.get("props") or [])[:40]:
-        pname = str(p.get("player_name", "")).lower()
-        actual = (player_stat_map.get(pname) or {}).get(str(p.get("prop_type", "")))
+    for p in (data.get("props") or [])[:120]:
+        pid = str(p.get("player_id") or "").strip()
+        pname = str(p.get("player_name", "")).strip().lower()
+        blob = player_stat_map.get(pid) or player_stat_map.get(pname)
+        if not blob:
+            continue
+        ptype = str(p.get("prop_type", "") or "")
+        actual = blob.get(ptype)
         if actual is None:
             continue
-        line = float(p.get("_calc_line", 0.0) or 0.0)
+        raw_line = p.get("_calc_line")
+        if raw_line is None:
+            raw_line = p.get("line")
+        line = float(raw_line or 0.0)
+        if line <= 0.0:
+            continue
         pick = str(p.get("picked_side", ""))
         hit = (actual > line and pick == "OVER") or (actual < line and pick == "UNDER")
         if hit:
@@ -489,7 +569,13 @@ def get_league_results(league: str) -> Dict:
                 "projection": p.get("projection"),
             }
         )
-    payload = {"league": league_u, "count": len(rows), "items": rows, "summary": summary}
+    payload = {
+        "league": league_u,
+        "count": len(rows),
+        "items": rows,
+        "summary": summary,
+        "graded_date": used_date,
+    }
     _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
 

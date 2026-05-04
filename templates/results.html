@@ -183,7 +183,7 @@
         {% set max_accuracy = [result.elo_accuracy, result.consensus_accuracy, result.xgboost_accuracy, result.combined_accuracy]|max %}
         
         <div class="model-result {% if result.elo_accuracy == max_accuracy %}best-model{% endif %}">
-            <span class="model-name">Elo Rating (35%)</span>
+            <span class="model-name">Edge (35%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
                     <div class="accuracy-fill" style="width: {{ result.elo_accuracy }}%"></div>
@@ -193,7 +193,7 @@
         </div>
         
         <div class="model-result {% if result.consensus_accuracy == max_accuracy %}best-model{% endif %}">
-            <span class="model-name">Consensus (15%)</span>
+            <span class="model-name">Sharp Consensus (15%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
                     <div class="accuracy-fill" style="width: {{ result.consensus_accuracy }}%"></div>
@@ -203,7 +203,7 @@
         </div>
         
         <div class="model-result {% if result.xgboost_accuracy == max_accuracy %}best-model{% endif %}">
-            <span class="model-name">XGBoost (50%)</span>
+            <span class="model-name">XSharp (50%)</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
                     <div class="accuracy-fill" style="width: {{ result.xgboost_accuracy }}%"></div>
@@ -213,7 +213,7 @@
         </div>
         
         <div class="model-result {% if result.combined_accuracy == max_accuracy %}best-model{% endif %}" style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #667eea;">
-            <span class="model-combined">Combined Ensemble</span>
+            <span class="model-combined">Combined Sharp Consensus</span>
             <div class="accuracy">
                 <div class="accuracy-bar">
                     <div class="accuracy-fill" style="width: {{ result.combined_accuracy }}%"></div>
@@ -228,8 +228,8 @@
 <div class="legend">
     <h3>📌 How It Works</h3>
     <div class="legend-item">
-        <span><strong>Combined Ensemble:</strong></span>
-        <span>XGBoost (50%) + Elo Rating (35%) + Consensus (15%)</span>
+        <span><strong>Combined Sharp Consensus:</strong></span>
+        <span>XSharp (50%) + Edge (35%) + Sharp Consensus (15%)</span>
     </div>
     <div class="legend-item">
         <span><strong>Backtesting:</strong></span>

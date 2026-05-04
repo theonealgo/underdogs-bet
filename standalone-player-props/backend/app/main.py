@@ -90,8 +90,8 @@ def projections(
 
 
 @app.get("/results")
-def results(league: str = Query(...)):
+def results(league: str = Query(...), date: str | None = Query(None, description="Game date YYYY-MM-DD (ET calendar)")):
     league = league.upper()
     if league not in SUPPORTED_LEAGUES:
         raise HTTPException(status_code=400, detail=f"Unsupported league: {league}")
-    return get_league_results(league)
+    return get_league_results(league, result_date_str=date)
