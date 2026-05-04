@@ -4,7 +4,7 @@ import random
 import time
 import unicodedata
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
@@ -71,6 +71,105 @@ _NBA_CONSENSUS_RANK = {_norm_name(name): i + 1 for i, name in enumerate(_NBA_CON
 
 _PLAYER_METRICS_CACHE: Dict[str, Dict] = {}
 _PLAYER_METRICS_TTL = 6 * 3600
+# Bump when gamelog parsing changes so stale mis-parsed rows clear out.
+_PLAYER_METRICS_CACHE_TAG = "gmlog-align-v1"
+
+
+def _gamelog_event_sort_ts(ev: Dict) -> float:
+    for k in ("gameDate", "date"):
+        v = ev.get(k)
+        if not v:
+            continue
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+    for k in ("eventId", "id", "gameId"):
+        v = ev.get(k)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except Exception:
+            continue
+    return 0.0
+
+
+def _parse_regular_season_gamelog_events(body: Dict) -> Tuple[List[float], List[float], List[float], List[float], List[float], List[float]]:
+    """Extract per-game MIN/PTS/REB/AST/3PT from ESPN gamelog JSON.
+
+    ESPN nests stats under seasonTypes[].categories[]. Each category can carry its own
+    `labels` list aligned to that category's `stats` rows. Using body-level `labels`
+    against a shorter stats row shifts indices and yields nonsense (e.g. ~11 PPG for stars).
+    """
+    seasons = body.get("seasonTypes") or []
+    regular = next((s for s in seasons if "regular season" in (s.get("displayName") or "").lower()), None)
+    if regular is None and seasons:
+        regular = seasons[0]
+    root_labels = body.get("labels") or []
+    categories = (regular or {}).get("categories") or []
+    best: Optional[Tuple] = None
+    for cat in categories:
+        cat_labels = cat.get("labels")
+        if not isinstance(cat_labels, list) or not cat_labels:
+            cat_labels = root_labels if isinstance(root_labels, list) else []
+        if not cat_labels:
+            continue
+        idx = {str(name).strip(): i for i, name in enumerate(cat_labels)}
+        # ESPN uses "3PT" for makes-attempts string; REB/AST/PTS/MIN standard
+        if "PTS" not in idx or "MIN" not in idx:
+            continue
+        evs = [e for e in (cat.get("events") or []) if isinstance(e.get("stats"), list) and e.get("stats")]
+        if len(evs) < 3:
+            continue
+        widths = [len(e.get("stats") or []) for e in evs[:24]]
+        if not widths:
+            continue
+        mode_w = max(set(widths), key=widths.count)
+        aligned = 1 if mode_w == len(cat_labels) else 0
+        mismatch = abs(mode_w - len(cat_labels))
+        score = (aligned, -mismatch, len(evs), len(cat_labels))
+        if best is None or score > best[0]:
+            best = (score, cat_labels, idx, evs)
+    if best is None:
+        return [], [], [], [], [], []
+    _, labs, idx, evs = best
+    seen: set[str] = set()
+    ordered = sorted(evs, key=_gamelog_event_sort_ts, reverse=True)
+    mins: List[float] = []
+    pts_vals: List[float] = []
+    reb_vals: List[float] = []
+    ast_vals: List[float] = []
+    thr_vals: List[float] = []
+    usage_raw: List[float] = []
+    for ev in ordered:
+        ek = str(ev.get("eventId") or ev.get("id") or ev.get("gameId") or "")
+        if ek and ek in seen:
+            continue
+        if ek:
+            seen.add(ek)
+        stats = ev.get("stats") or []
+        if len(stats) < len(labs):
+            continue
+        m = _num(stats[idx["MIN"]]) if idx["MIN"] < len(stats) else 0.0
+        if m <= 0:
+            continue
+        fg = _parse_attempts(stats[idx["FG"]]) if "FG" in idx and idx["FG"] < len(stats) else 0.0
+        ft = _parse_attempts(stats[idx["FT"]]) if "FT" in idx and idx["FT"] < len(stats) else 0.0
+        to = _num(stats[idx["TO"]]) if "TO" in idx and idx["TO"] < len(stats) else 0.0
+        ptv = _num(stats[idx["PTS"]]) if idx["PTS"] < len(stats) else 0.0
+        rb = _num(stats[idx["REB"]]) if "REB" in idx and idx["REB"] < len(stats) else 0.0
+        asv = _num(stats[idx["AST"]]) if "AST" in idx and idx["AST"] < len(stats) else 0.0
+        thrv = _parse_made(stats[idx["3PT"]]) if "3PT" in idx and idx["3PT"] < len(stats) else 0.0
+        if ptv > 65 or ptv < 0:
+            continue
+        mins.append(m)
+        pts_vals.append(ptv)
+        reb_vals.append(rb)
+        ast_vals.append(asv)
+        thr_vals.append(thrv)
+        usage_raw.append((fg + 0.44 * ft + to) / max(m, 1.0))
+    return mins, pts_vals, reb_vals, ast_vals, thr_vals, usage_raw
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -102,7 +201,7 @@ def _espn_scoreboard_url(league: str) -> str:
     return f"https://site.api.espn.com/apis/site/v2/sports/{cfg['espn_sport']}/{cfg['espn_league']}/scoreboard"
 
 
-def fetch_schedule_and_teams(league: str, target_date=None) -> List[Dict]:
+def fetch_schedule_and_teams(league: str, target_date=None, *, strict_day: bool = False) -> List[Dict]:
     url = _espn_scoreboard_url(league)
     def _rows_for(ds: str) -> List[Dict]:
         resp = requests.get(url, params={"dates": ds}, timeout=12)
@@ -131,6 +230,8 @@ def fetch_schedule_and_teams(league: str, target_date=None) -> List[Dict]:
         now_et = datetime.now(ZoneInfo("America/New_York"))
         use_date = target_date or now_et.date()
         rows = _rows_for(use_date.strftime("%Y%m%d"))
+        if strict_day:
+            return rows
         if rows:
             return rows
         for d in range(1, 8):
@@ -342,7 +443,8 @@ def _append_filter_log(lines: List[str]):
 
 def _fetch_nba_player_metrics(player_id: str, athlete: Dict | None = None) -> Dict:
     now = time.time()
-    cached = _PLAYER_METRICS_CACHE.get(player_id)
+    cache_key = f"{player_id}:{_PLAYER_METRICS_CACHE_TAG}"
+    cached = _PLAYER_METRICS_CACHE.get(cache_key)
     if cached and (now - cached["ts"]) < _PLAYER_METRICS_TTL:
         return cached["payload"]
 
@@ -352,38 +454,7 @@ def _fetch_nba_player_metrics(player_id: str, athlete: Dict | None = None) -> Di
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         body = resp.json()
-        labels = body.get("labels") or []
-        idx = {name: i for i, name in enumerate(labels)}
-        seasons = body.get("seasonTypes") or []
-        regular = next((s for s in seasons if "regular season" in (s.get("displayName") or "").lower()), None)
-        if regular is None and seasons:
-            regular = seasons[0]
-        events = []
-        for cat in ((regular or {}).get("categories") or []):
-            for ev in cat.get("events") or []:
-                if ev.get("stats"):
-                    events.append(ev)
-        mins, usage_raw = [], []
-        pts_vals, reb_vals, ast_vals, thr_vals = [], [], [], []
-        for ev in events:
-            stats = ev.get("stats") or []
-            if not stats:
-                continue
-            m = _num(stats[idx["MIN"]]) if "MIN" in idx and idx["MIN"] < len(stats) else 0.0
-            fg = _parse_attempts(stats[idx["FG"]]) if "FG" in idx and idx["FG"] < len(stats) else 0.0
-            ft = _parse_attempts(stats[idx["FT"]]) if "FT" in idx and idx["FT"] < len(stats) else 0.0
-            to = _num(stats[idx["TO"]]) if "TO" in idx and idx["TO"] < len(stats) else 0.0
-            pts = _num(stats[idx["PTS"]]) if "PTS" in idx and idx["PTS"] < len(stats) else 0.0
-            reb = _num(stats[idx["REB"]]) if "REB" in idx and idx["REB"] < len(stats) else 0.0
-            ast = _num(stats[idx["AST"]]) if "AST" in idx and idx["AST"] < len(stats) else 0.0
-            thr = _parse_attempts(stats[idx["3PT"]]) if "3PT" in idx and idx["3PT"] < len(stats) else 0.0
-            if m > 0:
-                mins.append(m)
-                usage_raw.append((fg + 0.44 * ft + to) / max(m, 1.0))
-                pts_vals.append(pts)
-                reb_vals.append(reb)
-                ast_vals.append(ast)
-                thr_vals.append(thr)
+        mins, pts_vals, reb_vals, ast_vals, thr_vals, usage_raw = _parse_regular_season_gamelog_events(body)
         if len(mins) >= 5:
             last5_m = mins[:5]
             last10_m = mins[:10]
@@ -427,7 +498,7 @@ def _fetch_nba_player_metrics(player_id: str, athlete: Dict | None = None) -> Di
             }
     except Exception:
         pass
-    _PLAYER_METRICS_CACHE[player_id] = {"ts": now, "payload": payload}
+    _PLAYER_METRICS_CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
 
 
@@ -522,6 +593,7 @@ def build_validated_nba_player_pool(schedule_rows: List[Dict]) -> Dict:
                         "stats_last5": metrics.get("stats_last5", {}),
                         "stats_last10": metrics.get("stats_last10", {}),
                         "stats_weighted": metrics.get("stats_weighted", {}),
+                        "avg_points": round(float(points_avg or 0.0), 2),
                         "prop_frequency": round(_clamp(len(last_10) / 10.0, 0.4, 1.0), 3),
                         "top50_score": round((avg_minutes * 0.5) + (usage_rate * 100.0 * 0.5), 2),
                         "role": role,

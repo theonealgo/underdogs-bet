@@ -1,4 +1,16 @@
 <!DOCTYPE html>
+{# sm = predicted home margin (home − away). Favorite/underdog and line size come from expected strength/margin only—not venue. #}
+{% macro fmt_spread_margin(home_t, away_t, sm) -%}
+{% if sm is none %}—{% else %}
+{% set s = sm|float %}
+{% if s > 0 %}
+{{ home_t }} -{{ '%.1f'|format(s) }} · {{ away_t }} +{{ '%.1f'|format(s) }}
+{% elif s < 0 %}
+{% set a = s|abs %}
+{{ away_t }} -{{ '%.1f'|format(a) }} · {{ home_t }} +{{ '%.1f'|format(a) }}
+{% else %}PICK'EM · PUSH{% endif %}
+{% endif %}
+{%- endmacro %}
 <html>
 <head>
     {% if sorted_dates and sorted_dates|length == 1 and sorted_dates[0] != today_date %}
@@ -310,11 +322,11 @@
         .league-pill.active { background:#fbbf24; border-color:#fbbf24; color:#0f172a; }
         .league-pill:hover { border-color:#fbbf24; }
         .date-nav { display:flex; align-items:center; justify-content:center; gap:12px; margin:16px 0; padding:14px; background:#fff; border:1px solid rgba(15,23,42,0.12); border-radius:12px; }
-        .nav-arrow { background:rgba(146,64,14,0.12); border:2px solid #92400e; color:#92400e; font-size:1.3em; width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; user-select:none; }
-        .nav-arrow:hover { background:rgba(146,64,14,0.22); transform:scale(1.1); }
+        .nav-arrow { background:rgba(15,23,42,0.06); border:2px solid #cbd5e1; color:#334155; font-size:1.3em; width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.2s; user-select:none; }
+        .nav-arrow:hover { background:rgba(15,23,42,0.1); border-color:#94a3b8; color:#0f172a; transform:scale(1.1); }
         .date-bubbles { display:flex; gap:8px; overflow-x:auto; padding:4px; max-width:860px; }
         .date-bubble { background:#fff; border:2px solid rgba(15,23,42,0.18); border-radius:22px; padding:9px 16px; min-width:105px; text-align:center; cursor:pointer; transition:all 0.2s; white-space:nowrap; font-weight:500; font-size:0.86em; color:#0f172a; }
-        .date-bubble:hover { border-color:#92400e; }
+        .date-bubble:hover { border-color:#64748b; }
         .date-bubble.active { background:#f59e0b; border-color:#d97706; color:#0f172a; font-weight:700; }
         .date-bubble.today { border-color:#00C076; color:#00C076; }
         .date-bubble.active.today { background:#00C076; color:#fff; }
@@ -339,7 +351,7 @@
             border-color:#cbd5e1;
             box-shadow:0 10px 28px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.08);
         }
-        .game-status { padding:4px 12px; font-size:0.72em; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; color:#92400e; background:rgba(146,64,14,0.1); }
+        .game-status { padding:4px 12px; font-size:0.72em; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; color:#334155; background:rgba(148,163,184,0.22); }
         .game-status.final { color:#00C076; background:rgba(16,185,129,0.12); }
         .game-body { display:flex; padding:10px 12px; gap:10px; }
         .teams-section { flex:1; min-width:0; }
@@ -542,7 +554,8 @@
             {% if soccer_enabled %}
             <a href="/soccer-picks">Soccer</a>
             {% endif %}
-            <a href="/player-props">Player Props</a>
+            <a href="/player-props?league={{ sport }}">Player Props</a>
+            <a href="/player-props/results?league={{ sport }}">Props results</a>
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
@@ -592,6 +605,7 @@
     <div class="section-tabs">
         <a href="/{{ sport_seo_slug }}" class="tab active">📊 Predictions</a>
         <a href="/{{ sport_results_slug }}" class="tab">🎯 Results</a>
+        <a href="/player-props?league={{ sport }}" class="tab">🎲 Props</a>
     </div>
     {% set label_glicko2 = 'Grinder2' %}
     {% set label_trueskill = 'Takedown' %}
@@ -671,7 +685,7 @@
                             {% if pred.xgb_spread is not none %}
                             <div class="premium-row">
                                 <span class="sf-label">XSharp Spread</span>
-                                <span class="sf-val sf-xgb">{% if home_picked %}{{ pred.home_team_id }} -{{ pred.xgb_spread|abs }}{% else %}{{ pred.away_team_id }} -{{ pred.xgb_spread|abs }}{% endif %}</span>
+                                <span class="sf-val sf-xgb">{{ fmt_spread_margin(pred.home_team_id, pred.away_team_id, pred.xgb_spread) }}</span>
                             </div>
                             {% endif %}
                             {% if pred.xgb_total is not none %}
@@ -714,9 +728,8 @@
                             {% endfor %}
                         </div>
                     </div>
-                    {% set _spread_val = pred.market_spread if pred.market_spread is not none else (pred.xgb_spread if pred.xgb_spread is not none else pred.naive_spread) %}
                     {% set _total_val = pred.our_total if pred.our_total is not none else (pred.market_total if pred.market_total is not none else (pred.xgb_total if pred.xgb_total is not none else pred.naive_total)) %}
-                    {% if _spread_val is not none or _total_val is not none or (sport == 'NHL' and pred.puck_line_tag is not none) or is_final %}
+                    {% if pred.spread_margin_home is not none or _total_val is not none or (sport == 'NHL' and pred.puck_line_tag is not none) or is_final %}
                     <div class="score-footer premium-protected">
                         {% if sport == 'NHL' and pred.puck_line_tag is not none %}
                         {% if is_premium %}
@@ -739,12 +752,15 @@
                         <div class="sf-item"><span class="sf-label">Puck Line</span><span class="sf-val" style="color:#475569;">🔒 <a href="/plans" style="color:#00529B;font-size:0.85em;">Unlock</a></span></div>
                         {% endif %}
                         {% endif %}
-                        {% if _spread_val is not none %}
+                        {% if pred.spread_margin_home is not none %}
                         {% if is_premium %}
-                        <div class="sf-item"><span class="sf-label">Our Spread</span><span class="sf-val" style="color:#92400e;">{% if home_picked %}{{ pred.home_team_id }}{% else %}{{ pred.away_team_id }}{% endif %} -{{ _spread_val|abs }}</span></div>
+                        <div class="sf-item"><span class="sf-label">Our Spread</span><span class="sf-val" style="color:#334155;">{{ fmt_spread_margin(pred.home_team_id, pred.away_team_id, pred.spread_margin_home) }}</span></div>
                         {% else %}
                         <div class="sf-item"><span class="sf-label">Our Spread</span><span class="sf-val" style="color:#475569;">🔒 <a href="/plans" style="color:#00529B;font-size:0.85em;">Unlock</a></span></div>
                         {% endif %}
+                        {% endif %}
+                        {% if is_premium and (pred.spread_margin_home is not none or pred.xgb_spread is not none) %}
+                        <div style="width:100%;flex-basis:100%;font-size:0.65em;color:#64748b;line-height:1.35;margin-top:2px;">Spread is set by who is stronger and by how much (expected margin). Home vs away does not determine the favorite or the number—only the matchup strength does.</div>
                         {% endif %}
                         {% if _total_val is not none %}
                         {% if is_premium %}
@@ -944,7 +960,7 @@
             searchForm.addEventListener('submit', async function(event) {
                 event.preventDefault();
                 const input = searchForm.querySelector('input[name="query"]');
-                const query = (input?.value || '').trim();
+                const query = (input && input.value !== undefined && input.value !== null ? String(input.value) : '').trim();
                 if (!query) {
                     resultsEl.classList.remove('show');
                     resultsEl.innerHTML = '';
@@ -1003,7 +1019,12 @@
             s.classList.remove('visible');
             s.classList.add('seo-hidden');
         });
-        const sec=document.getElementById('date-'+date);
+        let sec=document.getElementById('date-'+date);
+        if(!sec && allDates.length){
+            const fb=allDates[0];
+            sec=document.getElementById('date-'+fb);
+            if(sec){date=fb;}
+        }
         if(sec){sec.classList.remove('seo-hidden');sec.classList.add('visible');activeDate=date;}
         // Update heading with selected date
         const h=document.getElementById('pageHeading');
@@ -1036,6 +1057,11 @@
     function previousWeek(){if(currentWeekStart>0){currentWeekStart=Math.max(0,currentWeekStart-datesPerWeek);renderDateBubbles();}}
     function nextWeek(){if(currentWeekStart+datesPerWeek<allDates.length){currentWeekStart+=datesPerWeek;renderDateBubbles();}}
     document.addEventListener('DOMContentLoaded',()=>{
+        if(!allDates.length){
+            const h=document.getElementById('pageHeading');
+            if(h){h.textContent=sportIcon+' '+sportName+' — no games in this window yet.';}
+            return;
+        }
         const idx=allDates.indexOf(today);
         if(idx>=0){currentWeekStart=Math.max(0,idx-3);activeDate=today;}
         else if(allDates.length>0){

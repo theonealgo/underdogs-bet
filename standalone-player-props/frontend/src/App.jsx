@@ -2,13 +2,35 @@ import React, { useEffect, useMemo, useState } from "react";
 import { fetchProps, fetchResults } from "./api";
 
 const LEAGUES = ["NBA", "NHL", "NFL", "MLB", "SOCCER", "NCAAB", "WNBA", "NCAAF", "NCAAW"];
+/** Display names aligned with main site branding (internal keys stay in API only). */
 const MODEL_LABELS = [
-  ["glicko2", "Glicko-2"],
-  ["trueskill", "TrueSkill"],
-  ["xgboost", "XGBoost"],
+  ["glicko2", "Grinder2"],
+  ["trueskill", "Takedown"],
+  ["xgboost", "Edge"],
   ["xsharp", "XSharp"],
   ["sharp_consensus", "Sharp Consensus"],
 ];
+
+function initialViewFromUrl() {
+  try {
+    const v = new URLSearchParams(window.location.search).get("view");
+    return v === "results" ? "results" : "props";
+  } catch {
+    return "props";
+  }
+}
+
+function initialLeagueFromDomAndUrl() {
+  try {
+    const el = document.getElementById("root");
+    const fromDom = (el?.dataset?.initialLeague || "").trim().toUpperCase();
+    if (fromDom) return fromDom;
+    const u = new URL(window.location.href);
+    return (u.searchParams.get("league") || "").trim().toUpperCase();
+  } catch {
+    return "";
+  }
+}
 
 const PROP_TYPE_LABELS = {
   points: "Points",
@@ -37,7 +59,7 @@ function formatPropType(value) {
 
 export default function App() {
   const [propsRows, setPropsRows] = useState([]);
-  const [selectedLeague, setSelectedLeague] = useState("");
+  const [selectedLeague, setSelectedLeague] = useState(initialLeagueFromDomAndUrl);
   const [propType, setPropType] = useState("");
   const [side, setSide] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({
@@ -45,12 +67,22 @@ export default function App() {
     propType: "",
     side: "",
   });
-  const [view, setView] = useState("props");
+  const [view, setView] = useState(initialViewFromUrl);
   const [resultsRows, setResultsRows] = useState([]);
   const [resultsSummary, setResultsSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [shareStatus, setShareStatus] = useState("");
+
+  useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("view", view);
+      window.history.replaceState({}, "", u);
+    } catch {
+      /* ignore */
+    }
+  }, [view]);
 
   useEffect(() => {
     if (!appliedFilters.league) {
@@ -188,7 +220,14 @@ export default function App() {
   return (
     <div className="app">
       <header className="hero">
-        <h1>Top Props Tonight</h1>
+        <h1>{view === "props" ? "Top Props" : "Props Results"}</h1>
+        {view === "props" ? (
+          <p className="hero-lede">Projections for today&apos;s and tomorrow&apos;s games (US/Eastern slate).</p>
+        ) : (
+          <p className="hero-lede">
+            Graded picks vs the line (NBA uses yesterday&apos;s box scores ET). Other sports show a directional proxy until full grading ships.
+          </p>
+        )}
         {apiError ? (
           <div className="api-error" role="alert">
             <strong>API error.</strong> {apiError}
@@ -198,9 +237,9 @@ export default function App() {
 
       <section className="filters">
         <label>
-          View
+          Page
           <select value={view} onChange={(e) => setView(e.target.value)}>
-            <option value="props">Props</option>
+            <option value="props">Picks (today + tomorrow)</option>
             <option value="results">Results</option>
           </select>
         </label>
@@ -240,7 +279,10 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <h2>{appliedFilters.league} {view === "props" ? `Top Props Tonight (${topProps.length})` : `Results (${resultsRows.length})`}</h2>
+        <h2>
+          {appliedFilters.league}{" "}
+          {view === "props" ? `Top Props (${topProps.length})` : `Results (${resultsRows.length})`}
+        </h2>
         {view === "results" && resultsSummary ? (
           <p className="results-summary">
             Overall: {resultsSummary.overall?.wins ?? 0}-{resultsSummary.overall?.losses ?? 0}
@@ -266,7 +308,9 @@ export default function App() {
                       <th>Projection</th>
                       <th>Pick</th>
                       {MODEL_LABELS.map(([, label]) => (
-                        <th key={label}>{label}</th>
+                        <th key={label} className="model-col" title="Model confidence on this side">
+                          {label}
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -280,8 +324,8 @@ export default function App() {
                         <td>{r.projection}</td>
                         <td>{r.picked_side}</td>
                         {MODEL_LABELS.map(([key]) => (
-                          <td key={`${r.player_id}-${r.prop_type}-${key}`}>
-                            {r.model_confidence?.[key] != null ? `${r.model_confidence[key]}%` : "-"}
+                          <td key={`${r.player_id}-${r.prop_type}-${key}`} className="model-col">
+                            {r.model_confidence && r.model_confidence[key] != null ? `${r.model_confidence[key]}%` : "—"}
                           </td>
                         ))}
                       </tr>

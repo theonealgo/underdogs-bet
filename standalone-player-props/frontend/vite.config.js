@@ -1,7 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+// When embedded in Flask at /player-props, production chunks must load from
+// /player-props/assets/... (absolute /assets/... would 404 and break html2canvas).
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/player-props/" : "/",
   plugins: [react()],
   server: {
     port: 5179,
@@ -24,4 +27,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

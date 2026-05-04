@@ -28,6 +28,10 @@ Services:
 
 Sample games and team stats are seeded via `db/init.sql`.
 
+## Spreads (how the line is read)
+
+Point spreads have **nothing to do with home or away** as labels: the board is **favorite vs underdog** and **by how many** (expected margin / handicap). The favorite always gets the **minus** number; the underdog gets the **plus** number of the same size. Venue is irrelevant to that relationship—only relative team strength and the handicap matter.
+
 ## Local integration (Flask app)
 
 Set the Flask app to read odds from this service:

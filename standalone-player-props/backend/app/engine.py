@@ -19,6 +19,8 @@ from .data_sources import (
 
 _CACHE: Dict[str, Dict] = {}
 _RESULTS_CACHE: Dict[str, Dict] = {}
+# Bust in-process cache when player/gamelog pipeline semantics change.
+_CACHE_SCHEMA = "gmlog-align-v1"
 _TEAM_STATS_CACHE: Dict[str, Dict] = {}
 _MODEL_WEIGHTS = {
     "xgboost": 0.25,
@@ -150,18 +152,34 @@ def _generate_internal_prop_line(prop_type: str, projection: float) -> float:
 
 
 def _calc_stat_projection(player: Dict, prop_type: str, opponent_id: str) -> tuple[float, float]:
+    """Blend last-5 / last-10 with ESPN weighted gamelog means; dampen minute-ratio swings so
+    a few low-minute games (return from injury, blowouts) cannot collapse points into single digits."""
     s5 = player.get("stats_last5") or {}
     s10 = player.get("stats_last10") or {}
+    sw = (player.get("stats_weighted") or {}).get(prop_type)
     last5 = float(s5.get(prop_type, 0.0) or 0.0)
     last10 = float(s10.get(prop_type, 0.0) or 0.0)
     if last5 <= 0.0 and last10 <= 0.0:
-        return 0.0, 1.0
-    stat_base = (last5 * 0.7) + (last10 * 0.3)
+        if sw is not None and float(sw) > 0.0:
+            stat_base = float(sw)
+        else:
+            return 0.0, 1.0
+    else:
+        stat_base = (last5 * 0.7) + (last10 * 0.3)
+    if sw is not None and float(sw) > 0.01:
+        stat_base = max(stat_base, float(sw) * 0.92)
+    # Season PPG from gamelog (all parsed games) — anchors stars if recent-window stats mis-parse.
+    if prop_type == "points":
+        ap = float(player.get("avg_points", 0.0) or 0.0)
+        if ap >= 8.0:
+            stat_base = max(stat_base, ap * 0.90)
     projected_minutes = float(player.get("projected_minutes_weighted", player.get("projected_minutes", 0.0)) or 0.0)
     avg_minutes = float(player.get("avg_minutes", 0.0) or 0.0)
     if projected_minutes <= 0.0 or avg_minutes <= 0.0:
         return 0.0, 1.0
-    minute_scaled = stat_base * (projected_minutes / max(avg_minutes, 1.0))
+    ratio = projected_minutes / max(avg_minutes, 1.0)
+    ratio = _clamp(ratio, 0.82, 1.15)
+    minute_scaled = stat_base * ratio
     opp_factor = _opponent_adjustment_factor(opponent_id, prop_type)
     return _clamp(minute_scaled * opp_factor, 0.0, 70.0), opp_factor
 
@@ -229,7 +247,24 @@ def _parse_made(value: str) -> float:
 
 
 def _build_league_payload(league: str, schedule_override: Optional[List[Dict]] = None) -> Dict:
-    schedule = schedule_override if schedule_override is not None else fetch_schedule_and_teams(league)
+    if schedule_override is not None:
+        schedule = schedule_override
+    else:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        d0 = now_et.date()
+        d1 = d0 + timedelta(days=1)
+        seen_ids = set()
+        schedule = []
+        for d in (d0, d1):
+            for g in fetch_schedule_and_teams(league, target_date=d, strict_day=True):
+                eid = str(g.get("event_id") or "")
+                key = eid or f"{g.get('home_team_id')}|{g.get('away_team_id')}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+                schedule.append(g)
+        if not schedule:
+            schedule = fetch_schedule_and_teams(league)
     excluded = []
     if league == "NBA":
         validated = build_validated_nba_player_pool(schedule)
@@ -329,27 +364,29 @@ def _build_league_payload(league: str, schedule_override: Optional[List[Dict]] =
 
 
 def get_league_data(league: str) -> Dict:
-    key = league.upper()
+    league_u = league.upper().split(":", 1)[0] if league else ""
+    cache_key = f"{league_u}:{_CACHE_SCHEMA}"
     now = time.time()
-    cached = _CACHE.get(key)
+    cached = _CACHE.get(cache_key)
     if cached and (now - cached["ts"]) < CACHE_TTL_SECONDS:
         return cached["payload"]
-    payload = _build_league_payload(key)
-    _CACHE[key] = {"ts": now, "payload": payload}
+    payload = _build_league_payload(league_u)
+    _CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
 
 
 def get_league_results(league: str) -> Dict:
-    key = league.upper()
+    league_u = league.upper().split(":", 1)[0] if league else ""
+    cache_key = f"{league_u}:{_CACHE_SCHEMA}"
     now = time.time()
-    cached = _RESULTS_CACHE.get(key)
+    cached = _RESULTS_CACHE.get(cache_key)
     if cached and (now - cached["ts"]) < 300:
         return cached["payload"]
-    if key != "NBA":
+    if league_u != "NBA":
         # Non-NBA leagues currently don't have full stat-grade integration here.
         # Return a non-empty "latest evaluated board" so results view is useful
         # instead of hardcoded zero rows.
-        data = get_league_data(key)
+        data = get_league_data(league_u)
         rows = []
         summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
         for p in (data.get("props") or [])[:40]:
@@ -381,14 +418,14 @@ def get_league_results(league: str) -> Dict:
                     "projection": p.get("projection"),
                 }
             )
-        payload = {"league": key, "count": len(rows), "items": rows, "summary": summary}
-        _RESULTS_CACHE[key] = {"ts": now, "payload": payload}
+        payload = {"league": league_u, "count": len(rows), "items": rows, "summary": summary}
+        _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
         return payload
     ydate = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).date()
-    y_schedule = fetch_schedule_and_teams(key, target_date=ydate)
+    y_schedule = fetch_schedule_and_teams(league_u, target_date=ydate)
     if not y_schedule:
-        return {"league": key, "count": 0, "items": []}
-    data = _build_league_payload(key, schedule_override=y_schedule)
+        return {"league": league_u, "count": 0, "items": []}
+    data = _build_league_payload(league_u, schedule_override=y_schedule)
     player_stat_map = {}
     for g in y_schedule:
         event_id = g.get("event_id")
@@ -452,8 +489,8 @@ def get_league_results(league: str) -> Dict:
                 "projection": p.get("projection"),
             }
         )
-    payload = {"league": key, "count": len(rows), "items": rows, "summary": summary}
-    _RESULTS_CACHE[key] = {"ts": now, "payload": payload}
+    payload = {"league": league_u, "count": len(rows), "items": rows, "summary": summary}
+    _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
 
 

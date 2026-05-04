@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}underdogs.bet{% endblock %}</title>
+    <link rel="icon" href="/static/UnderdogsLogo.png" type="image/png" sizes="any">
+    <link rel="apple-touch-icon" href="/static/UnderdogsLogo.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
@@ -27,7 +29,7 @@
         .nav-search button{border:1px solid #cbd5e1;background:#fff;color:#00529B;border-radius:999px;padding:8px 14px;font-weight:800;cursor:pointer;}
         .nav-actions{display:flex;align-items:center;gap:14px;flex-shrink:0;}
         .auth-btn{text-decoration:none;border-radius:999px;font-weight:800;font-size:0.82em;padding:9px 14px;}
-        .auth-btn.signup{background:#047857;color:#fff;border:1px solid #047857;}
+        .auth-btn.signup{background:#00C076;color:#fff;border:1px solid #00C076;}
         .auth-btn.login{border:1px solid #00529B;color:#00529B;background:#fff;}
         .layout-main{max-width:1200px;margin:0 auto;padding:28px 20px 48px;}
         .alert{padding:12px 20px;border-radius:8px;margin:0 0 20px;}
@@ -79,6 +81,7 @@
             <a href="/wnba-picks">WNBA</a>
             {% if soccer_enabled %}<a href="/soccer-picks">Soccer</a>{% endif %}
             <a href="/player-props">Player Props</a>
+            <a href="/player-props/results">Props results</a>
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
