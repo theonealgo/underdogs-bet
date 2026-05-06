@@ -10641,7 +10641,9 @@ def player_props_api_results():
 @app.route('/performance')
 def performance_page():
     if not current_user.is_authenticated:
-        return redirect(url_for('auth.login_page', next=request.path))
+        # Preserve query string (sport / last_n / teams) — request.path drops ?sport=NHL etc.
+        _next = request.full_path.rstrip('?')
+        return redirect(url_for('auth.login_page', next=_next))
     if not is_premium_user():
         return redirect('/plans')
     sport = (request.args.get('sport') or '').strip().upper()
