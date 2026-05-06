@@ -802,8 +802,7 @@ def _compute_h2h_projection(
     """Return last-N H2H projection for (home_team vs away_team) or None.
 
     Output dict keys:
-        games_used, avg_home, avg_away, our_total, our_spread, totals (list),
-        over_vs (callable placeholder) -- trend counts computed on demand.
+        games_used, avg_home, avg_away, our_total, totals (list).
     """
     if not (sport and home_team and away_team):
         return None
@@ -867,7 +866,7 @@ def _compute_h2h_projection(
 
 
 def _attach_h2h_projection_to_predictions(sport, predictions, n: int = 10):
-    """Set pred['our_total'] and pred['our_spread'] using last-N H2H averages."""
+    """Set pred['our_total'] from last-N H2H meetings; keep engine odds fields unchanged."""
     if not predictions:
         return
     try:
@@ -882,12 +881,35 @@ def _attach_h2h_projection_to_predictions(sport, predictions, n: int = 10):
             proj = _compute_h2h_projection(conn, sport, ht, at, n=n)
             if proj:
                 pred['our_total'] = proj['our_total']
+                pred['totals'] = proj.get('totals') or []
                 pred['our_total_games'] = proj['games_used']
                 pred['our_avg_home'] = proj['avg_home']
                 pred['our_avg_away'] = proj['avg_away']
+                pred['our_ou_record_vs_xsharp'] = None
+                try:
+                    xline = pred.get('xgb_total')
+                    if xline is not None and pred.get('totals'):
+                        over_n = 0
+                        under_n = 0
+                        for tv in pred.get('totals') or []:
+                            try:
+                                t = float(tv)
+                            except Exception:
+                                continue
+                            if t > float(xline):
+                                over_n += 1
+                            elif t < float(xline):
+                                under_n += 1
+                        if over_n or under_n:
+                            side = "Over" if over_n >= under_n else "Under"
+                            pred['our_ou_record_vs_xsharp'] = f"{over_n}-{under_n} {side}"
+                except Exception:
+                    pred['our_ou_record_vs_xsharp'] = None
             else:
                 pred.setdefault('our_total', None)
+                pred.setdefault('totals', [])
                 pred.setdefault('our_total_games', 0)
+                pred.setdefault('our_ou_record_vs_xsharp', None)
     finally:
         try:
             conn.close()
