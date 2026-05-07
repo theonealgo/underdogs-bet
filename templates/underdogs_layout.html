@@ -6,6 +6,7 @@
     <title>{% block title %}underdogs.bet{% endblock %}</title>
     {% block head_meta %}{% endblock %}
     <link rel="canonical" href="https://www.underdogs.bet{{ request.path }}">
+    <link rel="stylesheet" href="/static/css/site-search.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
@@ -117,10 +118,11 @@
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
-            <form class="nav-search" action="/search" method="get" role="search">
-                <input type="text" name="query" placeholder="Search teams, leagues, or matchups..." aria-label="Search">
+            <form class="nav-search" id="udNavSearchForm" action="/search" method="get" role="search" data-site-search-form data-autocomplete-id="udSearchAutocomplete">
+                <input type="text" id="udNavSearchInput" name="query" placeholder="Search teams, players, matchups..." aria-label="Search teams and players" autocomplete="off">
                 <button type="submit">Search</button>
             </form>
+            <div id="udSearchAutocomplete" class="search-autocomplete" aria-live="polite"></div>
         </div>
         <div class="nav-actions">
             {% if is_logged_in %}
@@ -182,6 +184,7 @@
         <div class="footer-bottom">&copy; 2026 underdogs.bet. ALL RIGHTS RESERVED.</div>
     </div>
 </footer>
+<script src="/static/js/site-search.js" defer></script>
 <script>
 function toggleUdMenu(){
     var n=document.getElementById('udNavLinks');

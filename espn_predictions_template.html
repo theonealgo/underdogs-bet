@@ -38,6 +38,8 @@
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap"></noscript>
     <link rel="canonical" href="https://www.underdogs.bet{{ request.path }}">
+    <link rel="stylesheet" href="/static/css/site-search.css">
+    <link rel="stylesheet" href="/static/css/share-image.css">
     {% if ga_tracking_id %}
     <script>
       (function(){
@@ -485,15 +487,12 @@
         .injury-list { display:flex; flex-wrap:wrap; gap:6px; }
         .injury-pill { display:inline-flex; align-items:center; gap:4px; background:rgba(239,68,68,0.18); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; border-radius:4px; padding:2px 7px; font-size:0.72em; font-weight:600; }
         .injury-pill.doubtful { background:rgba(251,191,36,0.15); border-color:rgba(146,64,14,0.45); color:#92400e; }
-        .social-export-wrap{max-width:960px;margin:24px auto 0;padding:0 8px;}
         .social-export-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
         .social-export-title{font-size:0.9em;font-weight:800;color:#0f172a;letter-spacing:0.2px;}
         .social-export-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-        .social-export-btn{border:1px solid #00529B;background:#fff;color:#00529B;border-radius:999px;padding:6px 12px;font-size:0.76em;font-weight:800;cursor:pointer;}
+        .social-export-btn{border:1px solid #00529B;background:#fff;color:#00529B;border-radius:999px;padding:6px 12px;font-size:0.76em;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;}
         .social-export-btn.primary{background:#00529B;color:#fff;}
         .social-export-hint{margin:0 0 10px;font-size:0.82em;color:#475569;line-height:1.45;}
-        .social-image-link{display:block;width:min(100%,min(420px,90vw));margin:0 auto;aspect-ratio:9/16;border-radius:14px;overflow:hidden;border:1px solid rgba(15,23,42,0.14);box-shadow:0 6px 18px rgba(15,23,42,0.08);background:#ffffff;}
-        .social-image-link img{display:block;width:100%;height:100%;object-fit:cover;}
         @media (max-width: 1100px) {
             .navbar-content { flex-wrap:wrap; justify-content:center; }
             .nav-search-wrap { order:3; width:100%; max-width:100%; }
@@ -564,12 +563,12 @@
             {% if soccer_enabled %}
             <a href="/soccer-picks">Soccer</a>
             {% endif %}
-            <a href="/player-props?league={{ sport }}">Player Props</a>
+            <a href="{{ props_seo_path }}">Player Props</a>
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
-            <form class="nav-search" id="navSearchFormPicks" action="/search" method="get" role="search">
-                <input type="text" id="navSearchInputPicks" name="query" placeholder="Search teams, leagues, or matchups..." aria-label="Search predictions and performance">
+            <form class="nav-search" id="navSearchFormPicks" action="/search" method="get" role="search" data-site-search-form data-autocomplete-id="searchAutocompletePicks" data-results-id="searchResultsPicks" data-full-search="1">
+                <input type="text" id="navSearchInputPicks" name="query" placeholder="Search teams, players, or matchups..." aria-label="Search teams and players">
                 <button type="submit">Search</button>
             </form>
             <div id="searchAutocompletePicks" class="search-autocomplete" aria-live="polite"></div>
@@ -614,7 +613,7 @@
     <div class="section-tabs">
         <a href="/{{ sport_seo_slug }}" class="tab active">📊 Predictions</a>
         <a href="/{{ sport_results_slug }}" class="tab">🎯 Results</a>
-        <a href="/player-props?league={{ sport }}" class="tab">🎲 Props</a>
+        <a href="{{ props_seo_path }}" class="tab">🎲 Props</a>
     </div>
     {% set label_glicko2 = 'Grinder2' %}
     {% set label_trueskill = 'Takedown' %}
@@ -864,17 +863,17 @@
 </div>
 
 {% if share_image_src %}
-<div class="social-export-wrap">
+<div class="ud-share-image-stack">
     <div class="social-export-head">
-        <div class="social-export-title">{{ sport_info.name }} Predictions Image</div>
-        <div class="social-export-actions">
-            <a class="social-export-btn" href="{{ share_image_src }}" download="underdogs-picks.jpg">Download image</a>
-            <a class="social-export-btn primary" href="{{ share_image_view_url }}" target="_blank" rel="noopener">Open fullscreen</a>
+        <div class="social-export-title">{{ sport_info.name }} predictions image</div>
+        <div class="social-export-actions ud-share-image-actions">
+            <a class="social-export-btn" href="{{ share_image_src }}" download="underdogs-picks.jpg">Save image</a>
+            <a class="social-export-btn primary" href="{{ share_image_view_url }}" target="_blank" rel="noopener">Open in browser</a>
         </div>
     </div>
-    <p class="social-export-hint">For TikTok: use <strong>Download</strong> and upload from Photos so no browser URL appears in your recording.</p>
-    <a class="social-image-link" href="{{ share_image_view_url }}" target="_blank" rel="noopener">
-        <img src="{{ share_image_src }}" alt="">
+    <p class="social-export-hint">For TikTok/Reels: <strong>Save image</strong> and upload from Photos so no browser URL appears in your recording.</p>
+    <a class="ud-share-frame" href="{{ share_image_view_url }}" target="_blank" rel="noopener">
+        <img src="{{ share_image_src }}" alt="{{ sport_info.name }} picks preview image">
     </a>
 </div>
 {% endif %}
@@ -928,6 +927,7 @@
     </div>
 </footer>
 
+<script src="/static/js/site-search.js" defer></script>
 <script>
     function toggleMenu() {
         const navLinks = document.getElementById('navLinks');
@@ -939,79 +939,12 @@
     }
     document.addEventListener('DOMContentLoaded', function() {
         const navLinks = document.getElementById('navLinks');
-        const searchForm = document.getElementById('navSearchFormPicks');
-        const searchInput = document.getElementById('navSearchInputPicks');
-        const autocompleteEl = document.getElementById('searchAutocompletePicks');
-        const resultsEl = document.getElementById('searchResultsPicks');
-        const teams = [
-            { name: "Detroit Pistons", sport: "NBA", slug: "detroit-pistons" },
-            { name: "Detroit Red Wings", sport: "NHL", slug: "detroit-red-wings" },
-            { name: "Detroit Tigers", sport: "MLB", slug: "detroit-tigers" },
-            { name: "Boston Celtics", sport: "NBA", slug: "boston-celtics" },
-        ];
         if (!navLinks) return;
         navLinks.querySelectorAll('a').forEach(link => {
             link.addEventListener('click', function() {
                 navLinks.classList.remove('active');
             });
         });
-        if (searchForm && resultsEl) {
-            let debounceTimer = null;
-            if (searchInput && autocompleteEl) {
-                searchInput.addEventListener('input', function() {
-                    const q = (searchInput.value || '').trim().toLowerCase();
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(() => {
-                        if (!q) {
-                            autocompleteEl.classList.remove('show');
-                            autocompleteEl.innerHTML = '';
-                            return;
-                        }
-                        const matches = teams.filter(t => t.name.toLowerCase().includes(q)).slice(0, 5);
-                        autocompleteEl.innerHTML = matches.map(t => `<div class="search-item" data-slug="${t.slug}"><span>${t.name}</span><small>${t.sport}</small></div>`).join('') || '<div class="search-item"><span>No team matches</span></div>';
-                        autocompleteEl.classList.add('show');
-                    }, 300);
-                });
-                autocompleteEl.addEventListener('click', function(e) {
-                    const item = e.target.closest('[data-slug]');
-                    if (!item) return;
-                    window.location.href = `/teams/${item.getAttribute('data-slug')}`;
-                });
-            }
-            searchForm.addEventListener('submit', async function(event) {
-                event.preventDefault();
-                const input = searchForm.querySelector('input[name="query"]');
-                const query = (input && input.value !== undefined && input.value !== null ? String(input.value) : '').trim();
-                if (!query) {
-                    resultsEl.classList.remove('show');
-                    resultsEl.innerHTML = '';
-                    return;
-                }
-                resultsEl.classList.add('show');
-                resultsEl.innerHTML = '<p>Searching...</p>';
-                try {
-                    const resp = await fetch(`/api/search?query=${encodeURIComponent(query)}`, { headers: { 'Accept': 'application/json' } });
-                    const data = await resp.json();
-                    const modelLine = data.matched_model ? `<p><strong>Model:</strong> ${data.matched_model.public_name} -> ${data.matched_model.internal_name}${data.confidence_threshold ? ` (confidence >= ${data.confidence_threshold}%)` : ''}</p>` : '';
-                    const modelItems = (data.model_results || []).map(r => `<li>${r.sport}: ${r.record} (${r.accuracy}%)${r.filtered_games !== null && r.filtered_games !== undefined ? ` - ${r.filtered_games} games at threshold` : ''}</li>`).join('');
-                    const localTeamItems = (data.team_results || []).map(r => `<li>${r.sport}: ${r.away_team} vs ${r.home_team} (${r.game_date}) - pick: ${r.predicted_winner} (${r.win_probability}%)</li>`).join('');
-                    const espnItems = (data.espn_results || []).map(r => `<li>${r.sport}: ${r.away_team} at ${r.home_team} (${r.status})</li>`).join('');
-                    const routeLine = data.suggested_route ? `<p><strong>Suggested page:</strong> <a href="${data.suggested_route}">${data.suggested_route}</a></p>` : '';
-                    const empty = (!modelItems && !localTeamItems && !espnItems) ? '<p>No matches found yet. Try a team name, league, or model alias.</p>' : '';
-                    resultsEl.innerHTML = `
-                        <h3>Search Results</h3>
-                        ${modelLine}
-                        ${routeLine}
-                        ${modelItems ? `<p><strong>Model Performance</strong></p><ul>${modelItems}</ul>` : ''}
-                        ${localTeamItems ? `<p style="margin-top:10px;"><strong>Our Prediction Matches</strong></p><ul>${localTeamItems}</ul>` : ''}
-                        ${espnItems ? `<p style="margin-top:10px;"><strong>Latest ESPN Matchups</strong></p><ul>${espnItems}</ul>` : ''}
-                        ${empty}
-                    `;
-                } catch (_err) {
-                    resultsEl.innerHTML = '<p>Search temporarily unavailable. Please try again.</p>';
-                }
-            });
-        }
     });
     document.addEventListener('click', function(event) {
         const navLinks = document.getElementById('navLinks');

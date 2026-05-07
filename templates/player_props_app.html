@@ -1,21 +1,39 @@
 {% extends "underdogs_layout.html" %}
-{% block title %}Player Props | underdogs.bet{% endblock %}
+{% block title %}{{ props_page_title }}{% endblock %}
 {% block head_meta %}
-<meta name="description" content="AI player props projections and graded results for premium members.">
+<meta name="description" content="{{ props_meta_description }}">
+{% if props_indexable %}
+<meta name="robots" content="index,follow">
+{% else %}
 <meta name="robots" content="noindex,nofollow">
+{% endif %}
 <link rel="icon" href="/static/UnderdogsLogo.png" type="image/png" sizes="any">
 <link rel="apple-touch-icon" href="/static/UnderdogsLogo.png">
-<meta property="og:title" content="Player Props | underdogs.bet">
-<meta property="og:description" content="AI player props projections and graded results for premium members.">
+<meta property="og:title" content="{{ props_page_title }}">
+<meta property="og:description" content="{{ props_meta_description }}">
 <meta property="og:image" content="{{ request.url_root.rstrip('/') }}/static/UnderdogsLogo.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="{{ request.url_root.rstrip('/') }}/static/UnderdogsLogo.png">
 {% endblock %}
 {% block extra_styles %}
+<link rel="stylesheet" href="/static/css/site-search.css">
 <style>
-  /* This page only: give the props tool a bit more width under the global header */
   main.layout-main { max-width: 1200px; padding-top: 10px; padding-bottom: 40px; }
+  .props-sport-tabs {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin: 0 0 18px; padding: 10px 12px;
+    border: 1px solid rgba(15,23,42,0.12); border-radius: 12px; background: #f8fafc;
+  }
+  .props-sport-tabs a {
+    display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 999px;
+    font-size: 0.82em; font-weight: 800; text-decoration: none; color: #0f172a;
+    border: 1px solid rgba(15,23,42,0.12); background: #fff;
+  }
+  .props-sport-tabs a:hover { border-color: #00529B; color: #00529B; }
+  .props-sport-tabs a.active { background: #00529B; color: #fff; border-color: #00529B; }
+  .props-page-h1 { font-size: 1.15rem; color: #0f172a; margin: 0 0 8px; font-weight: 800; }
+  .props-page-lede { font-size: 0.9rem; color: #475569; line-height: 1.5; margin: 0 0 14px; max-width: 52rem; }
 </style>
 {% endblock %}
 {% block content %}
@@ -24,7 +42,9 @@
         <span style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
             <a href="/" style="color:#00529B;font-weight:800;text-decoration:none;">Home</a>
             <span aria-hidden="true" style="color:#cbd5e1;">·</span>
-            <span style="color:#0f172a;font-weight:700;">Player props</span>
+            <a href="/player-props" style="color:#00529B;font-weight:600;text-decoration:none;">Player props</a>
+            <span aria-hidden="true" style="color:#cbd5e1;">·</span>
+            <span style="color:#0f172a;font-weight:700;">{{ props_initial_league or 'Select sport' }}</span>
         </span>
         <span style="margin-left:auto;display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;">
             <a href="/nba-picks" style="color:#00529B;font-weight:600;text-decoration:none;">NBA picks</a>
@@ -33,14 +53,26 @@
             <a href="/results" style="color:#00529B;font-weight:600;text-decoration:none;">All results</a>
         </span>
     </nav>
+
+    {% if props_sport_tabs %}
+    <nav class="props-sport-tabs" aria-label="Sports">
+        {% for tab in props_sport_tabs %}
+        <a href="{{ tab.href }}" class="{% if tab.active %}active{% endif %}">{{ tab.label }}</a>
+        {% endfor %}
+    </nav>
+    {% endif %}
+
+    <h1 class="props-page-h1">{{ props_page_title|replace(' | underdogs.bet', '') }}</h1>
+    <p class="props-page-lede">{{ props_meta_description }}</p>
+
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 16px;padding:12px 14px;border:1px solid rgba(15,23,42,0.12);border-radius:12px;background:#f8fafc;">
         <img src="/static/UnderdogsLogo.png" alt="underdogs.bet" width="56" height="56" style="border-radius:10px;object-fit:contain;flex-shrink:0;">
         <div style="min-width:0;">
             <div style="font-weight:800;font-size:1.05rem;color:#0f172a;">Player Props Lab</div>
-            <p style="color:#475569;font-size:0.88rem;line-height:1.45;margin:4px 0 0;">Premium projections and graded props — use <strong style="color:#0f172a;">Results</strong> in the tool (same page) to review hits and misses by date.</p>
+            <p style="color:#475569;font-size:0.88rem;line-height:1.45;margin:4px 0 0;">Premium projections for today&apos;s slate (US/Eastern). Use <strong style="color:#0f172a;">Results</strong> in the tool to grade prior slates.</p>
         </div>
     </div>
-    <div id="root" class="props-vite-root" data-initial-league="{{ props_initial_league|e }}"></div>
+    <div id="root" class="props-vite-root" data-initial-league="{{ props_initial_league|e }}" data-player-filter="{{ props_player_query|e }}" data-hide-sport-select="{% if props_sport_tabs %}1{% endif %}"></div>
 </div>
 {% endblock %}
 {% block scripts %}

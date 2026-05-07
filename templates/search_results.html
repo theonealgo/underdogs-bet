@@ -1,0 +1,62 @@
+{% extends "underdogs_layout.html" %}
+{% block title %}Search: {{ query }} | underdogs.bet{% endblock %}
+{% block head_meta %}
+<meta name="description" content="Search results for teams, players, and model references on underdogs.bet.">
+<meta name="robots" content="noindex,follow">
+{% endblock %}
+{% block extra_styles %}
+<link rel="stylesheet" href="/static/css/site-search.css">
+{% endblock %}
+{% block content %}
+<article style="max-width:760px;margin:0 auto;padding:8px 8px 40px;">
+    <h1 style="font-size:1.35rem;margin:0 0 12px;color:#0f172a;">Search</h1>
+    <p style="color:#475569;margin-bottom:22px;">Showing matches for <strong>{{ query }}</strong></p>
+
+    {% if suggestions and suggestions|length > 0 %}
+    <h2 style="font-size:1rem;margin:0 0 12px;color:#0f172a;">Teams &amp; players</h2>
+    <ul style="list-style:none;padding:0;display:grid;gap:10px;margin-bottom:28px;">
+        {% for s in suggestions %}
+        <li>
+            <a href="{{ s.url }}" style="display:block;padding:12px 14px;border:1px solid rgba(15,23,42,0.12);border-radius:10px;text-decoration:none;color:#0f172a;font-weight:600;background:#fff;">
+                {{ s.title }}
+                <span style="display:block;color:#64748b;font-weight:500;font-size:0.86em;margin-top:4px;">{{ s.subtitle }}</span>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if payload.team_results %}
+    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Prediction rows (database)</h2>
+    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+        {% for r in payload.team_results %}
+        <li>{{ r.sport }}: {{ r.away_team }} vs {{ r.home_team }} ({{ r.game_date }}) — pick {{ r.predicted_winner }} ({{ r.win_probability }}%)</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if payload.espn_results %}
+    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Today&apos;s scoreboard (ESPN)</h2>
+    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+        {% for r in payload.espn_results %}
+        <li>{{ r.sport }}: {{ r.away_team }} @ {{ r.home_team }} — {{ r.status }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if payload.model_results %}
+    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Model performance</h2>
+    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+        {% for r in payload.model_results %}
+        <li>{{ r.sport }}: {{ r.record }} ({{ r.accuracy }}% accuracy)</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if not suggestions and not payload.team_results and not payload.espn_results and not payload.model_results %}
+    <p style="color:#64748b;">No structured matches found. Try another spelling or open picks from the sport links in the header.</p>
+    {% endif %}
+
+    <p style="margin-top:24px;"><a href="/" style="color:#00529B;font-weight:700;text-decoration:none;">← Home</a></p>
+</article>
+{% endblock %}

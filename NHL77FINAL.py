@@ -7,6 +7,7 @@ Complete platform with Dashboard, Predictions, and Results pages for all sports.
 """
 
 from flask import Flask, render_template, render_template_string, request, jsonify, redirect, url_for, Response, send_from_directory, abort
+from urllib.parse import quote
 from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 import json
@@ -279,6 +280,386 @@ def _fit_text_font(draw, text: str, max_width: int, start_size: int, min_size: i
     return _get_share_font(min_size, bold=bold), cleaned
 
 
+def _round_to_half(value):
+    """Round spread/total style numbers to sportsbook increments (.0/.5)."""
+    try:
+        out = round((float(value) * 2.0)) / 2.0
+        if abs(out) < 1e-9:
+            return 0.0
+        return out
+    except Exception:
+        return value
+
+
+def compute_weighted_team_stats(games, key, decay=0.85):
+    """Exponentially weighted average with most recent game weight 1.0."""
+    if not games:
+        return None
+    values = []
+    for row in games:
+        try:
+            v = row.get(key) if isinstance(row, dict) else None
+            if v is None:
+                continue
+            values.append(float(v))
+        except Exception:
+            continue
+    if not values:
+        return None
+    d = max(0.8, min(0.85, float(decay)))
+    num = 0.0
+    den = 0.0
+    for idx, val in enumerate(values):
+        w = d ** idx
+        num += val * w
+        den += w
+    return (num / den) if den else None
+
+
+def blend_spreads(xgb_spread, naive_spread, our_spread=None, max_divergence=8.0):
+    """Soft-clip XGB divergence and return blended spread + clipped XGB."""
+    xgb = _to_float_safe(xgb_spread)
+    naive = _to_float_safe(naive_spread)
+    our = _to_float_safe(our_spread)
+    divergence = abs(float(max_divergence or 8.0))
+    clipped_xgb = xgb
+    if xgb is not None and naive is not None:
+        diff = xgb - naive
+        if abs(diff) > divergence:
+            clipped_xgb = naive + (divergence if diff > 0 else -divergence)
+    if our is not None:
+        parts = [(our, 0.50), (clipped_xgb, 0.35), (naive, 0.15)]
+    else:
+        parts = [(clipped_xgb, 0.60), (naive, 0.40)]
+    valid = [(v, w) for v, w in parts if v is not None]
+    if not valid:
+        return None, clipped_xgb
+    denom = sum(w for _, w in valid)
+    blended = sum(v * w for v, w in valid) / denom
+    return blended, clipped_xgb
+
+
+def compute_improved_spread(team_a_games, team_b_games, xsharp_line, h2h_games=None):
+    """Recency-weighted spread/total with optional H2H blend and O/U record."""
+    team_a_games = team_a_games or []
+    team_b_games = team_b_games or []
+    h2h_games = h2h_games or []
+    a_off = compute_weighted_team_stats(team_a_games, 'team_points', decay=0.85)
+    a_def = compute_weighted_team_stats(team_a_games, 'opp_points', decay=0.85)
+    b_off = compute_weighted_team_stats(team_b_games, 'team_points', decay=0.85)
+    b_def = compute_weighted_team_stats(team_b_games, 'opp_points', decay=0.85)
+    if None in (a_off, a_def, b_off, b_def):
+        return None
+    base_spread = ((a_off + b_def) / 2.0) - ((b_off + a_def) / 2.0)
+    base_total = ((a_off + b_def) / 2.0) + ((b_off + a_def) / 2.0)
+    # Opponent-adjustment coefficient (0.4) when opp_def_rating exists.
+    a_opp_def = compute_weighted_team_stats(team_a_games, 'opp_def_rating', decay=0.85)
+    b_opp_def = compute_weighted_team_stats(team_b_games, 'opp_def_rating', decay=0.85)
+    if a_opp_def is not None:
+        base_spread += 0.4 * (a_off - a_opp_def) * 0.1
+    if b_opp_def is not None:
+        base_spread -= 0.4 * (b_off - b_opp_def) * 0.1
+    if len(h2h_games) >= 2:
+        h2h_margin = compute_weighted_team_stats(h2h_games, 'margin_for_team_a', decay=0.85)
+        h2h_total = compute_weighted_team_stats(h2h_games, 'total', decay=0.85)
+        if h2h_margin is not None:
+            base_spread = 0.6 * h2h_margin + 0.4 * base_spread
+        if h2h_total is not None:
+            base_total = 0.6 * h2h_total + 0.4 * base_total
+    ou_record = None
+    if xsharp_line is not None:
+        sample = h2h_games[:6] if h2h_games else (team_a_games[:3] + team_b_games[:3])
+        over_n = 0
+        under_n = 0
+        for row in sample:
+            tv = _to_float_safe(row.get('total'))
+            if tv is None:
+                continue
+            if tv > float(xsharp_line):
+                over_n += 1
+            elif tv < float(xsharp_line):
+                under_n += 1
+        if over_n or under_n:
+            side = "Over" if over_n >= under_n else "Under"
+            ou_record = f"Combined record: {over_n}-{under_n} {side}"
+    return {
+        'spread': _round_to_half(base_spread),
+        'total': _round_to_half(base_total),
+        'ou_record': ou_record,
+    }
+
+
+_NBA_EFFICIENCY_CACHE: dict = {}
+_NBA_EFFICIENCY_TTL = 1800
+_NBA_EFFICIENCY_SEASON = "2024-25"
+_WNBA_EFFICIENCY_SEASON = "2025"
+_NBA_LEAGUE_AVG_ORTG = 114.0
+_NBA_TOTAL_INFLATION_CORRECTION = 6.0
+_NBA_NAME_MAP = {
+    "Los Angeles Lakers": "LA Lakers",
+    "Los Angeles Clippers": "LA Clippers",
+    "PHO": "Phoenix Suns",
+    "Phoenix": "Phoenix Suns",
+    "NY Knicks": "New York Knicks",
+    "NYK": "New York Knicks",
+}
+_WNBA_NAME_MAP = {
+    "NY Liberty": "New York Liberty",
+    "NYL": "New York Liberty",
+}
+logger.info(f"[eff] NBA_NAME_MAP loaded: {_NBA_NAME_MAP}")
+logger.info(f"[eff] WNBA_NAME_MAP loaded: {_WNBA_NAME_MAP}")
+
+
+def _normalize_team_name_for_eff(team_name: str) -> str:
+    try:
+        return re.sub(r'[^a-z0-9]+', '', str(team_name or '').lower())
+    except Exception:
+        return str(team_name or '').strip().lower()
+
+
+def _normalize_eff_lookup_name(team_name: str, sport: str = "NBA") -> str:
+    raw = str(team_name or '').strip()
+    s = (sport or "NBA").upper().strip()
+    if s == "WNBA":
+        return _WNBA_NAME_MAP.get(raw, raw)
+    return _NBA_NAME_MAP.get(raw, raw)
+
+
+def _compute_local_efficiency_fallback(sport: str, team_name: str, n_games: int = 15) -> dict:
+    """Build lightweight efficiency values from recent completed games in DB."""
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            """
+            SELECT game_date, home_team_id, away_team_id, home_score, away_score
+            FROM games
+            WHERE sport=? AND home_score IS NOT NULL AND away_score IS NOT NULL
+              AND (home_team_id=? OR away_team_id=?)
+            ORDER BY game_date DESC
+            LIMIT ?
+            """,
+            (sport, team_name, team_name, int(n_games)),
+        ).fetchall()
+        conn.close()
+    except Exception as _e:
+        logger.warning(f"[eff] local fallback query failed for {sport} {team_name}: {_e}")
+        return None
+    if not rows:
+        return None
+    scored = []
+    allowed = []
+    totals = []
+    for r in rows:
+        try:
+            hs = float(r["home_score"])
+            aws = float(r["away_score"])
+            home = str(r["home_team_id"] or "")
+            if home == team_name:
+                scored.append(hs)
+                allowed.append(aws)
+            else:
+                scored.append(aws)
+                allowed.append(hs)
+            totals.append(hs + aws)
+        except Exception:
+            continue
+    if len(scored) < 3:
+        return None
+    off_ppg = sum(scored) / len(scored)
+    def_ppg = sum(allowed) / len(allowed)
+    if sport == "WNBA":
+        avg_total = (sum(totals) / len(totals)) if totals else 162.0
+        pace = max(75.0, min(85.0, (avg_total / 162.0) * 80.0))
+    else:
+        avg_total = (sum(totals) / len(totals)) if totals else 220.0
+        pace = max(92.0, min(101.0, (avg_total / 220.0) * 98.5))
+    poss = pace / 100.0
+    ortg = float(off_ppg / poss)
+    drtg = float(def_ppg / poss)
+    if ortg <= 50.0 or drtg <= 50.0:
+        return None
+    return {
+        "ortg": ortg,
+        "drtg": drtg,
+        "pace": float(pace),
+        "season_type": "LocalFallback",
+        "source": "local_db",
+        "data_ts": str(rows[0]["game_date"]) if rows else None,
+    }
+
+
+def get_team_efficiency_stats(team_name: str) -> dict:
+    return get_team_efficiency_stats_for_sport("NBA", team_name)
+
+
+def get_team_efficiency_stats_for_sport(sport: str, team_name: str) -> dict:
+    """
+    Fetch current season OffRtg, DefRtg, Pace for a given team.
+    Source: stats.nba.com/stats/leaguedashteamstats (LeagueID 00=NBA, 10=WNBA)
+    Returns: {'ortg': float, 'drtg': float, 'pace': float, 'season_type': str} or None on failure.
+    """
+    sport = (sport or "").upper().strip()
+    if sport not in ("NBA", "WNBA"):
+        return None
+    if not team_name:
+        return None
+    lookup_name = _normalize_eff_lookup_name(team_name, sport)
+    cache_prefix = f"{sport}::"
+    key = _normalize_team_name_for_eff(lookup_name)
+    now_ts = _time.time()
+    all_cached = _NBA_EFFICIENCY_CACHE.get(cache_prefix + '__all__')
+    if all_cached and (now_ts - all_cached.get('ts', 0)) < _NBA_EFFICIENCY_TTL:
+        cached_map = (all_cached.get('data') or {})
+        if key in cached_map:
+            return cached_map.get(key)
+    cached = _NBA_EFFICIENCY_CACHE.get(cache_prefix + key)
+    if cached and (now_ts - cached.get('ts', 0)) < _NBA_EFFICIENCY_TTL:
+        cached_data = cached.get('data')
+        if cached_data is not None:
+            return cached_data
+    url = "https://stats.nba.com/stats/leaguedashteamstats"
+    params_base = {
+        "MeasureType": "Advanced",
+        "PerMode": "PerGame",
+        "Season": (_NBA_EFFICIENCY_SEASON if sport == "NBA" else _WNBA_EFFICIENCY_SEASON),
+        "LastNGames": 0,
+        "LeagueID": ("00" if sport == "NBA" else "10"),
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.nba.com/",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+        "Connection": "keep-alive",
+    }
+    fallback_reasons = []
+    season_types = ("Playoffs", "Regular Season")
+    for season_type in season_types:
+        try:
+            params = dict(params_base)
+            params["SeasonType"] = season_type
+            resp = requests.get(url, params=params, headers=headers, timeout=12)
+            logger.info(f"[eff] {sport} API status ({lookup_name}, {season_type}): {resp.status_code}")
+            if resp.status_code != 200:
+                logger.warning(f"[eff] {sport} API non-200 ({lookup_name}, {season_type}): {resp.status_code} body={resp.text[:200]}")
+                fallback_reasons.append(f"non-200 {season_type}: {resp.status_code} {resp.text[:120]}")
+                continue
+            payload = resp.json() if resp.text else {}
+            rs = (payload.get('resultSets') or [])
+            if isinstance(rs, dict):
+                rs = [rs]
+            table = rs[0] if rs else {}
+            headers_row = table.get('headers') or []
+            rows = table.get('rowSet') or []
+            if not headers_row or not rows:
+                logger.info(f"[eff] NBA API empty rows ({lookup_name}, {season_type})")
+                fallback_reasons.append(f"empty rows {season_type}")
+                continue
+            idx = {h: i for i, h in enumerate(headers_row)}
+            req = ('TEAM_NAME', 'OFF_RATING', 'DEF_RATING', 'PACE')
+            if not all(k in idx for k in req):
+                continue
+            all_map = {}
+            for row in rows:
+                try:
+                    nm = str(row[idx['TEAM_NAME']])
+                except Exception:
+                    continue
+                try:
+                    data = {
+                        'ortg': float(row[idx['OFF_RATING']]),
+                        'drtg': float(row[idx['DEF_RATING']]),
+                        'pace': float(row[idx['PACE']]),
+                        'season_type': season_type,
+                        'source': 'nba_api',
+                    }
+                except Exception:
+                    data = None
+                all_map[_normalize_team_name_for_eff(nm)] = data
+            if all_map:
+                _NBA_EFFICIENCY_CACHE[cache_prefix + '__all__'] = {'ts': now_ts, 'data': all_map}
+                if key in all_map:
+                    _NBA_EFFICIENCY_CACHE[cache_prefix + key] = {'ts': now_ts, 'data': all_map.get(key)}
+                    return all_map.get(key)
+                sample_names = sorted(list(all_map.keys()))[:20]
+                logger.warning(f"[eff] {sport} NAME MISMATCH: '{lookup_name}' not found in API response keys. Sample={sample_names}")
+                fallback_reasons.append(f"name mismatch for {lookup_name} in {season_type}")
+        except Exception as _e:
+            logger.warning(f"[eff] {sport} API exception for {lookup_name} ({season_type}): {_e}")
+            fallback_reasons.append(f"exception {season_type}: {_e}")
+            continue
+    # Avoid repeated long upstream retries for every team in the same render.
+    local_data = _compute_local_efficiency_fallback(sport, team_name)
+    if local_data is not None:
+        logger.warning(
+            f"[eff] {sport} local_db fallback used for team='{team_name}' "
+            f"(lookup='{lookup_name}') reasons={fallback_reasons or ['unknown']} "
+            f"local_data_ts={local_data.get('data_ts')}"
+        )
+    else:
+        logger.warning(
+            f"[eff] {sport} no efficiency data for team='{team_name}' "
+            f"(lookup='{lookup_name}') reasons={fallback_reasons or ['unknown']} local_data_ts=None"
+        )
+    _NBA_EFFICIENCY_CACHE[cache_prefix + '__all__'] = {'ts': now_ts, 'data': {}}
+    _NBA_EFFICIENCY_CACHE[cache_prefix + key] = {'ts': now_ts, 'data': local_data}
+    return local_data
+
+
+def efficiency_spread(
+    team_a_ortg: float, team_a_drtg: float,
+    team_b_ortg: float, team_b_drtg: float,
+    pace_a: float, pace_b: float,
+    home_court_advantage: float = 2.5
+):
+    """
+    Returns (score_a, score_b, spread, total) rounded to nearest 0.5.
+    spread is positive when team_a (home) is favored.
+    """
+    avg_pace = (float(pace_a) + float(pace_b)) / 2.0
+    possessions = avg_pace / 100.0
+    league_avg = float(_NBA_LEAGUE_AVG_ORTG)
+    # Use opponent defensive adjustment against a league baseline to avoid
+    # the high-bias from averaging OFF_RATING + DEF_RATING directly.
+    score_a_raw = (float(team_a_ortg) * (float(team_b_drtg) / league_avg)) * possessions + float(home_court_advantage)
+    score_b_raw = (float(team_b_ortg) * (float(team_a_drtg) / league_avg)) * possessions
+    # Systemic baseline correction: previous formulation ran ~6-7 points high.
+    score_a_raw -= float(_NBA_TOTAL_INFLATION_CORRECTION) / 2.0
+    score_b_raw -= float(_NBA_TOTAL_INFLATION_CORRECTION) / 2.0
+    # Extra defense drag for elite defensive matchups (playoff-style scoring compression).
+    avg_drtg = (float(team_a_drtg) + float(team_b_drtg)) / 2.0
+    defense_drag_total = max(0.0, (112.0 - avg_drtg) * 0.6)
+    score_a_raw -= defense_drag_total / 2.0
+    score_b_raw -= defense_drag_total / 2.0
+    spread_raw = score_a_raw - score_b_raw
+    total_raw = score_a_raw + score_b_raw
+    return (
+        _round_to_half(score_a_raw),
+        _round_to_half(score_b_raw),
+        _round_to_half(spread_raw),
+        _round_to_half(total_raw),
+    )
+
+
+def blend_efficiency_h2h(
+    efficiency_spread_val: float,
+    h2h_spread_val: float,
+    h2h_game_count: int
+) -> float:
+    """Blend efficiency and H2H spread with sample-size-aware weights."""
+    if h2h_game_count >= 5:
+        w_eff, w_h2h = (0.45, 0.55)
+    elif h2h_game_count >= 3:
+        w_eff, w_h2h = (0.65, 0.35)
+    else:
+        w_eff, w_h2h = (0.85, 0.15)
+    blended = (float(efficiency_spread_val) * w_eff) + (float(h2h_spread_val) * w_h2h)
+    return _round_to_half(blended)
+
+
 def _draw_share_pick_checkmark(draw, box):
     """White checkmark inside the green pick badge; avoids missing U+2713 in bitmap/default fonts."""
     left, top, right, bottom = box
@@ -371,7 +752,9 @@ def _render_predictions_share_image(payload: dict, fmt: str):
 def _render_daily_report_share_image(payload: dict, fmt: str):
     if not _HAS_PIL:
         return None, None
-    width, height = 1080, 1920
+    # Legacy fallback renderer for direct share URLs.
+    # Primary UX now captures the on-page sport results block in-browser (16:9).
+    width, height = 1920, 1080
     pad = 48
     image = Image.new("RGB", (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
@@ -403,12 +786,8 @@ def _render_daily_report_share_image(payload: dict, fmt: str):
             draw.text((pad + 22, cy + 86), rec, fill=(71, 85, 105), font=sub_font)
     y = y + min(len(models), 5) * (card_h + gap) + 36
     spread = payload.get('spread') or {}
-    ou = payload.get('ou') or {}
     if spread.get('label'):
         draw.text((pad, y), f"Spread: {spread.get('label')}", fill=(15, 23, 42), font=meta_font)
-        y += 64
-    if ou.get('label'):
-        draw.text((pad, y), f"Over/Under: {ou.get('label')}", fill=(15, 23, 42), font=meta_font)
     output = io.BytesIO()
     out_fmt = 'JPEG' if fmt in ('jpg', 'jpeg') else 'PNG'
     if out_fmt == 'JPEG':
@@ -775,17 +1154,11 @@ def _attach_engine_odds_to_predictions(sport, predictions, limit=40):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# H2H (head-to-head) projected total
+# H2H (head-to-head) projected total ("Our Total")
 #
-# "Our Total" is the last-N head-to-head games average between the two teams
-# (default N=10), across all sports.
-#
-#   avg_home = mean of the (upcoming) home team's scores in past H2H games
-#   avg_away = mean of the (upcoming) away team's scores in past H2H games
-#   our_total  = avg_home + avg_away
-#
-# XGBoost's xgb_total is left untouched and is compared against our_total to
-# produce the OVER / UNDER pick. Spread logic is completely unchanged.
+# Last-N completed meetings between the two teams (either orientation).
+# our_total = avg home points in sample + avg away points in sample (role-based).
+# Does NOT overwrite engine odds fields (market_spread / market_total).
 # ─────────────────────────────────────────────────────────────────────────────
 _H2H_PROJECTION_CACHE: dict = {}
 _H2H_PROJECTION_TTL = 900  # 15 minutes
@@ -798,35 +1171,54 @@ def _compute_h2h_projection(
     away_team: str,
     n: int = 10,
     min_games: int = 2,
+    as_of_date: str | None = None,
 ):
     """Return last-N H2H projection for (home_team vs away_team) or None.
 
     Output dict keys:
-        games_used, avg_home, avg_away, our_total, totals (list).
+        games_used, avg_home, avg_away, our_total, our_spread, totals (list).
     """
     if not (sport and home_team and away_team):
         return None
-    cache_key = (sport, home_team, away_team, n)
+    cache_key = (sport, home_team, away_team, n, (as_of_date or '')[:10])
     cached = _H2H_PROJECTION_CACHE.get(cache_key)
     now_ts = _time.time()
     if cached and (now_ts - cached['ts']) < _H2H_PROJECTION_TTL:
         return cached['data']
     try:
-        rows = conn.execute(
-            '''
-            SELECT home_team_id, away_team_id, home_score, away_score, game_date
-            FROM games
-            WHERE sport = ?
-              AND home_score IS NOT NULL AND away_score IS NOT NULL
-              AND (
-                    (home_team_id = ? AND away_team_id = ?)
-                 OR (home_team_id = ? AND away_team_id = ?)
-              )
-            ORDER BY date(game_date) DESC
-            LIMIT ?
-            ''',
-            (sport, home_team, away_team, away_team, home_team, int(n)),
-        ).fetchall()
+        if as_of_date:
+            rows = conn.execute(
+                '''
+                SELECT home_team_id, away_team_id, home_score, away_score, game_date
+                FROM games
+                WHERE sport = ?
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND date(game_date) < date(?)
+                  AND (
+                        (home_team_id = ? AND away_team_id = ?)
+                     OR (home_team_id = ? AND away_team_id = ?)
+                  )
+                ORDER BY date(game_date) DESC
+                LIMIT ?
+                ''',
+                (sport, as_of_date[:10], home_team, away_team, away_team, home_team, int(n)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                '''
+                SELECT home_team_id, away_team_id, home_score, away_score, game_date
+                FROM games
+                WHERE sport = ?
+                  AND home_score IS NOT NULL AND away_score IS NOT NULL
+                  AND (
+                        (home_team_id = ? AND away_team_id = ?)
+                     OR (home_team_id = ? AND away_team_id = ?)
+                  )
+                ORDER BY date(game_date) DESC
+                LIMIT ?
+                ''',
+                (sport, home_team, away_team, away_team, home_team, int(n)),
+            ).fetchall()
     except Exception as _e:
         logger.debug(f"[h2h] query failed for {sport} {home_team} vs {away_team}: {_e}")
         return None
@@ -852,13 +1244,34 @@ def _compute_h2h_projection(
     if len(home_pts) < min_games:
         _H2H_PROJECTION_CACHE[cache_key] = {'ts': now_ts, 'data': None}
         return None
-    avg_home = sum(home_pts) / len(home_pts)
-    avg_away = sum(away_pts) / len(away_pts)
+    weighted_rows = [{'team_points': hp, 'opp_points': ap, 'margin': (hp - ap)} for hp, ap in zip(home_pts, away_pts)]
+    avg_home = compute_weighted_team_stats(weighted_rows, 'team_points', decay=0.85)
+    avg_away = compute_weighted_team_stats(weighted_rows, 'opp_points', decay=0.85)
+    avg_margin = compute_weighted_team_stats(weighted_rows, 'margin', decay=0.85)
+    if avg_home is None or avg_away is None:
+        avg_home = sum(home_pts) / len(home_pts)
+        avg_away = sum(away_pts) / len(away_pts)
+    if avg_margin is None:
+        try:
+            avg_margin = avg_home - avg_away
+        except Exception:
+            avg_margin = None
+    h2h_spread_raw = avg_margin if avg_margin is not None else None
+    h2h_spread = _round_to_half(h2h_spread_raw) if h2h_spread_raw is not None else None
+    # Use H2H margin for our_spread ONLY when sample is strong (5+ clean H2H games).
+    use_margin_spread = len(weighted_rows) >= 5
+    our_spread_raw = h2h_spread_raw if use_margin_spread else None
+    if our_spread_raw is not None and abs(float(our_spread_raw)) < 0.25:
+        our_spread_raw = None
     data = {
         'games_used': len(home_pts),
         'avg_home': round(avg_home, 2),
         'avg_away': round(avg_away, 2),
-        'our_total': round(avg_home + avg_away, 1),
+        'h2h_spread_raw': h2h_spread_raw,
+        'h2h_spread': h2h_spread,
+        'our_spread_raw': our_spread_raw,
+        'our_spread': (_round_to_half(our_spread_raw) if our_spread_raw is not None else None),
+        'our_total': _round_to_half(avg_home + avg_away),
         'totals': totals,
     }
     _H2H_PROJECTION_CACHE[cache_key] = {'ts': now_ts, 'data': data}
@@ -878,9 +1291,22 @@ def _attach_h2h_projection_to_predictions(sport, predictions, n: int = 10):
         for pred in predictions:
             ht = pred.get('home_team_id')
             at = pred.get('away_team_id')
-            proj = _compute_h2h_projection(conn, sport, ht, at, n=n)
+            proj = _compute_h2h_projection(
+                conn,
+                sport,
+                ht,
+                at,
+                n=n,
+                as_of_date=(pred.get('game_date') or '')[:10] or None,
+            )
             if proj:
-                pred['our_total'] = proj['our_total']
+                if pred.get('our_total_source') not in ('efficiency',):
+                    pred['our_total'] = proj['our_total']
+                if pred.get('our_spread_source') in (None, ''):
+                    pred['our_spread'] = proj.get('our_spread')
+                pred['our_spread_raw'] = proj.get('our_spread_raw')
+                pred['h2h_spread'] = proj.get('h2h_spread')
+                pred['h2h_spread_raw'] = proj.get('h2h_spread_raw')
                 pred['totals'] = proj.get('totals') or []
                 pred['our_total_games'] = proj['games_used']
                 pred['our_avg_home'] = proj['avg_home']
@@ -902,11 +1328,15 @@ def _attach_h2h_projection_to_predictions(sport, predictions, n: int = 10):
                                 under_n += 1
                         if over_n or under_n:
                             side = "Over" if over_n >= under_n else "Under"
-                            pred['our_ou_record_vs_xsharp'] = f"{over_n}-{under_n} {side}"
+                            pred['our_ou_record_vs_xsharp'] = f"Combined record: {over_n}-{under_n} {side}"
                 except Exception:
                     pred['our_ou_record_vs_xsharp'] = None
             else:
                 pred.setdefault('our_total', None)
+                pred.setdefault('our_spread', None)
+                pred.setdefault('our_spread_raw', None)
+                pred.setdefault('h2h_spread', None)
+                pred.setdefault('h2h_spread_raw', None)
                 pred.setdefault('totals', [])
                 pred.setdefault('our_total_games', 0)
                 pred.setdefault('our_ou_record_vs_xsharp', None)
@@ -1281,7 +1711,7 @@ def _ou_edge_threshold(sport):
 
 
 def _attach_h2h_projection_to_daily_results(sport, daily_results, n: int = 10):
-    """Set g['our_total']/g['our_spread'] on each completed game using prior H2H."""
+    """Set our_total from last-N H2H meetings on completed-game rows."""
     if not daily_results:
         return
     try:
@@ -1294,14 +1724,31 @@ def _attach_h2h_projection_to_daily_results(sport, daily_results, n: int = 10):
             for g in dd.get('games', []):
                 ht = g.get('home')
                 at = g.get('away')
-                proj = _compute_h2h_projection(conn, sport, ht, at, n=n)
+                proj = _compute_h2h_projection(
+                    conn,
+                    sport,
+                    ht,
+                    at,
+                    n=n,
+                    as_of_date=(g.get('date') or '')[:10] or None,
+                )
                 if proj:
                     g['our_total'] = proj['our_total']
+                    g['our_spread'] = proj.get('our_spread')
+                    g['our_spread_raw'] = proj.get('our_spread_raw')
+                    g['h2h_spread'] = proj.get('h2h_spread')
+                    g['h2h_spread_raw'] = proj.get('h2h_spread_raw')
+                    g['totals'] = proj.get('totals') or []
                     g['our_total_games'] = proj['games_used']
                     g['our_avg_home'] = proj['avg_home']
                     g['our_avg_away'] = proj['avg_away']
                 else:
                     g.setdefault('our_total', None)
+                    g.setdefault('our_spread', None)
+                    g.setdefault('our_spread_raw', None)
+                    g.setdefault('h2h_spread', None)
+                    g.setdefault('h2h_spread_raw', None)
+                    g.setdefault('totals', [])
                     g.setdefault('our_total_games', 0)
     finally:
         try:
@@ -3033,6 +3480,9 @@ def _get_xgb_spread_model(sport):
         from xgb_spread_model import get_or_train_model
     except ImportError:
         return None
+    # FIX: xgb_spread_model must keep a chronological split (no random shuffle).
+    # We cannot enforce train/test ordering from this wrapper without editing
+    # xgb_spread_model internals.
     # Need completed games from DB and team stats
     try:
         team_stats = _build_team_stats_from_db(sport) or {}
@@ -3261,6 +3711,44 @@ def get_upcoming_predictions(sport, days=365):
                 game['stored_elo_prob']      = pred['elo_home_prob']
                 game['stored_xgb_prob']      = pred['xgboost_home_prob']
                 game['stored_ensemble_prob'] = pred['win_probability']
+
+        # Also include full-season stored games so date picker can show every
+        # available prediction date (not just the live API window).
+        try:
+            db_rows = conn.execute('''
+                SELECT g.game_id, g.home_team_id, g.away_team_id, g.game_date,
+                       g.home_score, g.away_score, g.league,
+                       p.elo_home_prob, p.xgboost_home_prob, p.win_probability
+                FROM games g
+                LEFT JOIN predictions p ON p.game_id = g.game_id AND p.sport = g.sport
+                WHERE g.sport = ?
+                  AND date(g.game_date) >= date('now', '-365 day')
+                ORDER BY date(g.game_date) ASC
+            ''', (sport,)).fetchall()
+            seen_soc = set()
+            for g in api_games:
+                gk = g.get('game_id') or f"{g.get('game_date')}|{g.get('home_team_id')}|{g.get('away_team_id')}"
+                seen_soc.add(gk)
+            for r in db_rows:
+                d = dict(r)
+                gk = d.get('game_id') or f"{d.get('game_date')}|{d.get('home_team_id')}|{d.get('away_team_id')}"
+                if gk in seen_soc:
+                    continue
+                api_games.append({
+                    'game_id': d.get('game_id') or '',
+                    'home_team_id': d.get('home_team_id') or '',
+                    'away_team_id': d.get('away_team_id') or '',
+                    'game_date': (d.get('game_date') or '')[:10],
+                    'home_score': d.get('home_score'),
+                    'away_score': d.get('away_score'),
+                    'league': _canonical_soccer_league_name(d.get('league')) or d.get('league') or sport,
+                    'stored_elo_prob': d.get('elo_home_prob'),
+                    'stored_xgb_prob': d.get('xgboost_home_prob'),
+                    'stored_ensemble_prob': d.get('win_probability'),
+                })
+                seen_soc.add(gk)
+        except Exception as _soc_db_merge_err:
+            logger.debug(f"[SOCCER] predictions DB merge failed: {_soc_db_merge_err}")
         conn.close()
 
         # Build dates list
@@ -3432,6 +3920,44 @@ def get_upcoming_predictions(sport, days=365):
                 game['stored_elo_prob'] = pred['elo_home_prob']
                 game['stored_xgb_prob'] = pred['xgboost_home_prob']
                 game['stored_ensemble_prob'] = pred['win_probability']
+
+        # Merge full-season stored games so date navigation reflects all
+        # available prediction dates, not only the short API range window.
+        try:
+            db_rows = conn.execute('''
+                SELECT g.game_id, g.home_team_id, g.away_team_id, g.game_date,
+                       g.home_score, g.away_score, g.league,
+                       p.elo_home_prob, p.xgboost_home_prob, p.win_probability
+                FROM games g
+                LEFT JOIN predictions p ON p.game_id = g.game_id AND p.sport = g.sport
+                WHERE g.sport = ?
+                  AND date(g.game_date) >= date('now', '-365 day')
+                ORDER BY date(g.game_date) ASC
+            ''', (sport,)).fetchall()
+            seen_keys = set()
+            for g in api_games:
+                gk = g.get('game_id') or f"{g.get('game_date')}|{g.get('home_team_id')}|{g.get('away_team_id')}"
+                seen_keys.add(gk)
+            for r in db_rows:
+                d = dict(r)
+                gk = d.get('game_id') or f"{(d.get('game_date') or '')[:10]}|{d.get('home_team_id')}|{d.get('away_team_id')}"
+                if gk in seen_keys:
+                    continue
+                api_games.append({
+                    'game_id': d.get('game_id') or '',
+                    'home_team_id': d.get('home_team_id') or '',
+                    'away_team_id': d.get('away_team_id') or '',
+                    'game_date': (d.get('game_date') or '')[:10],
+                    'home_score': d.get('home_score'),
+                    'away_score': d.get('away_score'),
+                    'league': d.get('league') or sport,
+                    'stored_elo_prob': d.get('elo_home_prob'),
+                    'stored_xgb_prob': d.get('xgboost_home_prob'),
+                    'stored_ensemble_prob': d.get('win_probability'),
+                })
+                seen_keys.add(gk)
+        except Exception as _pred_db_merge_err:
+            logger.debug(f"[{sport}] predictions DB merge failed: {_pred_db_merge_err}")
         conn.close()
         
         # Build dates list
@@ -3667,6 +4193,48 @@ def get_upcoming_predictions(sport, days=365):
         _xgb_model_page = _get_xgb_spread_model(sport)
     except Exception:
         _xgb_model_page = None
+    _h2h_conn_for_eff = None
+    if sport == 'NBA':
+        try:
+            _h2h_conn_for_eff = get_db_connection()
+        except Exception:
+            _h2h_conn_for_eff = None
+
+    def _build_recent_team_games(team_name, as_of_dt, limit=8):
+        rows = []
+        for cg in completed_games:
+            gd = parse_date(cg.get('game_date') or '')
+            if not gd or gd >= as_of_dt:
+                continue
+            hs = _to_float_safe(cg.get('home_score'))
+            as_ = _to_float_safe(cg.get('away_score'))
+            if hs is None or as_ is None:
+                continue
+            if cg.get('home_team_id') == team_name:
+                rows.append({'team_points': hs, 'opp_points': as_, 'total': hs + as_, 'opp_def_rating': cg.get('opp_def_rating'), '_ts': gd})
+            elif cg.get('away_team_id') == team_name:
+                rows.append({'team_points': as_, 'opp_points': hs, 'total': hs + as_, 'opp_def_rating': cg.get('opp_def_rating'), '_ts': gd})
+        rows.sort(key=lambda r: r.get('_ts'), reverse=True)
+        return rows[:limit]
+
+    def _build_recent_h2h_rows(home_name, away_name, as_of_dt, limit=6):
+        rows = []
+        for cg in completed_games:
+            gd = parse_date(cg.get('game_date') or '')
+            if not gd or gd >= as_of_dt:
+                continue
+            ht = cg.get('home_team_id')
+            at = cg.get('away_team_id')
+            if not ((ht == home_name and at == away_name) or (ht == away_name and at == home_name)):
+                continue
+            hs = _to_float_safe(cg.get('home_score'))
+            as_ = _to_float_safe(cg.get('away_score'))
+            if hs is None or as_ is None:
+                continue
+            margin_for_home = (hs - as_) if ht == home_name else (as_ - hs)
+            rows.append({'margin_for_team_a': margin_for_home, 'total': hs + as_, '_ts': gd})
+        rows.sort(key=lambda r: r.get('_ts'), reverse=True)
+        return rows[:limit]
 
     for game_date, game in all_games_with_dates:
         # Show games from season start up to one month from today
@@ -3871,6 +4439,7 @@ def get_upcoming_predictions(sport, days=365):
             game_dict['naive_away_score'] = None
             game_dict['naive_spread'] = None
             game_dict['naive_total'] = None
+            game_dict['our_spread'] = None
             game_dict['xgb_home_score'] = None
             game_dict['xgb_away_score'] = None
             game_dict['xgb_spread'] = None
@@ -3891,8 +4460,8 @@ def get_upcoming_predictions(sport, days=365):
                     if exp_home is not None and exp_away is not None:
                         game_dict['naive_home_score'] = round(exp_home, 2)
                         game_dict['naive_away_score'] = round(exp_away, 2)
-                        game_dict['naive_spread'] = round(exp_home - exp_away, 2)
-                        game_dict['naive_total'] = round(exp_home + exp_away, 2)
+                        game_dict['naive_spread'] = _round_to_half(exp_home - exp_away)
+                        game_dict['naive_total'] = _round_to_half(exp_home + exp_away)
                 if game_dict.get('naive_spread') is None:
                     try:
                         _sp = _score_predictor_instance(sport)
@@ -3905,8 +4474,8 @@ def get_upcoming_predictions(sport, days=365):
                             if nh is not None:
                                 game_dict['naive_home_score'] = nh
                                 game_dict['naive_away_score'] = na
-                                game_dict['naive_spread'] = ns
-                                game_dict['naive_total'] = nt
+                                game_dict['naive_spread'] = _round_to_half(ns)
+                                game_dict['naive_total'] = _round_to_half(nt)
                     except Exception as _e:
                         logger.debug(f"ScorePredictor error: {_e}")
                 if game_dict.get('naive_spread') is None:
@@ -3926,8 +4495,8 @@ def get_upcoming_predictions(sport, days=365):
                         if nh is not None:
                             game_dict['naive_home_score'] = nh
                             game_dict['naive_away_score'] = na
-                            game_dict['naive_spread'] = ns
-                            game_dict['naive_total'] = nt
+                            game_dict['naive_spread'] = _round_to_half(ns)
+                            game_dict['naive_total'] = _round_to_half(nt)
                 except Exception as _e:
                     logger.debug(f"ScorePredictor error: {_e}")
 
@@ -3944,8 +4513,8 @@ def get_upcoming_predictions(sport, days=365):
                         if vh is not None:
                             game_dict['naive_home_score'] = vh
                             game_dict['naive_away_score'] = va
-                            game_dict['naive_spread'] = vs
-                            game_dict['naive_total'] = vt
+                            game_dict['naive_spread'] = _round_to_half(vs)
+                            game_dict['naive_total'] = _round_to_half(vt)
                     except Exception as _ve:
                         logger.debug(f"VegasScorePredictor error: {_ve}")
 
@@ -3959,10 +4528,141 @@ def get_upcoming_predictions(sport, days=365):
                         if result and result[0] is not None:
                             game_dict['xgb_home_score'] = result[0]
                             game_dict['xgb_away_score'] = result[1]
-                            game_dict['xgb_spread'] = result[2]
-                            game_dict['xgb_total'] = result[3]
+                            game_dict['xgb_spread'] = _round_to_half(result[2])
+                            game_dict['xgb_total'] = _round_to_half(result[3])
                 except Exception as _e:
                     logger.debug(f"XGBSpread error: {_e}")
+            if game_dict.get('home_score') is None and sport in ('NBA', 'WNBA'):
+                ht = game_dict.get('home_team_id', '')
+                at = game_dict.get('away_team_id', '')
+                as_of = (game_dict.get('game_date') or '')[:10] or None
+                eff_home = get_team_efficiency_stats_for_sport(sport, ht)
+                eff_away = get_team_efficiency_stats_for_sport(sport, at)
+                h2h_proj = None
+                if _h2h_conn_for_eff is not None:
+                    try:
+                        h2h_proj = _compute_h2h_projection(_h2h_conn_for_eff, sport, ht, at, n=10, as_of_date=as_of)
+                    except Exception:
+                        h2h_proj = None
+                h2h_spread = _to_float_safe((h2h_proj or {}).get('h2h_spread'))
+                h2h_total = _to_float_safe((h2h_proj or {}).get('our_total'))
+                h2h_games = int((h2h_proj or {}).get('games_used') or 0)
+                game_dict['h2h_spread'] = h2h_spread
+                game_dict['h2h_spread_raw'] = _to_float_safe((h2h_proj or {}).get('h2h_spread_raw'))
+                game_dict['our_total_games'] = h2h_games
+
+                eff_spread = None
+                eff_total = None
+                if (
+                    eff_home and eff_away
+                    and float(eff_home.get('ortg') or 0) > 0
+                    and float(eff_home.get('drtg') or 0) > 0
+                    and float(eff_home.get('pace') or 0) > 0
+                    and float(eff_away.get('ortg') or 0) > 0
+                    and float(eff_away.get('drtg') or 0) > 0
+                    and float(eff_away.get('pace') or 0) > 0
+                ):
+                    try:
+                        logger.info(
+                            f"[eff-debug] {at} @ {ht} | "
+                            f"home(ortg={eff_home.get('ortg')}, drtg={eff_home.get('drtg')}, pace={eff_home.get('pace')}, season={eff_home.get('season_type')}) | "
+                            f"away(ortg={eff_away.get('ortg')}, drtg={eff_away.get('drtg')}, pace={eff_away.get('pace')}, season={eff_away.get('season_type')})"
+                        )
+                        _s_home, _s_away, eff_spread, eff_total = efficiency_spread(
+                            eff_home['ortg'], eff_home['drtg'],
+                            eff_away['ortg'], eff_away['drtg'],
+                            eff_home['pace'], eff_away['pace'],
+                            home_court_advantage=(2.0 if sport == 'WNBA' else 2.5),
+                        )
+                        logger.info(
+                            f"[eff-debug] raw efficiency output for {at} @ {ht}: "
+                            f"home={_s_home}, away={_s_away}, spread={eff_spread}, total={eff_total}"
+                        )
+                        game_dict['our_eff_home_score'] = _s_home
+                        game_dict['our_eff_away_score'] = _s_away
+                        game_dict['our_eff_spread_raw'] = _to_float_safe(eff_spread)
+                        game_dict['our_eff_total_raw'] = _to_float_safe(eff_total)
+                    except Exception:
+                        eff_spread = None
+                        eff_total = None
+
+                # Spread fallback chain:
+                # 1) efficiency (strict priority)
+                # 2) H2H spread (only if efficiency unavailable)
+                # 3) naive spread
+                # 4) None
+                our_spread_calc = None
+                spread_source = None
+                if eff_spread is not None:
+                    our_spread_calc = _round_to_half(eff_spread)
+                    spread_source = 'efficiency'
+                    # Guardrail for local fallback ratings: keep moderate edges from overshooting.
+                    if (
+                        (eff_home or {}).get('source') == 'local_db'
+                        and (eff_away or {}).get('source') == 'local_db'
+                        and our_spread_calc is not None
+                        and abs(float(our_spread_calc)) < 10.0
+                    ):
+                        our_spread_calc = _round_to_half(max(-5.5, min(5.5, float(our_spread_calc))))
+                elif h2h_spread is not None and h2h_games >= 3:
+                    our_spread_calc = _round_to_half(h2h_spread)
+                    spread_source = 'h2h'
+                elif _to_float_safe(game_dict.get('naive_spread')) is not None:
+                    our_spread_calc = _round_to_half(game_dict.get('naive_spread'))
+                    spread_source = 'naive'
+                else:
+                    spread_source = 'none'
+                if our_spread_calc is not None and abs(float(our_spread_calc)) < 0.25:
+                    our_spread_calc = None
+                    if spread_source in ('h2h', 'efficiency+h2h'):
+                        logger.warning(f"[our_spread] near-zero margin for {at} @ {ht}; falling back from {spread_source}")
+                if our_spread_calc is None and _to_float_safe(game_dict.get('naive_spread')) is not None:
+                    our_spread_calc = _round_to_half(game_dict.get('naive_spread'))
+                    spread_source = 'naive'
+                if our_spread_calc is not None and abs(float(our_spread_calc)) < 0.25:
+                    our_spread_calc = 0.0
+                logger.info(
+                    f"[eff-tier] {sport} {at} @ {ht}: spread_tier={spread_source} assigning game_dict['our_spread'] "
+                    f"for {at} @ {ht}: value={our_spread_calc}, source={spread_source}, "
+                    f"eff_none_home={eff_home is None}, eff_none_away={eff_away is None}, h2h_games={h2h_games}"
+                )
+                game_dict['our_spread'] = our_spread_calc
+                game_dict['our_spread_source'] = spread_source
+
+                # Total fallback chain:
+                # 1) efficiency total
+                # 2) H2H total
+                # 3) naive total
+                if eff_total is not None:
+                    game_dict['our_total'] = _round_to_half(eff_total)
+                    game_dict['our_total_source'] = 'efficiency'
+                elif h2h_total is not None and h2h_games >= 3:
+                    game_dict['our_total'] = _round_to_half(h2h_total)
+                    game_dict['our_total_source'] = 'h2h'
+                elif _to_float_safe(game_dict.get('naive_total')) is not None:
+                    game_dict['our_total'] = _round_to_half(game_dict.get('naive_total'))
+                    game_dict['our_total_source'] = 'naive'
+                else:
+                    game_dict['our_total'] = None
+                    game_dict['our_total_source'] = 'none'
+                if game_dict.get('our_total') is not None and sport in ('NBA', 'WNBA'):
+                    game_dict['our_total'] = _round_to_half(min(230.0, float(game_dict.get('our_total'))))
+                logger.info(
+                    f"[eff-tier] {sport} {at} @ {ht}: total_tier={game_dict.get('our_total_source')}, "
+                    f"value={game_dict.get('our_total')}, h2h_total={h2h_total}, naive_total={game_dict.get('naive_total')}"
+                )
+
+                # Keep XGB divergence guard via blend_spreads while using our spread as anchor.
+                blended_spread, clipped_xgb = blend_spreads(
+                    game_dict.get('xgb_spread'),
+                    game_dict.get('naive_spread'),
+                    our_spread=game_dict.get('our_spread'),
+                    max_divergence=8.0,
+                )
+                if clipped_xgb is not None:
+                    game_dict['xgb_spread'] = _round_to_half(clipped_xgb)
+                if blended_spread is not None:
+                    game_dict['naive_spread'] = _round_to_half(blended_spread)
 
             if game_dict.get('home_score') is None:
                 # ── MLB: pitching-enhanced prediction (upcoming games only
@@ -3991,8 +4691,8 @@ def get_upcoming_predictions(sport, days=365):
                             if _mlb_result and _mlb_result[0] is not None:
                                 game_dict['xgb_home_score'] = _mlb_result[0]
                                 game_dict['xgb_away_score'] = _mlb_result[1]
-                                game_dict['xgb_spread']     = _mlb_result[2]
-                                game_dict['xgb_total']      = _mlb_result[3]
+                                game_dict['xgb_spread']     = _round_to_half(_mlb_result[2])
+                                game_dict['xgb_total']      = _round_to_half(_mlb_result[3])
                                 _mlb_spread = float(_mlb_result[2])
                                 _ml_prob = 0.5 * (1.0 + _math.erf(_mlb_spread / (3.0 * _math.sqrt(2))))
                         # 2. Pitching adjustment (cached, single ESPN API call)
@@ -4166,7 +4866,7 @@ def get_upcoming_predictions(sport, days=365):
                         _adj_delta = _raw_delta * _market_scale
                         _blended = max(0.05, min(0.95, _blended + _adj_delta))
                         if game_dict.get('xgb_total') is not None:
-                            game_dict['xgb_total'] = round(float(game_dict['xgb_total']) + _total_adj * _inj_conf * _market_scale, 2)
+                            game_dict['xgb_total'] = _round_to_half(float(game_dict['xgb_total']) + _total_adj * _inj_conf * _market_scale)
 
                         # Rule #1 + #3 + #4 + #6 + #8 decision layer.
                         _implied = _home_mkt if _blended >= 0.5 else _away_mkt
@@ -4279,7 +4979,13 @@ def get_upcoming_predictions(sport, days=365):
                 game_dict['away_injuries'] = []
 
             predictions.append(game_dict)
-    
+
+    if _h2h_conn_for_eff is not None:
+        try:
+            _h2h_conn_for_eff.close()
+        except Exception:
+            pass
+
     if sport not in ('MLB', 'SOCCER'):
         try:
             _attach_engine_odds_to_predictions(sport, predictions, limit=40)
@@ -4347,6 +5053,52 @@ def get_upcoming_predictions(sport, days=365):
         _attach_h2h_projection_to_predictions(sport, predictions, n=10)
     except Exception as _h2he:
         logger.debug(f"[h2h] attach failed for {sport}: {_h2he}")
+
+    # Non-NBA/WNBA our_total housekeeping tiers:
+    # 1) H2H weighted total when >= 3 games
+    # 2) Naive average from available recent game totals
+    # 3) None when no history exists
+    if sport not in ('NBA', 'WNBA'):
+        for _pred in predictions:
+            if _pred.get('home_score') is not None:
+                continue
+            _ht = _pred.get('home_team_id')
+            _at = _pred.get('away_team_id')
+            _as_of = parse_date((_pred.get('game_date') or '')[:10]) or datetime.now()
+            _h2h_games = int(_pred.get('our_total_games') or 0)
+            if _h2h_games >= 3 and _pred.get('our_total') is not None:
+                _pred['our_total_source'] = 'h2h'
+                logger.info(
+                    f"[our-total-tier] {sport} {_at} @ {_ht}: tier=h2h "
+                    f"h2h_games={_h2h_games} value={_pred.get('our_total')}"
+                )
+                continue
+            _home_recent = _build_recent_team_games(_ht, _as_of, limit=8) if _ht else []
+            _away_recent = _build_recent_team_games(_at, _as_of, limit=8) if _at else []
+            _totals = []
+            for _r in (_home_recent + _away_recent):
+                _tv = _to_float_safe(_r.get('total') if isinstance(_r, dict) else None)
+                if _tv is not None:
+                    _totals.append(float(_tv))
+            if _totals:
+                _pred['our_total'] = _round_to_half(sum(_totals) / len(_totals))
+                _pred['our_total_source'] = 'naive'
+                logger.info(
+                    f"[our-total-tier] {sport} {_at} @ {_ht}: tier=naive "
+                    f"h2h_games={_h2h_games} samples={len(_totals)} value={_pred.get('our_total')}"
+                )
+            else:
+                _pred['our_total'] = None
+                _pred['our_total_source'] = 'none'
+                logger.info(
+                    f"[our-total-tier] {sport} {_at} @ {_ht}: tier=none "
+                    f"h2h_games={_h2h_games} samples=0 value=None"
+                )
+
+    for _pred in predictions:
+        for _k in ('market_spread', 'market_total', 'xgb_spread', 'xgb_total', 'naive_spread', 'naive_total', 'our_spread', 'our_total'):
+            if _pred.get(_k) is not None:
+                _pred[_k] = _round_to_half(_pred.get(_k))
 
     _PREDICTIONS_CACHE[cache_key] = {'ts': _time.time(), 'data': _copy.deepcopy(predictions)}
     return predictions
@@ -4899,9 +5651,94 @@ def calculate_model_performance(sport):
 _OU_BENCH = {'NBA': 226.0, 'NHL': 6.1, 'NCAAB': 145.0, 'NCAAW': 140.0, 'NCAAF': 56.0, 'MLB': 9.0, 'NFL': 47.0, 'WNBA': 158.0}
 
 
+def _actual_ou_side(total_points, line):
+    """OVER / UNDER / PUSH for combined score vs a total line; None if no line."""
+    if line is None:
+        return None
+    try:
+        t = float(total_points)
+        L = float(line)
+    except (TypeError, ValueError):
+        return None
+    if abs(t - L) < 1e-9:
+        return 'PUSH'
+    return 'OVER' if t > L else 'UNDER'
+
+
+def _actual_ats_side(margin_home, home_line):
+    """Who covered the listed home spread: HOME, AWAY, or PUSH."""
+    if home_line is None:
+        return None
+    try:
+        v = float(margin_home) + float(home_line)
+    except (TypeError, ValueError):
+        return None
+    if abs(v) < 1e-9:
+        return 'PUSH'
+    return 'HOME' if v > 0 else 'AWAY'
+
+
+def _format_ou_vs_actual(actual_total, line):
+    side = _actual_ou_side(actual_total, line)
+    if side is None:
+        return None
+    return f"{side} — actual {actual_total:.1f} vs line {line:.1f}"
+
+
+def _format_ou_vs_xsharp_actual(actual_total, xsharp_adj, xsharp_raw):
+    """Compare final combined score to XSharp projection (prefers injury/rest/park-adjusted total)."""
+    ref = xsharp_adj if xsharp_adj is not None else xsharp_raw
+    if ref is None:
+        return None
+    side = _actual_ou_side(actual_total, ref)
+    if side is None:
+        return None
+    ref = float(ref)
+    if xsharp_adj is not None and xsharp_raw is not None and abs(float(xsharp_adj) - float(xsharp_raw)) > 0.05:
+        return f"{side} — actual {actual_total:.1f} vs XSharp {ref:.1f} (adj)"
+    return f"{side} — actual {actual_total:.1f} vs XSharp {ref:.1f}"
+
+
+def _format_ats_vs_actual(home_name, away_name, margin_home, home_line):
+    side = _actual_ats_side(margin_home, home_line)
+    if side is None:
+        return None
+    if side == 'PUSH':
+        return f"PUSH — margin {margin_home:+.1f} vs home line {home_line:+.1f}"
+    team = home_name if side == 'HOME' else away_name
+    return f"{team} covers — margin {margin_home:+.1f} vs home line {home_line:+.1f}"
+
+
+def _format_xsharp_margin_vs_actual(margin_home, xsharp_margin):
+    """Actual home margin vs raw XSharp predicted margin (home − away)."""
+    if xsharp_margin is None:
+        return None
+    try:
+        xm = float(xsharp_margin)
+        am = float(margin_home)
+    except (TypeError, ValueError):
+        return None
+    eps = 1e-9
+    pred_home = xm > eps
+    pred_away = xm < -eps
+    act_home = am > eps
+    act_away = am < -eps
+    if not pred_home and not pred_away:
+        return f"Actual {am:+.1f} vs XSharp {xm:+.1f} (model pick'em)"
+    if not act_home and not act_away:
+        return f"Actual push {am:+.1f} vs XSharp {xm:+.1f}"
+    pred_w = 'HOME' if pred_home else 'AWAY'
+    act_w = 'HOME' if act_home else 'AWAY'
+    ok = pred_w == act_w
+    return (
+        f"{'Match' if ok else 'Miss'} — actual margin {am:+.1f} vs XSharp {xm:+.1f} "
+        f"(model {pred_w}, actual {act_w})"
+    )
+
+
 def _compute_spread_total_for_daily(sport, daily_results):
     """Compute XSharp spread/total grading for games already in daily_results (in-place).
-    Returns aggregate stats dict or None if the XGB model is unavailable."""
+    Runs line lookup and final-score vs line summaries even when the spread/total model is absent."""
     try:
         # H2H last-10 "Our Total" (used as the O/U line the model is compared to)
         try:
@@ -4909,12 +5746,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
         except Exception as _h2he:
             logger.debug(f"[h2h] daily attach failed for {sport}: {_h2he}")
         _xgb = _get_xgb_spread_model(sport)
-        _sp = None
-        if not _xgb:
-            if sport in ['NBA', 'MLB']:
-                _sp = _score_predictor_instance(sport)
-            if not _sp:
-                return None
+        _sp = _score_predictor_instance(sport) if (not _xgb and sport in ('NBA', 'MLB')) else None
 
         conn = get_db_connection()
         _line_by_key = {}
@@ -4994,6 +5826,27 @@ def _compute_spread_total_for_daily(sport, daily_results):
                 g['xgb_total'] = xt
                 g['xgb_spread'] = xs
                 g['spread_ats_actual_push'] = False
+                g['our_ou_record_vs_xsharp'] = None
+                if xt is not None and g.get('our_total') is not None:
+                    try:
+                        totals_hist = list(g.get('totals') or [])
+                    except Exception:
+                        totals_hist = []
+                    if totals_hist:
+                        over_n = 0
+                        under_n = 0
+                        for tval in totals_hist:
+                            try:
+                                tv = float(tval)
+                            except Exception:
+                                continue
+                            if tv > float(xt):
+                                over_n += 1
+                            elif tv < float(xt):
+                                under_n += 1
+                        if over_n or under_n:
+                            side = "Over" if over_n >= under_n else "Under"
+                            g['our_ou_record_vs_xsharp'] = f"Combined record: {over_n}-{under_n} {side}"
 
                 hk = _normalize_team_key_for_sport(sport, h)
                 ak = _normalize_team_key_for_sport(sport, a)
@@ -5103,13 +5956,13 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         'rest': round(rest_adj, 2),
                         'park': round(park_adj, 2),
                     }
-                    # Grading line: Vegas → H2H → sport benchmark.
+                    # Grading line: Vegas → our market projection → sport benchmark.
                     # Fallback totals are shown but not graded for ROI/record cards.
                     total_fallback_used = False
                     if mt is None:
                         if our_total_h2h is not None:
                             mt = round(float(our_total_h2h), 1)
-                            g['market_total_reason'] = "H2H last-10 (fallback)"
+                            g['market_total_reason'] = "our market proj (3+3 games)"
                             total_fallback_used = True
                         elif _OU_BENCH.get(sport):
                             mt = float(_OU_BENCH[sport])
@@ -5145,6 +5998,8 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         if strong and abs(edge) >= _ou_edge_threshold(sport):
                             label += " ★"
                         g['total_pick_label'] = label
+                    # Listed home spread from book (MLB sets market_spread=None for display; keep line for ATS vs final margin).
+                    g['spread_line_home_for_result'] = ms
 
                 else:
                     # ── Non-MLB grading: Spread uses Vegas (unchanged).
@@ -5162,13 +6017,13 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         'rest': round(rest_adj, 2),
                         'park': round(park_adj, 2),
                     }
-                    # Grading line fallback for O/U: Vegas → H2H → sport benchmark.
+                    # Grading line fallback for O/U: Vegas → our market projection → sport benchmark.
                     # Fallback totals are shown but not graded for ROI/record cards.
                     total_fallback_used = False
                     if mt is None:
                         if our_total_h2h is not None:
                             mt = round(float(our_total_h2h), 1)
-                            g['market_total_reason'] = "H2H last-10 (fallback)"
+                            g['market_total_reason'] = "our market proj (3+3 games)"
                             total_fallback_used = True
                         elif _OU_BENCH.get(sport):
                             mt = float(_OU_BENCH[sport])
@@ -5191,6 +6046,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         ms = 0.0
                         g['market_spread_reason'] = "pick-em (fallback)"
                     g['market_spread'] = ms
+                    g['spread_line_home_for_result'] = ms
                     # `ms` = home team's listed ATS line (negative if home is favorite).
                     # Home covers iff (hs - as_) + ms > 0; compare model margin xs the same way.
                     if xs is not None and ms is not None:
@@ -5265,6 +6121,24 @@ def _compute_spread_total_for_daily(sport, daily_results):
                 g['spread_correct'] = sp_ok
                 g['total_pick'] = tp_disp
                 g['total_correct'] = tp_ok
+
+                try:
+                    _hs, _asv = g.get('home_score'), g.get('away_score')
+                    if _hs is not None and _asv is not None:
+                        _at = float(_hs) + float(_asv)
+                        _am = float(_hs) - float(_asv)
+                        _mt = g.get('market_total')
+                        _adj = g.get('xgb_total_adj')
+                        _xtr = g.get('xgb_total')
+                        _ms_r = g.get('spread_line_home_for_result')
+                        if _ms_r is None:
+                            _ms_r = g.get('market_spread')
+                        g['result_ou_vs_market_line'] = _format_ou_vs_actual(_at, _mt)
+                        g['result_ou_vs_xsharp'] = _format_ou_vs_xsharp_actual(_at, _adj, _xtr)
+                        g['result_ats_vs_market_line'] = _format_ats_vs_actual(h, a, _am, _ms_r)
+                        g['result_margin_vs_xsharp'] = _format_xsharp_margin_vs_actual(_am, g.get('xgb_spread'))
+                except Exception:
+                    pass
 
         return {
             'spread_covered': st_cov,
@@ -6366,11 +7240,11 @@ DAILY_REPORT_TEMPLATE = BASE_TEMPLATE.replace(
         {% endif %}
     </div>
     <div class="rpt-actions" style="flex-direction:column;align-items:center;">
-        <div class="rpt-save-help">Use <strong>Download</strong> to save the image for TikTok (no URL in frame). <strong>Open fullscreen</strong> shows only the graphic—still hide the browser bar when screen-recording or use Download → Photos.</div>
+        <div class="rpt-save-help">Use <strong>Download</strong> to save the generated report image. <strong>Open fullscreen</strong> opens the standalone image viewer page.</div>
         <div class="rpt-share-row">
             {% for st in sport_tallies %}
             <span class="rpt-btn-group">
-                <a class="rpt-btn rpt-btn-copy" href="{{ st.share_image_src }}" download="daily-results.jpg">Download {{ st.info.name }}</a>
+                <a class="rpt-btn rpt-btn-copy" href="{{ st.share_image_src }}" download="daily-results-{{ st.sport|lower }}.jpg">Download {{ st.info.name }}</a>
                 <a class="rpt-btn rpt-btn-copy" href="{{ st.share_image_view_url }}" target="_blank" rel="noopener">Fullscreen {{ st.info.name }}</a>
             </span>
             {% endfor %}
@@ -7330,6 +8204,15 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         <div class="sf-item">
                             <span class="sf-label">Our Spread</span>
                             <span class="sf-val">
+                                {% if game.get('our_spread') is not none %}{{ "%+.1f"|format(game.get('our_spread')) }}
+                                {% elif game.get('spread_margin_home') is not none %}{{ "%+.1f"|format(game.get('spread_margin_home')) }}
+                                {% elif game.get('xgb_spread') is not none %}{{ "%+.1f"|format(game.get('xgb_spread')) }}
+                                {% else %}—{% endif %}
+                            </span>
+                        </div>
+                        <div class="sf-item">
+                            <span class="sf-label">Market Spread</span>
+                            <span class="sf-val">
                                 {% if game.market_spread_label is defined and game.market_spread_label %}{{ game.market_spread_label }}
                                 {% elif game.market_spread is not none %}{{ "%+.1f"|format(game.market_spread) }}
                                 {% elif game.market_spread_reason is defined and game.market_spread_reason %}{{ game.market_spread_reason }}
@@ -7339,6 +8222,14 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         <div class="sf-item">
                             <span class="sf-label">Actual Spread</span>
                             <span class="sf-val">{{ "%+.1f"|format(actual_spread) }}</span>
+                        </div>
+                        <div class="sf-item">
+                            <span class="sf-label">Market ATS vs final</span>
+                            <span class="sf-val">{% if game.result_ats_vs_market_line is defined and game.result_ats_vs_market_line %}{{ game.result_ats_vs_market_line }}{% else %}—{% endif %}</span>
+                        </div>
+                        <div class="sf-item">
+                            <span class="sf-label">XSharp margin vs final</span>
+                            <span class="sf-val">{% if game.result_margin_vs_xsharp is defined and game.result_margin_vs_xsharp %}{{ game.result_margin_vs_xsharp }}{% else %}—{% endif %}</span>
                         </div>
                     </div>
                     <div class="result-footer section-total">
@@ -7356,8 +8247,13 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                             <span class="sf-val sf-xgb">{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% if game.xgb_total_adj is defined and game.xgb_total_adj is not none and (game.xgb_total_adj - game.xgb_total)|abs > 0.05 %} <span style="color:#a78bfa;font-size:0.78em;">→ {{ "%.1f"|format(game.xgb_total_adj) }}</span>{% endif %}{% else %}—{% endif %}</span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label">H2H Last 10</span>
-                            <span class="sf-val">{% if game.our_total is defined and game.our_total is not none %}{{ "%.1f"|format(game.our_total) }}{% else %}—{% endif %}</span>
+                            <span class="sf-label">Our Market Total (3+3)</span>
+                            <span class="sf-val">
+                                {% if game.our_total is defined and game.our_total is not none %}{{ "%.1f"|format(game.our_total) }}{% else %}—{% endif %}
+                                {% if game.our_ou_record_vs_xsharp is defined and game.our_ou_record_vs_xsharp %}
+                                <span style="display:block;font-size:0.72em;color:#64748b;font-weight:700;">{{ game.our_ou_record_vs_xsharp }} vs XSharp</span>
+                                {% endif %}
+                            </span>
                         </div>
                         <div class="sf-item">
                             <span class="sf-label">Vegas Line</span>
@@ -7370,6 +8266,14 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         <div class="sf-item">
                             <span class="sf-label">Actual Total</span>
                             <span class="sf-val">{{ "%.1f"|format(actual_total) }}</span>
+                        </div>
+                        <div class="sf-item">
+                            <span class="sf-label">Market O/U vs final</span>
+                            <span class="sf-val">{% if game.result_ou_vs_market_line is defined and game.result_ou_vs_market_line %}{{ game.result_ou_vs_market_line }}{% else %}—{% endif %}</span>
+                        </div>
+                        <div class="sf-item">
+                            <span class="sf-label">XSharp O/U vs final</span>
+                            <span class="sf-val">{% if game.result_ou_vs_xsharp is defined and game.result_ou_vs_xsharp %}{{ game.result_ou_vs_xsharp }}{% else %}—{% endif %}</span>
                         </div>
                     </div>
                 </div>
@@ -8188,6 +9092,7 @@ def landing_page():
                 'away': _away,
                 'home': _home,
                 'pick': _pick,
+                'pick_side': ('home' if _home_picked else 'away'),
                 'prob': round(_pick_prob * 100, 1),
                 'sport': _tp['sport'],
                 'slug': SPORT_SEO_SLUGS.get(_tp['sport'], ''),
@@ -8205,7 +9110,7 @@ def landing_page():
             _seen_game_ids.add(_gid)
             todays_picks.append({
                 'away': _row['away'], 'home': _row['home'],
-                'pick': _row['pick'], 'prob': _row['prob'],
+                'pick': _row['pick'], 'pick_side': _row.get('pick_side'), 'prob': _row['prob'],
                 'sport': _row['sport'], 'slug': _row['slug'],
             })
             if len(todays_picks) >= 4:
@@ -8222,13 +9127,38 @@ def landing_page():
                 _picked_keys.add(_key)
                 todays_picks.append({
                     'away': _row['away'], 'home': _row['home'],
-                    'pick': _row['pick'], 'prob': _row['prob'],
+                    'pick': _row['pick'], 'pick_side': _row.get('pick_side'), 'prob': _row['prob'],
                     'sport': _row['sport'], 'slug': _row['slug'],
                 })
                 if len(todays_picks) >= 4:
                     break
     except Exception as _tp_err:
         logger.debug(f"Today's Top Picks DB query failed: {_tp_err}")
+
+    todays_share_image_src = None
+    todays_share_image_view_url = None
+    if todays_picks:
+        try:
+            _cards = []
+            for _p in todays_picks[:3]:
+                _cards.append({
+                    'away_team': _p.get('away'),
+                    'home_team': _p.get('home'),
+                    'pick_side': _p.get('pick_side') or ('home' if _p.get('pick') == _p.get('home') else 'away'),
+                    'pick_team': _p.get('pick'),
+                    'confidence': _p.get('prob'),
+                })
+            _landing_payload = {
+                'type': 'predictions',
+                'sport': 'Top Value Picks',
+                'date': _tp_today,
+                'cards': _cards,
+            }
+            _landing_token = _register_share_image(_landing_payload)
+            todays_share_image_src = url_for('share_predictions_image', token=_landing_token, fmt='jpg')
+            todays_share_image_view_url = url_for('share_predictions_view', token=_landing_token)
+        except Exception as _lp_err:
+            logger.debug(f"Landing top-picks share image build failed: {_lp_err}")
 
     return render_template_string("""
 <!DOCTYPE html>
@@ -8254,6 +9184,8 @@ def landing_page():
     <link rel="icon" href="/static/UnderdogsLogo.png" type="image/png" sizes="any">
     <link rel="apple-touch-icon" href="/static/UnderdogsLogo.png">
     <link rel="canonical" href="https://www.underdogs.bet{{ request.path }}">
+    <link rel="stylesheet" href="/static/css/site-search.css">
+    <link rel="stylesheet" href="/static/css/share-image.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
@@ -8942,8 +9874,8 @@ def landing_page():
             <a href="/plans">Pricing</a>
         </div>
         <div class="nav-search-wrap">
-            <form class="nav-search" id="navSearchForm" action="/search" method="get" role="search">
-                <input type="text" id="navSearchInput" name="query" placeholder="Search teams, leagues, or matchups..." aria-label="Search predictions and performance">
+            <form class="nav-search" id="navSearchForm" action="/search" method="get" role="search" data-site-search-form data-autocomplete-id="searchAutocomplete" data-results-id="searchResults" data-full-search="1">
+                <input type="text" id="navSearchInput" name="query" placeholder="Search teams, players, or matchups..." aria-label="Search teams and players" autocomplete="off">
                 <button type="submit">Search</button>
             </form>
             <div id="searchAutocomplete" class="search-autocomplete" aria-live="polite"></div>
@@ -9014,6 +9946,17 @@ def landing_page():
     </div>
     <h2 class="section-title" style="margin-bottom:6px;">Top Value Picks Today</h2>
     <p class="section-sub" style="color:#334155;">Ranked by edge quality, model agreement, and confidence</p>
+    {% if todays_share_image_src %}
+    <div class="ud-share-image-stack" style="max-width:920px;margin-left:auto;margin-right:auto;">
+        <div class="ud-share-image-actions" style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px 0 14px;">
+            <a href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;justify-content:center;background:#0f172a;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Open in browser</a>
+            <a href="{{ todays_share_image_src }}" download="top-value-picks.jpg" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Save image</a>
+        </div>
+        <a class="ud-share-frame" href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener">
+            <img src="{{ todays_share_image_src }}" alt="Top value picks preview image">
+        </a>
+    </div>
+    {% endif %}
     <div style="display:flex;flex-direction:column;gap:14px;max-width:600px;margin:0 auto;">
         {% for tp in todays_picks %}
         {% set _disp_pct = tp.prob if tp.prob >= 50 else (100 - tp.prob)|round(1) %}
@@ -9050,21 +9993,24 @@ def landing_page():
     </div>
 </div>
 
-<!-- Model Performance -->
+<!-- Model Performance (premium — centered CTA; explicit route avoids broken relative links) -->
 <div class="section" style="padding-top:10px;padding-bottom:10px;">
-    <div style="max-width:860px;margin:0 auto;background:#ffffff;border:1px solid rgba(15,23,42,0.16);border-radius:14px;padding:18px 20px;">
-        <h2 style="font-size:1.2rem;font-weight:900;color:#0f172a;margin:0 0 8px;">Model Performance</h2>
-        <p style="color:#334155;font-size:0.9em;line-height:1.7;margin:0 0 12px;">See completed-game performance by model and confidence bucket, with sample sizes and color-coded hit rates.</p>
+    <div style="max-width:860px;margin:0 auto;text-align:center;background:#ffffff;border:1px solid rgba(15,23,42,0.16);border-radius:14px;padding:22px 24px 26px;position:relative;z-index:2;">
+        <h2 style="font-size:1.28rem;font-weight:900;color:#0f172a;margin:0 0 10px;text-align:center;">Model Performance</h2>
+        <p style="color:#334155;font-size:0.92em;line-height:1.75;margin:0 auto 16px;max-width:620px;text-align:center;">See completed-game performance by model and confidence bucket, with sample sizes and color-coded hit rates.</p>
         {% if weekly_banner_messages %}
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 auto 16px;justify-content:center;max-width:100%;">
             {% for item in weekly_banner_messages[:3] %}
-            <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid rgba(15,23,42,0.14);background:#f8fafc;color:#0f172a;font-size:0.78em;font-weight:700;">
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid rgba(15,23,42,0.14);background:#f8fafc;color:#0f172a;font-size:0.78em;font-weight:700;">
                 <span style="color:#00529B;">Live</span> {{ item.label }} {{ item.pct }} ({{ item.record }})
             </span>
             {% endfor %}
         </div>
         {% endif %}
-        <a href="/performance" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-size:0.88em;font-weight:800;">Open Model Performance</a>
+        <div style="display:flex;justify-content:center;margin-top:4px;">
+            <a href="{{ url_for('performance_page') }}" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-size:0.92em;font-weight:800;position:relative;z-index:3;box-shadow:0 4px 14px rgba(0,82,155,0.22);">Open Model Performance</a>
+        </div>
+        <p style="margin:14px 0 0;font-size:0.78em;color:#64748b;text-align:center;">Premium feature — sign in to view the full calculator.</p>
     </div>
 </div>
 
@@ -9379,6 +10325,7 @@ def landing_page():
     </div>
 </div>
 
+<script src="/static/js/site-search.js" defer></script>
 <script>
     function toggleMenu() {
         const navLinks = document.getElementById('navLinks');
@@ -9391,83 +10338,16 @@ def landing_page():
     document.addEventListener('DOMContentLoaded', function() {
         const navLinks = document.getElementById('navLinks');
         const premiumBar = document.getElementById('joinPremiumBar');
-        const searchForm = document.getElementById('navSearchForm');
-        const searchInput = document.getElementById('navSearchInput');
-        const autocompleteEl = document.getElementById('searchAutocomplete');
-        const resultsEl = document.getElementById('searchResults');
         if (premiumBar) {
             const showBar = function(){ premiumBar.style.display = 'block'; };
             if ('requestIdleCallback' in window) requestIdleCallback(showBar, { timeout: 1800 });
             else setTimeout(showBar, 1200);
         }
-        const teams = [
-            { name: "Detroit Pistons", sport: "NBA", slug: "detroit-pistons" },
-            { name: "Detroit Red Wings", sport: "NHL", slug: "detroit-red-wings" },
-            { name: "Detroit Tigers", sport: "MLB", slug: "detroit-tigers" },
-            { name: "Boston Celtics", sport: "NBA", slug: "boston-celtics" },
-        ];
         if (navLinks) {
             navLinks.querySelectorAll('a').forEach(link => {
                 link.addEventListener('click', function() {
                     navLinks.classList.remove('active');
                 });
-            });
-        }
-        if (searchForm && resultsEl) {
-            let debounceTimer = null;
-            if (searchInput && autocompleteEl) {
-                searchInput.addEventListener('input', function() {
-                    const q = (searchInput.value || '').trim().toLowerCase();
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(() => {
-                        if (!q) {
-                            autocompleteEl.classList.remove('show');
-                            autocompleteEl.innerHTML = '';
-                            return;
-                        }
-                        const matches = teams.filter(t => t.name.toLowerCase().includes(q)).slice(0, 5);
-                        autocompleteEl.innerHTML = matches.map(t => `<div class="search-item" data-slug="${t.slug}"><span>${t.name}</span><small>${t.sport}</small></div>`).join('') || '<div class="search-item"><span>No team matches</span></div>';
-                        autocompleteEl.classList.add('show');
-                    }, 300);
-                });
-                autocompleteEl.addEventListener('click', function(e) {
-                    const item = e.target.closest('[data-slug]');
-                    if (!item) return;
-                    window.location.href = `/teams/${item.getAttribute('data-slug')}`;
-                });
-            }
-            searchForm.addEventListener('submit', async function(event) {
-                event.preventDefault();
-                const input = searchForm.querySelector('input[name="query"]');
-                const query = (input && input.value !== undefined && input.value !== null ? String(input.value) : '').trim();
-                if (!query) {
-                    resultsEl.classList.remove('show');
-                    resultsEl.innerHTML = '';
-                    return;
-                }
-                resultsEl.classList.add('show');
-                resultsEl.innerHTML = '<p>Searching...</p>';
-                try {
-                    const resp = await fetch(`/api/search?query=${encodeURIComponent(query)}`, { headers: { 'Accept': 'application/json' } });
-                    const data = await resp.json();
-                    const modelLine = data.matched_model ? `<p><strong>Model:</strong> ${data.matched_model.public_name} -> ${data.matched_model.internal_name}${data.confidence_threshold ? ` (confidence >= ${data.confidence_threshold}%)` : ''}</p>` : '';
-                    const modelItems = (data.model_results || []).map(r => `<li>${r.sport}: ${r.record} (${r.accuracy}%)${r.filtered_games !== null && r.filtered_games !== undefined ? ` - ${r.filtered_games} games at threshold` : ''}</li>`).join('');
-                    const localTeamItems = (data.team_results || []).map(r => `<li>${r.sport}: ${r.away_team} vs ${r.home_team} (${r.game_date}) - pick: ${r.predicted_winner} (${r.win_probability}%)</li>`).join('');
-                    const espnItems = (data.espn_results || []).map(r => `<li>${r.sport}: ${r.away_team} at ${r.home_team} (${r.status})</li>`).join('');
-                    const routeLine = data.suggested_route ? `<p><strong>Suggested page:</strong> <a href="${data.suggested_route}">${data.suggested_route}</a></p>` : '';
-                    const empty = (!modelItems && !localTeamItems && !espnItems) ? '<p>No matches found yet. Try a team name, league, or model alias.</p>' : '';
-                    resultsEl.innerHTML = `
-                        <h3>Search Results</h3>
-                        ${modelLine}
-                        ${routeLine}
-                        ${modelItems ? `<p><strong>Model Performance</strong></p><ul>${modelItems}</ul>` : ''}
-                        ${localTeamItems ? `<p style="margin-top:10px;"><strong>Our Prediction Matches</strong></p><ul>${localTeamItems}</ul>` : ''}
-                        ${espnItems ? `<p style="margin-top:10px;"><strong>Latest ESPN Matchups</strong></p><ul>${espnItems}</ul>` : ''}
-                        ${empty}
-                    `;
-                } catch (_err) {
-                    resultsEl.innerHTML = '<p>Search temporarily unavailable. Please try again.</p>';
-                }
             });
         }
     });
@@ -9501,6 +10381,8 @@ def landing_page():
          units_banner_items=units_banner_items,
          seo_archive_links=seo_archive_links,
          todays_picks=todays_picks,
+         todays_share_image_src=todays_share_image_src,
+         todays_share_image_view_url=todays_share_image_view_url,
          landing_share_url=_landing_share_url,
          landing_share_title=_landing_share_title,
          landing_share_body=_landing_share_body,
@@ -9552,6 +10434,170 @@ _TEAM_DIRECTORY = {
     'detroit-tigers': {'sport': 'MLB', 'name': 'Detroit Tigers'},
     'boston-celtics': {'sport': 'NBA', 'name': 'Boston Celtics'},
 }
+
+# SEO routes for integrated props SPA — league code -> path (matches standalone LEAGUES).
+_PROPS_SEO_PATH_BY_LEAGUE = {
+    'NBA': '/nba-props',
+    'NHL': '/nhl-props',
+    'MLB': '/mlb-props',
+    'NFL': '/nfl-props',
+    'SOCCER': '/soccer-props',
+    'NCAAB': '/ncaab-props',
+    'WNBA': '/wnba-props',
+    'NCAAF': '/ncaaf-props',
+    'NCAAW': '/ncaaw-props',
+}
+_PROPS_PATH_TO_LEAGUE = {path: lg for lg, path in _PROPS_SEO_PATH_BY_LEAGUE.items()}
+_TEAM_SEARCH_CACHE = {'ts': 0.0, 'rows': []}
+_PLAYER_SEARCH_CACHE = {'ts': 0.0, 'items': []}
+_TEAM_SEARCH_TTL = 120.0
+_PLAYER_SEARCH_TTL = 600.0
+
+
+def _slug_from_display_team(name: str) -> str:
+    if not name:
+        return ''
+    s = re.sub(r'[^a-z0-9]+', '-', name.strip().lower())
+    s = re.sub(r'-+', '-', s).strip('-')
+    return s
+
+
+def _distinct_teams_search_rows():
+    global _TEAM_SEARCH_CACHE
+    now = _time.time()
+    cached = _TEAM_SEARCH_CACHE.get('rows') or []
+    if cached and (now - float(_TEAM_SEARCH_CACHE.get('ts') or 0)) < _TEAM_SEARCH_TTL:
+        return cached
+    rows = []
+    try:
+        conn = get_db_connection()
+        cur = conn.execute(
+            """
+            SELECT DISTINCT sport, t FROM (
+              SELECT sport, home_team_id AS t FROM predictions
+              WHERE COALESCE(TRIM(home_team_id), '') != ''
+              UNION
+              SELECT sport, away_team_id AS t FROM predictions
+              WHERE COALESCE(TRIM(away_team_id), '') != ''
+            )
+            """
+        )
+        for r in cur.fetchall():
+            sport = (r['sport'] or '').upper()
+            t = (r['t'] or '').strip()
+            if not t:
+                continue
+            slug = _slug_from_display_team(t)
+            if slug:
+                rows.append({'sport': sport, 'name': t, 'slug': slug})
+        conn.close()
+    except Exception:
+        rows = []
+    for slug, meta in _TEAM_DIRECTORY.items():
+        rows.append({
+            'sport': (meta.get('sport') or '').upper(),
+            'name': (meta.get('name') or '').strip() or slug.replace('-', ' ').title(),
+            'slug': slug,
+        })
+    seen = set()
+    out = []
+    for row in rows:
+        key = (row['sport'], row['slug'])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    _TEAM_SEARCH_CACHE = {'ts': now, 'rows': out}
+    return out
+
+
+def _distinct_props_players():
+    global _PLAYER_SEARCH_CACHE
+    now = _time.time()
+    cached = _PLAYER_SEARCH_CACHE.get('items')
+    if cached is not None and (now - float(_PLAYER_SEARCH_CACHE.get('ts') or 0)) < _PLAYER_SEARCH_TTL:
+        return cached
+    items = []
+    try:
+        eng_mod, cfg_mod = _load_props_modules()
+        leagues = list(getattr(cfg_mod, 'SUPPORTED_LEAGUES', []) or [])
+        for lg in leagues:
+            lg_u = (lg or '').strip().upper()
+            try:
+                data = eng_mod.get_league_data(lg_u)
+            except Exception:
+                continue
+            base = _PROPS_SEO_PATH_BY_LEAGUE.get(lg_u, '/player-props')
+            for p in (data.get('players') or []):
+                nm = (p.get('name') or '').strip()
+                if not nm:
+                    continue
+                items.append({
+                    'league': lg_u,
+                    'name': nm,
+                    'url': f'{base}?player={quote(nm)}',
+                })
+    except Exception:
+        pass
+    _PLAYER_SEARCH_CACHE = {'ts': now, 'items': items}
+    return items
+
+
+def _search_rank_substring(ql: str, name: str) -> int:
+    if not ql or not name:
+        return 0
+    nl = name.lower()
+    if ql not in nl:
+        return 0
+    if nl.startswith(ql):
+        return 100
+    for part in re.split(r'[\s\-]+', nl):
+        if part.startswith(ql):
+            return 85
+    return 70
+
+
+def _build_search_suggestions(raw_query: str, limit: int = 14):
+    q = (raw_query or '').strip()
+    if len(q) < 2:
+        return []
+    ql = q.lower()
+    scored = []
+    for row in _distinct_teams_search_rows():
+        name = row['name']
+        sport = row['sport']
+        slug = row['slug']
+        rank = _search_rank_substring(ql, name)
+        if rank <= 0:
+            continue
+        url = f'/teams/{slug}'
+        scored.append({'kind': 'team', 'title': name, 'subtitle': sport, 'url': url, '_rank': rank})
+    for pl in _distinct_props_players():
+        name = pl['name']
+        rank = _search_rank_substring(ql, name)
+        if rank <= 0:
+            continue
+        scored.append({
+            'kind': 'player',
+            'title': name,
+            'subtitle': f"{pl['league']} · Player props",
+            'url': pl['url'],
+            '_rank': rank,
+        })
+    scored.sort(key=lambda x: (-x['_rank'], (x['title'] or '').lower()))
+    out = []
+    seen = set()
+    for item in scored:
+        key = (item['kind'], (item['title'] or '').lower(), item['url'])
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {k: v for k, v in item.items() if k != '_rank'}
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
 
 def _parse_search_model(query_text: str):
     q = query_text.lower()
@@ -9706,6 +10752,19 @@ def _build_search_payload(raw_query: str):
 @app.route('/api/search')
 def api_search():
     return jsonify(_build_search_payload(request.args.get('query', '')))
+
+
+@app.route('/api/search/suggest')
+def api_search_suggest():
+    """Autocomplete: teams from predictions DB + players from props engine (cached)."""
+    raw = (request.args.get('q') or request.args.get('query') or '').strip()
+    try:
+        lim = int((request.args.get('limit') or '14').strip() or '14')
+    except ValueError:
+        lim = 14
+    lim = max(1, min(lim, 30))
+    return jsonify({'query': raw, 'items': _build_search_suggestions(raw, limit=lim)})
+
 
 @app.route('/api/performance-data')
 def api_performance_data():
@@ -10263,6 +11322,121 @@ def _performance_upcoming_matchup_note(sport_filter: str, team1_key: str, team2_
         return None
 
 
+def _performance_head_to_head_stats(sport_filter: str, team1_key: str, team2_key: str):
+    """Model pick profile for head-to-head matchups over last 5/15/20 games."""
+    s1, t1 = _perf_parse_team_key(team1_key)
+    s2, t2 = _perf_parse_team_key(team2_key)
+    if not (s1 and s2 and t1 and t2):
+        return []
+    if s1 != s2:
+        return []
+    if sport_filter and s1 != sport_filter:
+        return []
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT UPPER(g.sport) AS sport, g.game_id, date(g.game_date) AS game_date,
+                   g.home_team_id, g.away_team_id, g.home_score, g.away_score
+            FROM games g
+            WHERE UPPER(g.sport) = ?
+              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+              AND ((g.home_team_id = ? AND g.away_team_id = ?) OR (g.home_team_id = ? AND g.away_team_id = ?))
+            ORDER BY date(g.game_date) DESC, g.game_id DESC
+            LIMIT 20
+            """,
+            (s1, t1, t2, t2, t1),
+        ).fetchall()
+        if not rows:
+            return []
+
+        def _flt(v):
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+
+        model_game_rows = []
+        for g in rows:
+            hs = _flt(g['home_score'])
+            aw = _flt(g['away_score'])
+            if hs is None or aw is None or hs == aw:
+                continue
+            home = g['home_team_id']
+            away = g['away_team_id']
+            home_won = hs > aw
+            pred = _perf_fetch_prediction_row(conn, s1, g['game_id'], g['game_date'], home, away)
+            elo_prob = _flt(pred['elo_home_prob']) if pred else None
+            logi_prob = _flt(pred['logistic_home_prob']) if pred else None
+            xgb_prob = _flt(pred['xgboost_home_prob']) if pred else None
+            cat_prob = _flt(pred['catboost_home_prob']) if pred else None
+            meta_prob = _flt(pred['meta_home_prob']) if pred else None
+            v2 = None
+            if _PERF_ENABLE_V2_FALLBACK:
+                try:
+                    v2 = get_v2_prediction(s1, home, away, g['game_date'])
+                except Exception:
+                    v2 = None
+            glicko2_prob = _flt(v2.get('glicko2_prob')) if v2 else None
+            trueskill_prob = _flt(v2.get('trueskill_prob')) if v2 else None
+            if xgb_prob is None and v2:
+                xgb_prob = _flt(v2.get('xgboost_prob'))
+            if elo_prob is None:
+                elo_prob = cat_prob or glicko2_prob or xgb_prob
+            if cat_prob is None:
+                cat_prob = glicko2_prob or elo_prob
+            if logi_prob is None:
+                logi_prob = trueskill_prob
+            if meta_prob is None:
+                meta_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=elo_prob or 0.5)
+            model_prob = {
+                'Grinder2': glicko2_prob if glicko2_prob is not None else cat_prob,
+                'Takedown': trueskill_prob if trueskill_prob is not None else logi_prob,
+                'Edge': elo_prob,
+                'XSharp': xgb_prob,
+                'Sharp Consensus': meta_prob,
+            }
+            model_game_rows.append((home, away, home_won, model_prob))
+
+        windows = [5, 15, 20]
+        out = []
+        for w in windows:
+            sample = model_game_rows[:w]
+            if not sample:
+                continue
+            model_stats = {}
+            for m in _PERF_MODEL_ORDER:
+                p1_picks = p1_wins = p2_picks = p2_wins = 0
+                for home, away, home_won, model_prob in sample:
+                    p = model_prob.get(m)
+                    if p is None:
+                        continue
+                    pick_team = home if p >= 0.5 else away
+                    correct = ((p >= 0.5) == home_won)
+                    if pick_team == t1:
+                        p1_picks += 1
+                        if correct:
+                            p1_wins += 1
+                    elif pick_team == t2:
+                        p2_picks += 1
+                        if correct:
+                            p2_wins += 1
+                total_picks = p1_picks + p2_picks
+                if total_picks <= 0:
+                    continue
+                model_stats[m] = {
+                    'team1_pick_pct': round((p1_picks / total_picks) * 100.0, 1),
+                    'team2_pick_pct': round((p2_picks / total_picks) * 100.0, 1),
+                    'team1_win_pct': round((p1_wins / p1_picks) * 100.0, 1) if p1_picks else None,
+                    'team2_win_pct': round((p2_wins / p2_picks) * 100.0, 1) if p2_picks else None,
+                    'total_picks': total_picks,
+                }
+            out.append({'window': w, 'games': len(sample), 'models': model_stats})
+        return out
+    finally:
+        conn.close()
+
+
 def _build_performance_page_data(
     sport_filter: str = '',
     last_n: int | None = None,
@@ -10274,7 +11448,15 @@ def _build_performance_page_data(
       - Confidence bucket from picked-side confidence (max(p, 1-p) * 100)
       - Wins/Losses counted from binary correctness
       - Base set is last N UNIQUE completed games (from games table first)
+
+    When sport_filter is empty, returns empty structures without scanning games (fast first paint).
+    User must pick a sport and Apply to load data.
     """
+    sport_filter = (sport_filter or '').strip().upper()
+    if not sport_filter or sport_filter not in _PERF_SPORT_OPTIONS:
+        empty_main = {b: {m: None for m in _PERF_MODEL_ORDER} for b in _PERF_BUCKET_ORDER}
+        return empty_main, {}, [], [], [], '', [], []
+
     where_parts = ["g.home_score IS NOT NULL", "g.away_score IS NOT NULL", "g.home_score != g.away_score"]
     params = []
     if _PERF_SPORT_OPTIONS:
@@ -10506,13 +11688,65 @@ def _build_performance_page_data(
             seen_m.add(raw)
 
     matchup_note = _performance_upcoming_matchup_note(sport_filter, team1_key or '', team2_key or '')
+    head_to_head_stats = _performance_head_to_head_stats(sport_filter, team1_key or '', team2_key or '')
     rk = set(row_by_key.keys())
     team_matchup_warnings = []
     for raw in ((team1_key or '').strip(), (team2_key or '').strip()):
         if raw and raw not in rk and raw not in team_matchup_warnings:
             team_matchup_warnings.append(raw)
 
-    return main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings
+    return main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings, head_to_head_stats
+
+
+def _render_integrated_player_props(
+    league_override: str | None = None,
+    *,
+    page_title: str | None = None,
+    meta_description: str | None = None,
+    canonical_path: str | None = None,
+):
+    """Serve integrated player props SPA (premium)."""
+    if not current_user.is_authenticated:
+        return redirect(url_for('auth.login_page', next=request.full_path.rstrip('?')))
+    if not is_premium_user():
+        return redirect('/plans')
+    dist_dir = _os.path.join(_BASE_DIR, 'standalone-player-props', 'frontend', 'dist')
+    index_path = _os.path.join(dist_dir, 'index.html')
+    assets_dir = _os.path.join(dist_dir, 'assets')
+    if not _os.path.isfile(index_path):
+        return render_template('player_props_hub.html')
+    try:
+        import glob as _glob_mod
+        js_files = sorted(_glob_mod.glob(_os.path.join(assets_dir, 'index-*.js')))
+        css_files = sorted(_glob_mod.glob(_os.path.join(assets_dir, 'index-*.css')))
+        if not js_files or not css_files:
+            return render_template('player_props_hub.html')
+        props_js_url = f"/player-props/assets/{_os.path.basename(js_files[-1])}"
+        props_css_url = f"/player-props/assets/{_os.path.basename(css_files[-1])}"
+        _lg = (league_override or (request.args.get('league') or '').strip() or '').upper()
+        player_q = (request.args.get('player') or '').strip()
+        sport_tabs = []
+        for lg_code, path in sorted(_PROPS_SEO_PATH_BY_LEAGUE.items(), key=lambda x: x[1]):
+            sport_tabs.append({
+                'league': lg_code,
+                'href': path,
+                'label': 'Soccer' if lg_code == 'SOCCER' else lg_code,
+                'active': _lg == lg_code,
+            })
+        return render_template(
+            'player_props_app.html',
+            props_js_url=props_js_url,
+            props_css_url=props_css_url,
+            props_initial_league=_lg,
+            props_player_query=player_q,
+            props_page_title=page_title or 'Player Props | underdogs.bet',
+            props_meta_description=meta_description or 'AI player props projections and graded results for premium members.',
+            props_canonical_path=canonical_path or '/player-props',
+            props_indexable=(canonical_path or '/player-props') != '/player-props',
+            props_sport_tabs=sport_tabs,
+        )
+    except Exception:
+        return render_template('player_props_hub.html')
 
 
 @app.route('/player-props/results')
@@ -10534,32 +11768,73 @@ def player_props_results_entry():
 @app.route('/player-props')
 def player_props_page():
     """Serve integrated player props frontend from main app."""
-    if not current_user.is_authenticated:
-        return redirect(url_for('auth.login_page', next=request.path))
-    if not is_premium_user():
-        return redirect('/plans')
-    dist_dir = _os.path.join(_BASE_DIR, 'standalone-player-props', 'frontend', 'dist')
-    index_path = _os.path.join(dist_dir, 'index.html')
-    assets_dir = _os.path.join(dist_dir, 'assets')
-    if not _os.path.isfile(index_path):
-        return render_template('player_props_hub.html')
-    try:
-        import glob as _glob_mod
-        js_files = sorted(_glob_mod.glob(_os.path.join(assets_dir, 'index-*.js')))
-        css_files = sorted(_glob_mod.glob(_os.path.join(assets_dir, 'index-*.css')))
-        if not js_files or not css_files:
-            return render_template('player_props_hub.html')
-        props_js_url = f"/player-props/assets/{_os.path.basename(js_files[-1])}"
-        props_css_url = f"/player-props/assets/{_os.path.basename(css_files[-1])}"
-        _lg = (request.args.get('league') or '').strip().upper()
-        return render_template(
-            'player_props_app.html',
-            props_js_url=props_js_url,
-            props_css_url=props_css_url,
-            props_initial_league=_lg,
-        )
-    except Exception:
-        return render_template('player_props_hub.html')
+    return _render_integrated_player_props(
+        league_override=(request.args.get('league') or '').strip().upper() or None,
+        page_title='Player Props | underdogs.bet',
+        meta_description='AI player props projections and graded results for premium members.',
+        canonical_path='/player-props',
+    )
+
+
+@app.route('/nba-props')
+@app.route('/nhl-props')
+@app.route('/mlb-props')
+@app.route('/nfl-props')
+@app.route('/soccer-props')
+@app.route('/ncaab-props')
+@app.route('/wnba-props')
+@app.route('/ncaaf-props')
+@app.route('/ncaaw-props')
+def sport_props_seo_page():
+    """Per-sport props URLs for navigation and SEO-friendly titles."""
+    league = _PROPS_PATH_TO_LEAGUE.get(request.path)
+    if not league:
+        abort(404)
+    meta = {
+        'NBA': (
+            'NBA Player Props — AI Projections | underdogs.bet',
+            'Daily NBA player props: projected lines, model projections, and pick direction for the current slate.',
+        ),
+        'NHL': (
+            'NHL Player Props — AI Projections | underdogs.bet',
+            'Daily NHL player props with projections and pick direction for games on the slate.',
+        ),
+        'MLB': (
+            'MLB Player Props — AI Projections | underdogs.bet',
+            'Daily MLB player props: projections and pick direction for the slate.',
+        ),
+        'NFL': (
+            'NFL Player Props — AI Projections | underdogs.bet',
+            'Daily NFL player props with model projections and pick direction.',
+        ),
+        'SOCCER': (
+            'Soccer Player Props — AI Projections | underdogs.bet',
+            'Daily soccer player props with projections and pick direction.',
+        ),
+        'NCAAB': (
+            'NCAAB Player Props — AI Projections | underdogs.bet',
+            'College basketball player props with projections and pick direction.',
+        ),
+        'WNBA': (
+            'WNBA Player Props — AI Projections | underdogs.bet',
+            'WNBA player props with projections and pick direction.',
+        ),
+        'NCAAF': (
+            'NCAAF Player Props — AI Projections | underdogs.bet',
+            'College football player props with projections and pick direction.',
+        ),
+        'NCAAW': (
+            'NCAAW Player Props — AI Projections | underdogs.bet',
+            "Women's college basketball player props with projections and pick direction.",
+        ),
+    }
+    title, desc = meta.get(league, ('Player Props | underdogs.bet', 'AI player props projections for premium members.'))
+    return _render_integrated_player_props(
+        league_override=league,
+        page_title=title,
+        meta_description=desc,
+        canonical_path=request.path,
+    )
 
 
 @app.route('/player-props/assets/<path:asset_path>')
@@ -10651,11 +11926,16 @@ def player_props_api_results():
     league = (request.args.get('league') or '').strip().upper()
     result_date = (request.args.get('date') or '').strip()[:10] or None
     try:
+        rd_raw = (request.args.get('rollup_days') or request.args.get('window') or '1').strip()
+        rollup_days = int(rd_raw) if rd_raw.isdigit() else 1
+        rollup_days = max(1, min(rollup_days, 14))
         engine_mod, config_mod = _load_props_modules()
         supported = set(getattr(config_mod, 'SUPPORTED_LEAGUES', []))
         if league not in supported:
             return jsonify({'detail': f'Unsupported league: {league}'}), 400
-        return jsonify(engine_mod.get_league_results(league, result_date_str=result_date))
+        return jsonify(
+            engine_mod.get_league_results(league, result_date_str=result_date, rollup_days=rollup_days)
+        )
     except Exception as exc:
         return jsonify({'detail': str(exc)}), 500
 
@@ -10678,7 +11958,7 @@ def performance_page():
 
     team1 = (request.args.get('team1') or '').strip()
     team2 = (request.args.get('team2') or '').strip()
-    main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings = _build_performance_page_data(
+    main_table, sport_tables, team_chart_rows, perf_team_options, matchup_rows, matchup_note, team_matchup_warnings, head_to_head_stats = _build_performance_page_data(
         sport_filter=sport, last_n=last_n, team1_key=team1, team2_key=team2
     )
     return render_template(
@@ -10698,6 +11978,7 @@ def performance_page():
         matchup_rows=matchup_rows,
         matchup_note=matchup_note,
         team_matchup_warnings=team_matchup_warnings,
+        head_to_head_stats=head_to_head_stats,
     )
 
 
@@ -10710,6 +11991,12 @@ def performance_audit_csv():
     sport = (request.args.get('sport') or '').strip().upper()
     if sport not in _PERF_SPORT_OPTIONS:
         sport = ''
+    if not sport:
+        return Response(
+            'Select a sport on the Model Performance page, then download the audit CSV (sport is required).',
+            status=400,
+            mimetype='text/plain; charset=utf-8',
+        )
     try:
         last_n = int((request.args.get('last_n') or '50').strip())
     except Exception:
@@ -10888,20 +12175,37 @@ def performance_audit_csv():
 @app.route('/teams/<slug>')
 def team_lookup(slug):
     """Team slug route (Next.js-style equivalent) -> best sport page."""
-    team = _TEAM_DIRECTORY.get((slug or '').lower())
+    slug_l = (slug or '').lower()
+    team = _TEAM_DIRECTORY.get(slug_l)
     if team:
         route = _SPORT_TO_ROUTE.get((team.get('sport') or '').upper())
         if route:
             return redirect(route)
+    for row in _distinct_teams_search_rows():
+        if row.get('slug') == slug_l:
+            route = _SPORT_TO_ROUTE.get((row.get('sport') or '').upper())
+            if route:
+                return redirect(route)
+            break
     return redirect(url_for('landing_page'))
+
 
 @app.route('/search')
 def site_search():
-    """No-JS fallback: redirect to best-matching page."""
-    payload = _build_search_payload(request.args.get('query', ''))
-    if payload.get('suggested_route'):
-        return redirect(payload['suggested_route'])
-    return redirect(url_for('landing_page'))
+    """Search landing: prefer direct navigation from typed query when unambiguous."""
+    q = (request.args.get('query') or request.args.get('q') or '').strip()
+    if not q:
+        return redirect(url_for('landing_page'))
+    sug = _build_search_suggestions(q, limit=5)
+    if len(sug) == 1:
+        return redirect(sug[0]['url'])
+    payload = _build_search_payload(q)
+    return render_template(
+        'search_results.html',
+        query=q,
+        suggestions=sug,
+        payload=payload,
+    )
 
 @app.route('/robots.txt')
 def robots_txt():
@@ -10986,6 +12290,9 @@ def sitemap_xml():
             urls.append((f"{_SITE_DOMAIN}/{picks_slug}", 'daily', '0.9'))
         if results_slug and _is_live:
             urls.append((f"{_SITE_DOMAIN}/{results_slug}", 'daily', '0.8'))
+        props_slug = _PROPS_SEO_PATH_BY_LEAGUE.get(sport_key)
+        if props_slug:
+            urls.append((f"{_SITE_DOMAIN}{props_slug}", 'daily', '0.65'))
         # Daily SEO pages only for in-season sports
         if picks_slug and _is_live:
             for days_back in range(8):
@@ -11035,6 +12342,12 @@ def seo_picks_page(slug):
         return sport_results(sport)
     # Not a known SEO slug — fall through to 404
     return "Page not found", 404
+
+
+@app.route('/<slug>/')
+def seo_picks_page_trailing_slash(slug):
+    """Avoid indexing 404s from trailing-slash variants of SEO pages."""
+    return redirect(f"/{slug}", code=301)
 
 
 @app.route('/<slug>-<month>-<int:day>-<int:year>')
@@ -11536,7 +12849,12 @@ def soccer_predictions_league(league_slug):
 
 @app.route('/sport/SOCCER/results/<league_slug>')
 def soccer_results_league(league_slug):
-    return redirect(f'/soccer-results?league={league_slug}', code=301)
+    return redirect(f'/soccer-results/{league_slug}', code=301)
+
+
+@app.route('/soccer-results/<league_slug>')
+def soccer_results_league_seo(league_slug):
+    return sport_results('SOCCER', soccer_league_slug=league_slug)
 
 def _predictions_fallback_page(sport, filter_date=None):
     """Safe fallback HTML for SEO picks pages when dynamic rendering fails."""
@@ -11645,19 +12963,9 @@ def sport_predictions(sport, filter_date=None):
         if not pred.get('game_date'):
             pred['game_date'] = today_date
         smh = None
-        if pred.get('xgb_spread') is not None:
+        if pred.get('market_spread') is not None:
             try:
-                smh = float(pred['xgb_spread'])
-            except Exception:
-                smh = None
-        elif pred.get('naive_spread') is not None:
-            try:
-                smh = float(pred['naive_spread'])
-            except Exception:
-                smh = None
-        elif pred.get('market_spread') is not None:
-            try:
-                smh = -float(pred['market_spread'])
+                smh = abs(float(pred['market_spread']))
             except Exception:
                 smh = None
         pred['spread_margin_home'] = smh
@@ -11805,6 +13113,8 @@ def sport_predictions(sport, filter_date=None):
             today_date=today_date,
             group_by='week' if sport == 'NFL' else 'date',
             soccer_leagues=soccer_leagues,
+            soccer_enabled=SOCCER_ENABLED,
+            props_seo_path=_PROPS_SEO_PATH_BY_LEAGUE.get(sport, '/player-props'),
             shareable_cards=shareable_cards,
             share_image_src=share_image_src,
             share_image_view_url=share_image_view_url,
@@ -11816,7 +13126,7 @@ def sport_predictions(sport, filter_date=None):
         _SPORT_PREDICTIONS_PAGE_CACHE[cache_key] = {'ts': _time.time(), 'html': rendered}
     return rendered
 
-def sport_results(sport):
+def sport_results(sport, soccer_league_slug=None):
     """Show model performance results for a sport"""
     try:
         if sport not in SPORTS:
@@ -12118,10 +13428,13 @@ def sport_results(sport):
             selected_league = None
             selected_slug = None
             if sport == 'SOCCER':
-                selected_slug = request.args.get('league')
+                selected_slug = (soccer_league_slug or request.args.get('league') or '').strip().lower() or None
                 selected_league = _soccer_league_from_slug(selected_slug)
                 if not selected_league and selected_slug:
                     selected_league = None
+                # Canonicalize query-string league filters to clean path URLs for indexing.
+                if request.args.get('league') and selected_slug:
+                    return redirect(f"/soccer-results/{selected_slug}", code=301)
             cache_key = f'{sport}_daily_results_html'
             skip_cache = False
             if sport == 'SOCCER':
@@ -12287,7 +13600,7 @@ def sport_results(sport):
                         'name': lg,
                         'slug': _soccer_league_slug(lg),
                         'active': lg == selected_league,
-                    'url': f"/soccer-results?league={_soccer_league_slug(lg)}",
+                        'url': f"/soccer-results/{_soccer_league_slug(lg)}",
                     }
                     for lg in SOCCER_LEAGUE_ORDER
                 ]

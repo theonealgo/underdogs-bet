@@ -1,0 +1,35 @@
+/* Shared prediction / results share image framing — 16:9 viewport; portrait sources letterbox with object-fit: contain */
+.ud-share-image-stack {
+  max-width: 920px;
+  margin: 28px auto 40px;
+  padding: 0 24px;
+}
+.ud-share-image-stack .social-export-head {
+  margin-bottom: 12px;
+}
+.ud-share-image-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.ud-share-frame {
+  display: block;
+  width: 100%;
+  max-width: min(920px, 92vw);
+  margin: 0 auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  background: #f1f5f9;
+}
+.ud-share-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #ffffff;
+}
