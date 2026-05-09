@@ -27,7 +27,6 @@ import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
-import statistics
 import nfl_data_py as nfl
 from nhlschedules import get_nhl_2025_schedule
 import requests
@@ -35,12 +34,6 @@ from nba_sportsdata_api import NBASportsDataAPI
 from nhl_api import NHLAPI
 from value_predictor import ValuePredictor
 from soccer_models import build_soccer_model_bundle
-from spread_copy import (
-    describe_ats_closing_line,
-    describe_xsharp_vs_final_margin,
-    describe_ou_vs_line,
-    describe_ou_vs_xsharp,
-)
 
 # V2 PREDICTION SYSTEM - Upgraded architecture
 import os as _os_v2
@@ -73,30 +66,6 @@ try:
 except Exception:
     Image = ImageDraw = ImageFont = None
     _HAS_PIL = False
-
-
-def to_half(value):
-    """Round spread/total lines to nearest 0.5 (whole or half points only)."""
-    if value is None:
-        return None
-    try:
-        x = float(value)
-    except (TypeError, ValueError):
-        return None
-    out = round(x * 2.0) / 2.0
-    if out == 0.0:
-        return 0.0
-    return out
-
-
-# 5-game playoff sample (actual combined scores): variance drives O/U band width — mean bias is small.
-_NBA_PLAYOFF_ACTUAL_TOTALS_SAMPLE = (202, 232, 204, 202, 223)
-# Sample stdev (ddof=1) of the five realized playoff totals — drives O/U band width (not a mean bias shift).
-_NBA_PLAYOFF_TOTAL_STDEV_BASELINE = to_half(statistics.stdev(_NBA_PLAYOFF_ACTUAL_TOTALS_SAMPLE))
-# Documented blend_spreads weights (spread pipeline unchanged — reference only for MAE reporting).
-_NBA_SPREAD_BLEND_WEIGHTS_WITH_OUR = {'our_spread': 0.50, 'clipped_xsharp_spread': 0.35, 'naive_spread': 0.15}
-_NBA_SPREAD_BLEND_WEIGHTS_NO_OUR = {'clipped_xsharp_spread': 0.60, 'naive_spread': 0.40}
-
 
 # ── Module-level HTTP request cache (15-min TTL) ──────────────────────────────
 _API_CACHE: dict = {}
@@ -311,6 +280,17 @@ def _fit_text_font(draw, text: str, max_width: int, start_size: int, min_size: i
     return _get_share_font(min_size, bold=bold), cleaned
 
 
+def _round_to_half(value):
+    """Round spread/total style numbers to sportsbook increments (.0/.5)."""
+    try:
+        out = round((float(value) * 2.0)) / 2.0
+        if abs(out) < 1e-9:
+            return 0.0
+        return out
+    except Exception:
+        return value
+
+
 def compute_weighted_team_stats(games, key, decay=0.85):
     """Exponentially weighted average with most recent game weight 1.0."""
     if not games:
@@ -337,9 +317,7 @@ def compute_weighted_team_stats(games, key, decay=0.85):
 
 
 def blend_spreads(xgb_spread, naive_spread, our_spread=None, max_divergence=8.0):
-    """Soft-clip XGB divergence and return blended spread + clipped XGB.
-    Weights when our_spread is present: 0.50 / 0.35 / 0.15 (our / clipped XSharp / naive).
-    When absent: 0.60 / 0.40 (clipped XSharp / naive). Max divergence clamp default 8.0 pts."""
+    """Soft-clip XGB divergence and return blended spread + clipped XGB."""
     xgb = _to_float_safe(xgb_spread)
     naive = _to_float_safe(naive_spread)
     our = _to_float_safe(our_spread)
@@ -355,10 +333,10 @@ def blend_spreads(xgb_spread, naive_spread, our_spread=None, max_divergence=8.0)
         parts = [(clipped_xgb, 0.60), (naive, 0.40)]
     valid = [(v, w) for v, w in parts if v is not None]
     if not valid:
-        return None, (to_half(clipped_xgb) if clipped_xgb is not None else None)
+        return None, clipped_xgb
     denom = sum(w for _, w in valid)
     blended = sum(v * w for v, w in valid) / denom
-    return to_half(blended), (to_half(clipped_xgb) if clipped_xgb is not None else None)
+    return blended, clipped_xgb
 
 
 def compute_improved_spread(team_a_games, team_b_games, xsharp_line, h2h_games=None):
@@ -405,8 +383,8 @@ def compute_improved_spread(team_a_games, team_b_games, xsharp_line, h2h_games=N
             side = "Over" if over_n >= under_n else "Under"
             ou_record = f"Combined record: {over_n}-{under_n} {side}"
     return {
-        'spread': to_half(base_spread),
-        'total': to_half(base_total),
+        'spread': _round_to_half(base_spread),
+        'total': _round_to_half(base_total),
         'ou_record': ou_record,
     }
 
@@ -659,10 +637,10 @@ def efficiency_spread(
     spread_raw = score_a_raw - score_b_raw
     total_raw = score_a_raw + score_b_raw
     return (
-        to_half(score_a_raw),
-        to_half(score_b_raw),
-        to_half(spread_raw),
-        to_half(total_raw),
+        _round_to_half(score_a_raw),
+        _round_to_half(score_b_raw),
+        _round_to_half(spread_raw),
+        _round_to_half(total_raw),
     )
 
 
@@ -679,7 +657,7 @@ def blend_efficiency_h2h(
     else:
         w_eff, w_h2h = (0.85, 0.15)
     blended = (float(efficiency_spread_val) * w_eff) + (float(h2h_spread_val) * w_h2h)
-    return to_half(blended)
+    return _round_to_half(blended)
 
 
 def _draw_share_pick_checkmark(draw, box):
@@ -1279,7 +1257,7 @@ def _compute_h2h_projection(
         except Exception:
             avg_margin = None
     h2h_spread_raw = avg_margin if avg_margin is not None else None
-    h2h_spread = to_half(h2h_spread_raw) if h2h_spread_raw is not None else None
+    h2h_spread = _round_to_half(h2h_spread_raw) if h2h_spread_raw is not None else None
     # Use H2H margin for our_spread ONLY when sample is strong (5+ clean H2H games).
     use_margin_spread = len(weighted_rows) >= 5
     our_spread_raw = h2h_spread_raw if use_margin_spread else None
@@ -1292,8 +1270,8 @@ def _compute_h2h_projection(
         'h2h_spread_raw': h2h_spread_raw,
         'h2h_spread': h2h_spread,
         'our_spread_raw': our_spread_raw,
-        'our_spread': (to_half(our_spread_raw) if our_spread_raw is not None else None),
-        'our_total': to_half(avg_home + avg_away),
+        'our_spread': (_round_to_half(our_spread_raw) if our_spread_raw is not None else None),
+        'our_total': _round_to_half(avg_home + avg_away),
         'totals': totals,
     }
     _H2H_PROJECTION_CACHE[cache_key] = {'ts': now_ts, 'data': data}
@@ -1322,20 +1300,10 @@ def _attach_h2h_projection_to_predictions(sport, predictions, n: int = 10):
                 as_of_date=(pred.get('game_date') or '')[:10] or None,
             )
             if proj:
-                # NBA/WNBA efficiency tier writes our_eff_* when the ratings formula ran. If those keys
-                # exist, never replace our_spread / our_total with H2H aggregates — even when
-                # our_*_source was missing on the dict (otherwise cards show H2H margins like -4.5 / 222
-                # instead of efficiency -16.5 / 212.5).
-                _eff_spread_mark = pred.get('our_eff_spread_raw') is not None
-                _eff_total_mark = pred.get('our_eff_total_raw') is not None
-                if pred.get('our_total_source') not in ('efficiency',) and not _eff_total_mark:
+                if pred.get('our_total_source') not in ('efficiency',):
                     pred['our_total'] = proj['our_total']
-                    if proj.get('our_total') is not None:
-                        pred['our_total_source'] = 'h2h'
-                if pred.get('our_spread_source') in (None, '') and not _eff_spread_mark:
+                if pred.get('our_spread_source') in (None, ''):
                     pred['our_spread'] = proj.get('our_spread')
-                    if proj.get('our_spread') is not None:
-                        pred['our_spread_source'] = 'h2h'
                 pred['our_spread_raw'] = proj.get('our_spread_raw')
                 pred['h2h_spread'] = proj.get('h2h_spread')
                 pred['h2h_spread_raw'] = proj.get('h2h_spread_raw')
@@ -2212,36 +2180,6 @@ CORS(app, origins=[
     'http://localhost:5000',
 ])
 
-
-@app.template_filter('spread_half')
-def _jinja_spread_half(v):
-    """Sportsbook spread/total style number: whole or half increments only."""
-    return to_half(v)
-
-
-@app.template_filter('fmt_spread')
-def _jinja_fmt_spread(v):
-    """Format spread after half-point rounding (±X.0 / ±X.5)."""
-    if v is None:
-        return ''
-    try:
-        x = to_half(float(v))
-        return f'{x:+.1f}'
-    except (TypeError, ValueError):
-        return ''
-
-
-@app.template_filter('fmt_total')
-def _jinja_fmt_total(v):
-    """Format total / O-U line after half-point rounding (X.0 / X.5, no sign)."""
-    if v is None:
-        return ''
-    try:
-        x = to_half(float(v))
-        return f'{x:.1f}'
-    except (TypeError, ValueError):
-        return ''
-
 _CANONICAL_HOST = 'www.underdogs.bet'
 
 @app.before_request
@@ -2301,11 +2239,10 @@ def add_header(response):
     return response
 
 import os as _os
-# Resolve DB next to this file when not on a hosted /data volume — avoids an empty DB when Flask is
-# started from the wrong working directory (would use cwd-relative '.' and break results pages).
-_BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
-_DATA_DIR = '/data' if _os.path.isdir('/data') else _BASE_DIR
+_DATA_DIR = '/data' if _os.path.isdir('/data') else '.'
 DATABASE = _os.path.join(_DATA_DIR, 'sports_predictions_original.db')
+# Absolute path to this file's directory — used for template loading
+_BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
 ODDS_ENGINE_URL = _os.environ.get('ODDS_ENGINE_URL')
 
 
@@ -3277,327 +3214,10 @@ def _ensure_engine_odds_columns():
         logger.debug(f"[engine_odds] column ensure failed: {_e}")
 
 
-def _ensure_nba_line_snapshot_schema(conn):
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS nba_line_prediction_snapshots (
-            game_id TEXT NOT NULL,
-            sport TEXT NOT NULL,
-            our_spread REAL,
-            our_total REAL,
-            xgb_spread REAL,
-            xgb_total REAL,
-            captured_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (game_id, sport)
-        );
-        CREATE TABLE IF NOT EXISTS nba_mae_score_tracker (
-            slug TEXT PRIMARY KEY,
-            game_id TEXT,
-            sport TEXT DEFAULT 'NBA',
-            game_date TEXT,
-            home_team_id TEXT NOT NULL,
-            away_team_id TEXT NOT NULL,
-            home_score INTEGER,
-            away_score INTEGER,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-    ''')
-    for _col in ('our_total_low', 'our_total_high'):
-        try:
-            conn.execute(f'ALTER TABLE nba_line_prediction_snapshots ADD COLUMN {_col} REAL')
-        except sqlite3.OperationalError:
-            pass
-    conn.commit()
-
-
-def _upsert_nba_line_snapshot_row(conn, pred, sport):
-    _os = to_half(pred.get('our_spread'))
-    _ot = to_half(pred.get('our_total'))
-    _xs = to_half(pred.get('xgb_spread'))
-    _xt = to_half(pred.get('xgb_total'))
-    _otl = to_half(pred.get('our_total_low'))
-    _oth = to_half(pred.get('our_total_high'))
-    conn.execute(
-        '''
-        INSERT INTO nba_line_prediction_snapshots (
-            game_id, sport, our_spread, our_total, xgb_spread, xgb_total,
-            our_total_low, our_total_high, captured_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(game_id, sport) DO UPDATE SET
-            our_spread = excluded.our_spread,
-            our_total = excluded.our_total,
-            xgb_spread = excluded.xgb_spread,
-            xgb_total = excluded.xgb_total,
-            our_total_low = excluded.our_total_low,
-            our_total_high = excluded.our_total_high,
-            captured_at = excluded.captured_at
-        ''',
-        (
-            str(pred.get('game_id')),
-            sport,
-            _os,
-            _ot,
-            _xs,
-            _xt,
-            _otl,
-            _oth,
-        ),
-    )
-
-
-def _sync_nba_mae_tracker_scores_from_games():
-    """Fill score columns on tracked playoff MAE rows when `games` has final scores (e.g. SA @ MIN)."""
-    try:
-        conn = get_db_connection()
-        _ensure_nba_line_snapshot_schema(conn)
-        rows = conn.execute(
-            "SELECT slug, game_id, home_team_id, away_team_id FROM nba_mae_score_tracker WHERE home_score IS NULL"
-        ).fetchall()
-        for row in rows:
-            gid = row['game_id']
-            slug = row['slug']
-            if gid:
-                g = conn.execute(
-                    '''SELECT home_score, away_score FROM games
-                       WHERE game_id = ? AND sport = 'NBA' AND home_score IS NOT NULL''',
-                    (str(gid),),
-                ).fetchone()
-            else:
-                g = conn.execute(
-                    '''SELECT home_score, away_score FROM games
-                       WHERE sport = 'NBA' AND home_team_id = ? AND away_team_id = ?
-                         AND date(game_date) >= date('now','-5 days')
-                         AND home_score IS NOT NULL
-                       ORDER BY game_date DESC LIMIT 1''',
-                    (row['home_team_id'], row['away_team_id']),
-                ).fetchone()
-            if g and g['home_score'] is not None:
-                conn.execute(
-                    '''UPDATE nba_mae_score_tracker SET home_score = ?, away_score = ?, updated_at = datetime('now')
-                       WHERE slug = ?''',
-                    (int(g['home_score']), int(g['away_score']), slug),
-                )
-        conn.commit()
-        conn.close()
-    except Exception as _e:
-        logger.debug(f"[nba mae] sync scores failed: {_e}")
-
-
-def _seed_nba_mae_reference_scores(conn):
-    """Confirmed playoff results used for MAE vs actual final scores (not vs book)."""
-    _ensure_nba_line_snapshot_schema(conn)
-    try:
-        conn.execute("DELETE FROM nba_mae_score_tracker WHERE slug = 'SA_MIN_PLAYOFF'")
-    except sqlite3.OperationalError:
-        pass
-    # Home margin / totals: spreads frozen at capture time; all values rounded with to_half at persist.
-    confirmed = (
-        ('NYK_PHI_2026', 'NYK_PHI_2026', 'PHI', 'NYK', 94, 108),
-        ('OKC_LAL_2026', 'OKC_LAL_2026', 'OKC', 'LAL', 125, 107),
-        ('DET_CLE_2026', 'DET_CLE_2026', 'DET', 'CLE', 107, 97),
-        ('SA_MIN_20260508', 'SA_MIN_20260508', 'MIN', 'SA', 108, 115),
-    )
-    for slug, gid, h, a, hs, aws in confirmed:
-        conn.execute(
-            '''
-            INSERT INTO nba_mae_score_tracker (
-                slug, game_id, sport, home_team_id, away_team_id, home_score, away_score, updated_at
-            ) VALUES (?, ?, 'NBA', ?, ?, ?, ?, datetime('now'))
-            ON CONFLICT(slug) DO UPDATE SET
-                game_id = excluded.game_id,
-                home_team_id = excluded.home_team_id,
-                away_team_id = excluded.away_team_id,
-                home_score = excluded.home_score,
-                away_score = excluded.away_score,
-                updated_at = excluded.updated_at
-            ''',
-            (slug, gid, h, a, hs, aws),
-        )
-    frozen = (
-        ('NYK_PHI_2026', -12.5, 209.0, -7.0, 219.5),
-        ('OKC_LAL_2026', 16.5, 218.0, 20.9, 246.0),
-        ('DET_CLE_2026', 15.5, 222.0, 4.0, 220.7),
-        ('SA_MIN_20260508', -13.5, 210.0, -1.5, 225.0),
-    )
-    for gid, os_, ot_, xs_, xt_ in frozen:
-        conn.execute(
-            '''
-            INSERT INTO nba_line_prediction_snapshots (
-                game_id, sport, our_spread, our_total, xgb_spread, xgb_total,
-                our_total_low, our_total_high, captured_at
-            ) VALUES (?, 'NBA', ?, ?, ?, ?, NULL, NULL, datetime('now'))
-            ON CONFLICT(game_id, sport) DO UPDATE SET
-                our_spread = excluded.our_spread,
-                our_total = excluded.our_total,
-                xgb_spread = excluded.xgb_spread,
-                xgb_total = excluded.xgb_total,
-                captured_at = excluded.captured_at
-            ''',
-            (gid, to_half(os_), to_half(ot_), to_half(xs_), to_half(xt_)),
-        )
-    conn.commit()
-
-
-def _nba_confidence_preview_next_upcoming():
-    """Earliest upcoming NBA game in `games`: stored snapshot bands if present (no full prediction pipeline)."""
-    try:
-        conn = get_db_connection()
-        nxt = conn.execute(
-            '''
-            SELECT game_id, game_date, home_team_id, away_team_id FROM games
-            WHERE sport = 'NBA' AND home_score IS NULL
-              AND date(game_date) >= date('now', 'localtime')
-            ORDER BY date(game_date) ASC, game_id ASC LIMIT 1
-            '''
-        ).fetchone()
-        if not nxt:
-            conn.close()
-            return {
-                'snapshot_status': 'no_future_unplayed_game_in_local_db',
-                'nba_playoff_total_sigma': _NBA_PLAYOFF_TOTAL_STDEV_BASELINE,
-            }
-        gid = nxt['game_id']
-        snap = conn.execute(
-            '''
-            SELECT our_total, our_total_low, our_total_high FROM nba_line_prediction_snapshots
-            WHERE game_id = ? AND sport = 'NBA'
-            ''',
-            (gid,),
-        ).fetchone()
-        conn.close()
-        out = {
-            'game_id': gid,
-            'game_date': nxt['game_date'],
-            'away_team_id': nxt['away_team_id'],
-            'home_team_id': nxt['home_team_id'],
-            'nba_playoff_total_sigma': _NBA_PLAYOFF_TOTAL_STDEV_BASELINE,
-            'our_total': None,
-            'our_total_low': None,
-            'our_total_high': None,
-        }
-        if snap:
-            out['our_total'] = snap['our_total']
-            out['our_total_low'] = snap['our_total_low']
-            out['our_total_high'] = snap['our_total_high']
-            out['snapshot_status'] = 'stored'
-        else:
-            out['snapshot_status'] = 'pending_next_predictions_fetch'
-        return out
-    except Exception as e:
-        return {'error': str(e)}
-
-
-def compute_nba_spread_total_mae_vs_actual():
-    """
-    Mean absolute error of frozen snapshot lines vs **final score** (margin + combined points).
-    Never compares predictions to the Vegas/book line — only to realized game outcomes.
-    """
-    _sync_nba_mae_tracker_scores_from_games()
-    conn = get_db_connection()
-    try:
-        _ensure_nba_line_snapshot_schema(conn)
-        _seed_nba_mae_reference_scores(conn)
-        rows = conn.execute(
-            '''
-            SELECT t.slug, t.home_team_id, t.away_team_id, t.home_score, t.away_score,
-                   s.our_spread, s.our_total, s.xgb_spread, s.xgb_total
-            FROM nba_mae_score_tracker t
-            INNER JOIN nba_line_prediction_snapshots s
-              ON s.game_id = t.game_id AND s.sport = 'NBA'
-            WHERE t.home_score IS NOT NULL AND t.away_score IS NOT NULL
-            '''
-        ).fetchall()
-        errs_our_s = []
-        errs_x_s = []
-        errs_our_t = []
-        errs_x_t = []
-        detail = []
-        for r in rows:
-            hs, aws = int(r['home_score']), int(r['away_score'])
-            act_margin = float(hs - aws)
-            act_total = float(hs + aws)
-            os_ = r['our_spread']
-            ot_ = r['our_total']
-            xs_ = r['xgb_spread']
-            xt_ = r['xgb_total']
-            if os_ is not None:
-                errs_our_s.append(abs(act_margin - float(os_)))
-            if xs_ is not None:
-                errs_x_s.append(abs(act_margin - float(xs_)))
-            if ot_ is not None:
-                errs_our_t.append(abs(act_total - float(ot_)))
-            if xt_ is not None:
-                errs_x_t.append(abs(act_total - float(xt_)))
-            detail.append({
-                'slug': r['slug'],
-                'home_team_id': r['home_team_id'],
-                'away_team_id': r['away_team_id'],
-                'actual_margin_home': act_margin,
-                'actual_total': act_total,
-                'snap_our_spread': os_,
-                'snap_our_total': ot_,
-                'snap_xgb_spread': xs_,
-                'snap_xgb_total': xt_,
-            })
-        def _avg(lst):
-            return round(sum(lst) / len(lst), 3) if lst else None
-
-        _os_mae = _avg(errs_our_s)
-        _xs_mae = _avg(errs_x_s)
-        _ot_mae = _avg(errs_our_t)
-        _xt_mae = _avg(errs_x_t)
-        logger.info(
-            '[nba mae vs actual] Our spread MAE=%s | XSharp spread MAE=%s | Our total MAE=%s | XSharp total MAE=%s | games=%s',
-            _os_mae, _xs_mae, _ot_mae, _xt_mae, len(rows),
-        )
-        if _os_mae is not None and _xs_mae is not None and _os_mae >= _xs_mae:
-            logger.warning('[nba mae vs actual] Our spread MAE is not below XSharp spread MAE (sanity check failed).')
-
-        return {
-            'our_spread_mae_vs_actual': _os_mae,
-            'xsharp_spread_mae_vs_actual': _xs_mae,
-            'our_total_mae_vs_actual': _ot_mae,
-            'xsharp_total_mae_vs_actual': _xt_mae,
-            'games_used_spread_our': len(errs_our_s),
-            'games_used_total_our': len(errs_our_t),
-            'games_completed_rows': len(rows),
-            'detail': detail,
-            'playoff_total_actual_totals_tuple': _NBA_PLAYOFF_ACTUAL_TOTALS_SAMPLE,
-            'playoff_total_sample_stdev_raw': statistics.stdev(_NBA_PLAYOFF_ACTUAL_TOTALS_SAMPLE),
-            'playoff_total_population_stdev_raw': statistics.pstdev(_NBA_PLAYOFF_ACTUAL_TOTALS_SAMPLE),
-            'playoff_total_stdev_baseline': _NBA_PLAYOFF_TOTAL_STDEV_BASELINE,
-            'spread_blend_weights_with_our': dict(_NBA_SPREAD_BLEND_WEIGHTS_WITH_OUR),
-            'spread_blend_weights_no_our': dict(_NBA_SPREAD_BLEND_WEIGHTS_NO_OUR),
-            'next_upcoming_our_total_confidence': _nba_confidence_preview_next_upcoming(),
-        }
-    finally:
-        conn.close()
-
-
-def compute_nba_playoff_adjusted_total_hindsight(our_total_raw):
-    """Point ± σ band using the stored playoff total σ baseline (no fixed mean shift)."""
-    if our_total_raw is None:
-        return None
-    try:
-        sig = float(_NBA_PLAYOFF_TOTAL_STDEV_BASELINE or 0)
-        pt = float(our_total_raw)
-        return {
-            'point': to_half(pt),
-            'low': to_half(pt - sig),
-            'high': to_half(pt + sig),
-            'sigma': to_half(sig),
-        }
-    except (TypeError, ValueError):
-        return None
-
-
 # Run on every startup — creates tables if missing, no-op if they exist
 try:
     init_db()
     _ensure_engine_odds_columns()
-    _conn_boot = get_db_connection()
-    _ensure_nba_line_snapshot_schema(_conn_boot)
-    _seed_nba_mae_reference_scores(_conn_boot)
-    _conn_boot.close()
 except Exception as _dbe:
     logger.warning(f"init_db failed: {_dbe}")
 
@@ -4840,8 +4460,8 @@ def get_upcoming_predictions(sport, days=365):
                     if exp_home is not None and exp_away is not None:
                         game_dict['naive_home_score'] = round(exp_home, 2)
                         game_dict['naive_away_score'] = round(exp_away, 2)
-                        game_dict['naive_spread'] = to_half(exp_home - exp_away)
-                        game_dict['naive_total'] = to_half(exp_home + exp_away)
+                        game_dict['naive_spread'] = _round_to_half(exp_home - exp_away)
+                        game_dict['naive_total'] = _round_to_half(exp_home + exp_away)
                 if game_dict.get('naive_spread') is None:
                     try:
                         _sp = _score_predictor_instance(sport)
@@ -4854,8 +4474,8 @@ def get_upcoming_predictions(sport, days=365):
                             if nh is not None:
                                 game_dict['naive_home_score'] = nh
                                 game_dict['naive_away_score'] = na
-                                game_dict['naive_spread'] = to_half(ns)
-                                game_dict['naive_total'] = to_half(nt)
+                                game_dict['naive_spread'] = _round_to_half(ns)
+                                game_dict['naive_total'] = _round_to_half(nt)
                     except Exception as _e:
                         logger.debug(f"ScorePredictor error: {_e}")
                 if game_dict.get('naive_spread') is None:
@@ -4875,8 +4495,8 @@ def get_upcoming_predictions(sport, days=365):
                         if nh is not None:
                             game_dict['naive_home_score'] = nh
                             game_dict['naive_away_score'] = na
-                            game_dict['naive_spread'] = to_half(ns)
-                            game_dict['naive_total'] = to_half(nt)
+                            game_dict['naive_spread'] = _round_to_half(ns)
+                            game_dict['naive_total'] = _round_to_half(nt)
                 except Exception as _e:
                     logger.debug(f"ScorePredictor error: {_e}")
 
@@ -4893,8 +4513,8 @@ def get_upcoming_predictions(sport, days=365):
                         if vh is not None:
                             game_dict['naive_home_score'] = vh
                             game_dict['naive_away_score'] = va
-                            game_dict['naive_spread'] = to_half(vs)
-                            game_dict['naive_total'] = to_half(vt)
+                            game_dict['naive_spread'] = _round_to_half(vs)
+                            game_dict['naive_total'] = _round_to_half(vt)
                     except Exception as _ve:
                         logger.debug(f"VegasScorePredictor error: {_ve}")
 
@@ -4908,8 +4528,8 @@ def get_upcoming_predictions(sport, days=365):
                         if result and result[0] is not None:
                             game_dict['xgb_home_score'] = result[0]
                             game_dict['xgb_away_score'] = result[1]
-                            game_dict['xgb_spread'] = to_half(result[2])
-                            game_dict['xgb_total'] = to_half(result[3])
+                            game_dict['xgb_spread'] = _round_to_half(result[2])
+                            game_dict['xgb_total'] = _round_to_half(result[3])
                 except Exception as _e:
                     logger.debug(f"XGBSpread error: {_e}")
             if game_dict.get('home_score') is None and sport in ('NBA', 'WNBA'):
@@ -4918,19 +4538,6 @@ def get_upcoming_predictions(sport, days=365):
                 as_of = (game_dict.get('game_date') or '')[:10] or None
                 eff_home = get_team_efficiency_stats_for_sport(sport, ht)
                 eff_away = get_team_efficiency_stats_for_sport(sport, at)
-                game_dict['is_playoff_game'] = (
-                    str((eff_home or {}).get('season_type') or '') == 'Playoffs'
-                    or str((eff_away or {}).get('season_type') or '') == 'Playoffs'
-                )
-                # When stats.nba.com returns LocalFallback (API outage), SeasonType may omit "Playoffs"
-                # even during the postseason — enable adjustment for late‑April/May/June NBA dates.
-                try:
-                    _gd_pl = parse_date((game_dict.get('game_date') or '')[:10])
-                except Exception:
-                    _gd_pl = None
-                if sport == 'NBA' and _gd_pl is not None:
-                    if (_gd_pl.month in (5, 6)) or (_gd_pl.month == 4 and _gd_pl.day >= 15):
-                        game_dict['is_playoff_game'] = True
                 h2h_proj = None
                 if _h2h_conn_for_eff is not None:
                     try:
@@ -4987,7 +4594,7 @@ def get_upcoming_predictions(sport, days=365):
                 our_spread_calc = None
                 spread_source = None
                 if eff_spread is not None:
-                    our_spread_calc = to_half(eff_spread)
+                    our_spread_calc = _round_to_half(eff_spread)
                     spread_source = 'efficiency'
                     # Guardrail for local fallback ratings: keep moderate edges from overshooting.
                     if (
@@ -4996,12 +4603,12 @@ def get_upcoming_predictions(sport, days=365):
                         and our_spread_calc is not None
                         and abs(float(our_spread_calc)) < 10.0
                     ):
-                        our_spread_calc = to_half(max(-5.5, min(5.5, float(our_spread_calc))))
+                        our_spread_calc = _round_to_half(max(-5.5, min(5.5, float(our_spread_calc))))
                 elif h2h_spread is not None and h2h_games >= 3:
-                    our_spread_calc = to_half(h2h_spread)
+                    our_spread_calc = _round_to_half(h2h_spread)
                     spread_source = 'h2h'
                 elif _to_float_safe(game_dict.get('naive_spread')) is not None:
-                    our_spread_calc = to_half(game_dict.get('naive_spread'))
+                    our_spread_calc = _round_to_half(game_dict.get('naive_spread'))
                     spread_source = 'naive'
                 else:
                     spread_source = 'none'
@@ -5010,7 +4617,7 @@ def get_upcoming_predictions(sport, days=365):
                     if spread_source in ('h2h', 'efficiency+h2h'):
                         logger.warning(f"[our_spread] near-zero margin for {at} @ {ht}; falling back from {spread_source}")
                 if our_spread_calc is None and _to_float_safe(game_dict.get('naive_spread')) is not None:
-                    our_spread_calc = to_half(game_dict.get('naive_spread'))
+                    our_spread_calc = _round_to_half(game_dict.get('naive_spread'))
                     spread_source = 'naive'
                 if our_spread_calc is not None and abs(float(our_spread_calc)) < 0.25:
                     our_spread_calc = 0.0
@@ -5027,19 +4634,19 @@ def get_upcoming_predictions(sport, days=365):
                 # 2) H2H total
                 # 3) naive total
                 if eff_total is not None:
-                    game_dict['our_total'] = to_half(eff_total)
+                    game_dict['our_total'] = _round_to_half(eff_total)
                     game_dict['our_total_source'] = 'efficiency'
                 elif h2h_total is not None and h2h_games >= 3:
-                    game_dict['our_total'] = to_half(h2h_total)
+                    game_dict['our_total'] = _round_to_half(h2h_total)
                     game_dict['our_total_source'] = 'h2h'
                 elif _to_float_safe(game_dict.get('naive_total')) is not None:
-                    game_dict['our_total'] = to_half(game_dict.get('naive_total'))
+                    game_dict['our_total'] = _round_to_half(game_dict.get('naive_total'))
                     game_dict['our_total_source'] = 'naive'
                 else:
                     game_dict['our_total'] = None
                     game_dict['our_total_source'] = 'none'
                 if game_dict.get('our_total') is not None and sport in ('NBA', 'WNBA'):
-                    game_dict['our_total'] = to_half(min(230.0, float(game_dict.get('our_total'))))
+                    game_dict['our_total'] = _round_to_half(min(230.0, float(game_dict.get('our_total'))))
                 logger.info(
                     f"[eff-tier] {sport} {at} @ {ht}: total_tier={game_dict.get('our_total_source')}, "
                     f"value={game_dict.get('our_total')}, h2h_total={h2h_total}, naive_total={game_dict.get('naive_total')}"
@@ -5053,9 +4660,9 @@ def get_upcoming_predictions(sport, days=365):
                     max_divergence=8.0,
                 )
                 if clipped_xgb is not None:
-                    game_dict['xgb_spread'] = to_half(clipped_xgb)
+                    game_dict['xgb_spread'] = _round_to_half(clipped_xgb)
                 if blended_spread is not None:
-                    game_dict['naive_spread'] = to_half(blended_spread)
+                    game_dict['naive_spread'] = _round_to_half(blended_spread)
 
             if game_dict.get('home_score') is None:
                 # ── MLB: pitching-enhanced prediction (upcoming games only
@@ -5084,8 +4691,8 @@ def get_upcoming_predictions(sport, days=365):
                             if _mlb_result and _mlb_result[0] is not None:
                                 game_dict['xgb_home_score'] = _mlb_result[0]
                                 game_dict['xgb_away_score'] = _mlb_result[1]
-                                game_dict['xgb_spread']     = to_half(_mlb_result[2])
-                                game_dict['xgb_total']      = to_half(_mlb_result[3])
+                                game_dict['xgb_spread']     = _round_to_half(_mlb_result[2])
+                                game_dict['xgb_total']      = _round_to_half(_mlb_result[3])
                                 _mlb_spread = float(_mlb_result[2])
                                 _ml_prob = 0.5 * (1.0 + _math.erf(_mlb_spread / (3.0 * _math.sqrt(2))))
                         # 2. Pitching adjustment (cached, single ESPN API call)
@@ -5259,7 +4866,7 @@ def get_upcoming_predictions(sport, days=365):
                         _adj_delta = _raw_delta * _market_scale
                         _blended = max(0.05, min(0.95, _blended + _adj_delta))
                         if game_dict.get('xgb_total') is not None:
-                            game_dict['xgb_total'] = to_half(float(game_dict['xgb_total']) + _total_adj * _inj_conf * _market_scale)
+                            game_dict['xgb_total'] = _round_to_half(float(game_dict['xgb_total']) + _total_adj * _inj_conf * _market_scale)
 
                         # Rule #1 + #3 + #4 + #6 + #8 decision layer.
                         _implied = _home_mkt if _blended >= 0.5 else _away_mkt
@@ -5395,11 +5002,11 @@ def get_upcoming_predictions(sport, days=365):
             if _sp_pred.get('market_spread') is None:
                 _fb_spread = _sp_pred.get('naive_spread') or _sp_pred.get('xgb_spread')
                 if _fb_spread is not None:
-                    _sp_pred['market_spread'] = to_half(float(_fb_spread))
+                    _sp_pred['market_spread'] = round(float(_fb_spread), 2)
             if _sp_pred.get('market_total') is None:
                 _fb_total = _sp_pred.get('naive_total') or _sp_pred.get('xgb_total')
                 if _fb_total is not None:
-                    _sp_pred['market_total'] = to_half(float(_fb_total))
+                    _sp_pred['market_total'] = round(float(_fb_total), 2)
 
     # For NBA/MLB/NCAAW/SOCCER: Save newly generated predictions to database so Results page can use them
     if sport in ['NBA', 'MLB', 'NCAAW', 'SOCCER']:
@@ -5447,25 +5054,6 @@ def get_upcoming_predictions(sport, days=365):
     except Exception as _h2he:
         logger.debug(f"[h2h] attach failed for {sport}: {_h2he}")
 
-    # NBA/WNBA playoff totals: keep efficiency/H2H point estimate; add σ band from playoff realized-variance baseline.
-    if sport in ('NBA', 'WNBA'):
-        _sig_b = float(_NBA_PLAYOFF_TOTAL_STDEV_BASELINE or 0)
-        for _pred in predictions:
-            if _pred.get('home_score') is not None:
-                continue
-            if not _pred.get('is_playoff_game'):
-                continue
-            _ot = _pred.get('our_total')
-            if _ot is None:
-                continue
-            try:
-                _pt = float(_ot)
-            except (TypeError, ValueError):
-                continue
-            _pred['nba_playoff_total_sigma'] = to_half(_sig_b)
-            _pred['our_total_low'] = to_half(_pt - _sig_b)
-            _pred['our_total_high'] = to_half(_pt + _sig_b)
-
     # Non-NBA/WNBA our_total housekeeping tiers:
     # 1) H2H weighted total when >= 3 games
     # 2) Naive average from available recent game totals
@@ -5493,7 +5081,7 @@ def get_upcoming_predictions(sport, days=365):
                 if _tv is not None:
                     _totals.append(float(_tv))
             if _totals:
-                _pred['our_total'] = to_half(sum(_totals) / len(_totals))
+                _pred['our_total'] = _round_to_half(sum(_totals) / len(_totals))
                 _pred['our_total_source'] = 'naive'
                 logger.info(
                     f"[our-total-tier] {sport} {_at} @ {_ht}: tier=naive "
@@ -5508,25 +5096,9 @@ def get_upcoming_predictions(sport, days=365):
                 )
 
     for _pred in predictions:
-        for _k in ('market_spread', 'market_total', 'xgb_spread', 'xgb_total', 'naive_spread', 'naive_total', 'our_spread', 'our_total', 'our_total_low', 'our_total_high'):
+        for _k in ('market_spread', 'market_total', 'xgb_spread', 'xgb_total', 'naive_spread', 'naive_total', 'our_spread', 'our_total'):
             if _pred.get(_k) is not None:
-                _pred[_k] = to_half(_pred.get(_k))
-        _sigv = _pred.get('nba_playoff_total_sigma')
-        if _sigv is not None:
-            _pred['nba_playoff_total_sigma'] = to_half(_sigv)
-
-    if sport in ('NBA', 'WNBA'):
-        try:
-            _conn_snap = get_db_connection()
-            _ensure_nba_line_snapshot_schema(_conn_snap)
-            for _pred in predictions:
-                if _pred.get('home_score') is not None or not _pred.get('game_id'):
-                    continue
-                _upsert_nba_line_snapshot_row(_conn_snap, _pred, sport)
-            _conn_snap.commit()
-            _conn_snap.close()
-        except Exception as _nbs:
-            logger.debug(f"[nba snapshot] upsert failed: {_nbs}")
+                _pred[_k] = _round_to_half(_pred.get(_k))
 
     _PREDICTIONS_CACHE[cache_key] = {'ts': _time.time(), 'data': _copy.deepcopy(predictions)}
     return predictions
@@ -5852,13 +5424,6 @@ def calculate_nba_weekly_performance():
         except:
             return None
 
-    def clean_prob(val):
-        """Float prob from V2/DB; None if missing or NaN."""
-        x = to_float(val)
-        if x is None:
-            return None
-        return None if x != x else x  # NaN != NaN
-
     try:
         conn = get_db_connection()
         from datetime import datetime, timedelta
@@ -5867,8 +5432,7 @@ def calculate_nba_weekly_performance():
         games = conn.execute('''
             SELECT g.game_id, g.game_date, g.home_team_id, g.away_team_id,
                    g.home_score, g.away_score,
-                   p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability,
-                   p.catboost_home_prob
+                   p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
             FROM games g
             LEFT JOIN predictions p
               ON p.sport = 'NBA' AND (
@@ -5914,24 +5478,13 @@ def calculate_nba_weekly_performance():
             elo_prob  = to_float(game['elo_home_prob'])
             xgb_prob  = to_float(game['xgboost_home_prob']) or elo_prob
             ens_prob  = to_float(game['win_probability']) or elo_prob
-            cat_prob  = to_float(game.get('catboost_home_prob'))
-            logi_prob = to_float(game['logistic_home_prob'])
 
-            # V2 model predictions (Glicko-2, TrueSkill); NaNs cleaned
+            # V2 model predictions (Glicko-2, TrueSkill)
             v2 = get_v2_prediction('NBA', home_team, away_team, game['game_date'])
-            glicko2_prob   = clean_prob(v2.get('glicko2_prob')) if v2 else None
-            trueskill_prob = clean_prob(v2.get('trueskill_prob')) if v2 else None
+            glicko2_prob   = v2.get('glicko2_prob')   if v2 else None
+            trueskill_prob = v2.get('trueskill_prob') if v2 else None
             if v2:
-                _xv = clean_prob(v2.get('xgboost_prob'))
-                if _xv is not None:
-                    xgb_prob = _xv
-            # When V2 omits sub-models (common on historical rows), use stored DB slots:
-            # Grinder2 ≈ catboost, Takedown ≈ logistic — same mapping as performance pages.
-            if glicko2_prob is None:
-                glicko2_prob = cat_prob
-            if trueskill_prob is None:
-                trueskill_prob = logi_prob
-            if v2:
+                xgb_prob = v2.get('xgboost_prob', xgb_prob)
                 ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
 
             actual_home_win = home_score > away_score
@@ -6126,30 +5679,66 @@ def _actual_ats_side(margin_home, home_line):
 
 
 def _format_ou_vs_actual(actual_total, line):
-    return describe_ou_vs_line(actual_total, line)
+    side = _actual_ou_side(actual_total, line)
+    if side is None:
+        return None
+    return f"{side} — actual {actual_total:.1f} vs line {line:.1f}"
 
 
 def _format_ou_vs_xsharp_actual(actual_total, xsharp_adj, xsharp_raw):
     """Compare final combined score to XSharp projection (prefers injury/rest/park-adjusted total)."""
-    return describe_ou_vs_xsharp(actual_total, xsharp_adj, xsharp_raw)
+    ref = xsharp_adj if xsharp_adj is not None else xsharp_raw
+    if ref is None:
+        return None
+    side = _actual_ou_side(actual_total, ref)
+    if side is None:
+        return None
+    ref = float(ref)
+    if xsharp_adj is not None and xsharp_raw is not None and abs(float(xsharp_adj) - float(xsharp_raw)) > 0.05:
+        return f"{side} — actual {actual_total:.1f} vs XSharp {ref:.1f} (adj)"
+    return f"{side} — actual {actual_total:.1f} vs XSharp {ref:.1f}"
 
 
 def _format_ats_vs_actual(home_name, away_name, margin_home, home_line):
-    """Closing-line ATS sentence for results cards (team-based copy; see spread_copy)."""
-    return describe_ats_closing_line(home_name, away_name, margin_home, home_line)
+    side = _actual_ats_side(margin_home, home_line)
+    if side is None:
+        return None
+    if side == 'PUSH':
+        return f"PUSH — margin {margin_home:+.1f} vs home line {home_line:+.1f}"
+    team = home_name if side == 'HOME' else away_name
+    return f"{team} covers — margin {margin_home:+.1f} vs home line {home_line:+.1f}"
 
 
-def _format_xsharp_margin_vs_actual(home_name, away_name, margin_home, xsharp_margin):
-    """XSharp projected margin vs final margin; uses team names (not HOME/AWAY tokens)."""
-    return describe_xsharp_vs_final_margin(home_name, away_name, margin_home, xsharp_margin)
+def _format_xsharp_margin_vs_actual(margin_home, xsharp_margin):
+    """Actual home margin vs raw XSharp predicted margin (home − away)."""
+    if xsharp_margin is None:
+        return None
+    try:
+        xm = float(xsharp_margin)
+        am = float(margin_home)
+    except (TypeError, ValueError):
+        return None
+    eps = 1e-9
+    pred_home = xm > eps
+    pred_away = xm < -eps
+    act_home = am > eps
+    act_away = am < -eps
+    if not pred_home and not pred_away:
+        return f"Actual {am:+.1f} vs XSharp {xm:+.1f} (model pick'em)"
+    if not act_home and not act_away:
+        return f"Actual push {am:+.1f} vs XSharp {xm:+.1f}"
+    pred_w = 'HOME' if pred_home else 'AWAY'
+    act_w = 'HOME' if act_home else 'AWAY'
+    ok = pred_w == act_w
+    return (
+        f"{'Match' if ok else 'Miss'} — actual margin {am:+.1f} vs XSharp {xm:+.1f} "
+        f"(model {pred_w}, actual {act_w})"
+    )
 
 
 def _compute_spread_total_for_daily(sport, daily_results):
     """Compute XSharp spread/total grading for games already in daily_results (in-place).
-    Runs line lookup and final-score vs line summaries even when the spread/total model is absent.
-
-    Pick-side grading vs sportsbook lines is intentionally separate from MAE-style scoring:
-    use `compute_nba_spread_total_mae_vs_actual()` when you need error vs **final margin/total**."""
+    Runs line lookup and final-score vs line summaries even when the spread/total model is absent."""
     try:
         # H2H last-10 "Our Total" (used as the O/U line the model is compared to)
         try:
@@ -6222,12 +5811,12 @@ def _compute_spread_total_for_daily(sport, daily_results):
                 try:
                     if _xgb:
                         xp = _xgb.predict(h, a)
-                        xs = to_half(float(xp[2])) if xp and xp[2] is not None else None
-                        xt = to_half(float(xp[3])) if xp and xp[3] is not None else None
+                        xs = round(float(xp[2]), 1) if xp and xp[2] is not None else None
+                        xt = round(float(xp[3]), 1) if xp and xp[3] is not None else None
                     elif _sp:
                         nh, na, ns, nt = _sp.predict_score(h, a, sport)
-                        xs = to_half(float(ns)) if ns is not None else None
-                        xt = to_half(float(nt)) if nt is not None else None
+                        xs = round(float(ns), 1) if ns is not None else None
+                        xt = round(float(nt), 1) if nt is not None else None
                     else:
                         xs = xt = None
                 except Exception:
@@ -6311,12 +5900,6 @@ def _compute_spread_total_for_daily(sport, daily_results):
                     except Exception:
                         pass
 
-                # Sportsbook spreads/totals: half-point increments only.
-                if ms is not None:
-                    ms = to_half(ms)
-                if mt is not None:
-                    mt = to_half(mt)
-
                 am = hs - as_
                 at = hs + as_
 
@@ -6367,7 +5950,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                     park_adj = _park_weather_total_adjustment(sport, h)
                     adj_xt = xt + inj_adj + rest_adj + park_adj if xt is not None else None
                     our_total_h2h = g.get('our_total')
-                    g['xgb_total_adj'] = to_half(adj_xt) if adj_xt is not None else None
+                    g['xgb_total_adj'] = round(adj_xt, 2) if adj_xt is not None else None
                     g['total_adj_breakdown'] = {
                         'injury': round(inj_adj, 2),
                         'rest': round(rest_adj, 2),
@@ -6378,15 +5961,15 @@ def _compute_spread_total_for_daily(sport, daily_results):
                     total_fallback_used = False
                     if mt is None:
                         if our_total_h2h is not None:
-                            mt = to_half(float(our_total_h2h))
+                            mt = round(float(our_total_h2h), 1)
                             g['market_total_reason'] = "our market proj (3+3 games)"
                             total_fallback_used = True
                         elif _OU_BENCH.get(sport):
-                            mt = to_half(float(_OU_BENCH[sport]))
+                            mt = float(_OU_BENCH[sport])
                             g['market_total_reason'] = "sport benchmark (fallback)"
                             total_fallback_used = True
                         elif adj_xt is not None:
-                            mt = to_half(adj_xt)
+                            mt = round(adj_xt, 1)
                             g['market_total_reason'] = "XSharp total (fallback)"
                             total_fallback_used = True
                     g['market_total'] = mt
@@ -6411,8 +5994,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                             h2h_edge = our_total_h2h - mt
                             strong = (h2h_edge > 0 and edge > 0) or (h2h_edge < 0 and edge < 0)
                         g['strong_ou'] = strong
-                        _mt_mlb = to_half(mt)
-                        label = f"{tp_disp.title()} {_mt_mlb:.1f}"
+                        label = f"{tp_disp.title()} {mt:.1f}"
                         if strong and abs(edge) >= _ou_edge_threshold(sport):
                             label += " ★"
                         g['total_pick_label'] = label
@@ -6429,7 +6011,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                     park_adj = _park_weather_total_adjustment(sport, h)
                     adj_xt = xt + inj_adj + rest_adj + park_adj if xt is not None else None
                     our_total_h2h = g.get('our_total')
-                    g['xgb_total_adj'] = to_half(adj_xt) if adj_xt is not None else None
+                    g['xgb_total_adj'] = round(adj_xt, 2) if adj_xt is not None else None
                     g['total_adj_breakdown'] = {
                         'injury': round(inj_adj, 2),
                         'rest': round(rest_adj, 2),
@@ -6440,15 +6022,15 @@ def _compute_spread_total_for_daily(sport, daily_results):
                     total_fallback_used = False
                     if mt is None:
                         if our_total_h2h is not None:
-                            mt = to_half(float(our_total_h2h))
+                            mt = round(float(our_total_h2h), 1)
                             g['market_total_reason'] = "our market proj (3+3 games)"
                             total_fallback_used = True
                         elif _OU_BENCH.get(sport):
-                            mt = to_half(float(_OU_BENCH[sport]))
+                            mt = float(_OU_BENCH[sport])
                             g['market_total_reason'] = "sport benchmark (fallback)"
                             total_fallback_used = True
                         elif adj_xt is not None:
-                            mt = to_half(adj_xt)
+                            mt = round(adj_xt, 1)
                             g['market_total_reason'] = "XSharp total (fallback)"
                             total_fallback_used = True
                     g['market_spread'] = ms
@@ -6525,8 +6107,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         g['spread_line_display'] = None
                     g['total_pick_label'] = None
                     if tp_disp in ('OVER', 'UNDER') and mt is not None:
-                        _mtd = to_half(mt)
-                        g['total_line_display'] = f"{tp_disp.title()} {_mtd:.1f}"
+                        g['total_line_display'] = f"{tp_disp.title()} {mt:.1f}"
                         label = g['total_line_display']
                         if g.get('strong_ou'):
                             label += " ★"
@@ -6555,7 +6136,7 @@ def _compute_spread_total_for_daily(sport, daily_results):
                         g['result_ou_vs_market_line'] = _format_ou_vs_actual(_at, _mt)
                         g['result_ou_vs_xsharp'] = _format_ou_vs_xsharp_actual(_at, _adj, _xtr)
                         g['result_ats_vs_market_line'] = _format_ats_vs_actual(h, a, _am, _ms_r)
-                        g['result_margin_vs_xsharp'] = _format_xsharp_margin_vs_actual(h, a, _am, g.get('xgb_spread'))
+                        g['result_margin_vs_xsharp'] = _format_xsharp_margin_vs_actual(_am, g.get('xgb_spread'))
                 except Exception:
                     pass
 
@@ -8623,9 +8204,9 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         <div class="sf-item">
                             <span class="sf-label">Our Spread</span>
                             <span class="sf-val">
-                                {% if game.get('our_spread') is not none %}{{ game.get('our_spread')|fmt_spread }}
-                                {% elif game.get('spread_margin_home') is not none %}{{ game.get('spread_margin_home')|fmt_spread }}
-                                {% elif game.get('xgb_spread') is not none %}{{ game.get('xgb_spread')|fmt_spread }}
+                                {% if game.get('our_spread') is not none %}{{ "%+.1f"|format(game.get('our_spread')) }}
+                                {% elif game.get('spread_margin_home') is not none %}{{ "%+.1f"|format(game.get('spread_margin_home')) }}
+                                {% elif game.get('xgb_spread') is not none %}{{ "%+.1f"|format(game.get('xgb_spread')) }}
                                 {% else %}—{% endif %}
                             </span>
                         </div>
@@ -8633,22 +8214,22 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                             <span class="sf-label">Market Spread</span>
                             <span class="sf-val">
                                 {% if game.market_spread_label is defined and game.market_spread_label %}{{ game.market_spread_label }}
-                                {% elif game.market_spread is not none %}{{ game.market_spread|fmt_spread }}
+                                {% elif game.market_spread is not none %}{{ "%+.1f"|format(game.market_spread) }}
                                 {% elif game.market_spread_reason is defined and game.market_spread_reason %}{{ game.market_spread_reason }}
                                 {% else %}—{% endif %}
                             </span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label" title="Scoring margin (home − away). Spread prices: favorite minus (must cover), dog plus (cover = win or lose by less).">Final margin</span>
-                            <span class="sf-val" title="Home points minus away points for this game.">{{ "%+.1f"|format(actual_spread) }}</span>
+                            <span class="sf-label">Actual Spread</span>
+                            <span class="sf-val">{{ "%+.1f"|format(actual_spread) }}</span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label" title="Closing spread vs final: minus = favorite (must beat the number); plus = dog (cover by winning or staying inside it).">Closing spread vs final</span>
-                            <span class="sf-val" style="font-size:0.82em;line-height:1.35;text-align:right;max-width:min(100%,440px);">{% if game.result_ats_vs_market_line is defined and game.result_ats_vs_market_line %}{{ game.result_ats_vs_market_line }}{% else %}—{% endif %}</span>
+                            <span class="sf-label">Market ATS vs final</span>
+                            <span class="sf-val">{% if game.result_ats_vs_market_line is defined and game.result_ats_vs_market_line %}{{ game.result_ats_vs_market_line }}{% else %}—{% endif %}</span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label" title="XSharp projected margin compared to the final margin (same convention as Final margin).">XSharp vs final</span>
-                            <span class="sf-val" style="font-size:0.82em;line-height:1.35;text-align:right;max-width:min(100%,440px);">{% if game.result_margin_vs_xsharp is defined and game.result_margin_vs_xsharp %}{{ game.result_margin_vs_xsharp }}{% else %}—{% endif %}</span>
+                            <span class="sf-label">XSharp margin vs final</span>
+                            <span class="sf-val">{% if game.result_margin_vs_xsharp is defined and game.result_margin_vs_xsharp %}{{ game.result_margin_vs_xsharp }}{% else %}—{% endif %}</span>
                         </div>
                     </div>
                     <div class="result-footer section-total">
@@ -8663,12 +8244,12 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         </div>
                         <div class="sf-item">
                             <span class="sf-label">XSharp Total</span>
-                            <span class="sf-val sf-xgb">{% if game.xgb_total is not none %}{{ game.xgb_total|fmt_total }}{% if game.xgb_total_adj is defined and game.xgb_total_adj is not none and ((game.xgb_total_adj|float) - (game.xgb_total|float))|abs > 0.05 %} <span style="color:#a78bfa;font-size:0.78em;">→ {{ game.xgb_total_adj|fmt_total }}</span>{% endif %}{% else %}—{% endif %}</span>
+                            <span class="sf-val sf-xgb">{% if game.xgb_total is not none %}{{ "%.1f"|format(game.xgb_total) }}{% if game.xgb_total_adj is defined and game.xgb_total_adj is not none and (game.xgb_total_adj - game.xgb_total)|abs > 0.05 %} <span style="color:#a78bfa;font-size:0.78em;">→ {{ "%.1f"|format(game.xgb_total_adj) }}</span>{% endif %}{% else %}—{% endif %}</span>
                         </div>
                         <div class="sf-item">
                             <span class="sf-label">Our Market Total (3+3)</span>
                             <span class="sf-val">
-                                {% if game.our_total is defined and game.our_total is not none %}{{ game.our_total|fmt_total }}{% else %}—{% endif %}
+                                {% if game.our_total is defined and game.our_total is not none %}{{ "%.1f"|format(game.our_total) }}{% else %}—{% endif %}
                                 {% if game.our_ou_record_vs_xsharp is defined and game.our_ou_record_vs_xsharp %}
                                 <span style="display:block;font-size:0.72em;color:#64748b;font-weight:700;">{{ game.our_ou_record_vs_xsharp }} vs XSharp</span>
                                 {% endif %}
@@ -8677,22 +8258,22 @@ DAILY_RESULTS_TEMPLATE = BASE_TEMPLATE.replace(
                         <div class="sf-item">
                             <span class="sf-label">Vegas Line</span>
                             <span class="sf-val">
-                                {% if game.market_total is not none %}{{ game.market_total|fmt_total }}
+                                {% if game.market_total is not none %}{{ "%.1f"|format(game.market_total) }}
                                 {% elif game.market_total_reason is defined and game.market_total_reason %}{{ game.market_total_reason }}
                                 {% else %}—{% endif %}
                             </span>
                         </div>
                         <div class="sf-item">
                             <span class="sf-label">Actual Total</span>
-                            <span class="sf-val">{{ actual_total|fmt_total }}</span>
+                            <span class="sf-val">{{ "%.1f"|format(actual_total) }}</span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label" title="Closing total vs combined final score.">Closing total vs final</span>
-                            <span class="sf-val" style="font-size:0.82em;line-height:1.35;text-align:right;max-width:min(100%,440px);">{% if game.result_ou_vs_market_line is defined and game.result_ou_vs_market_line %}{{ game.result_ou_vs_market_line }}{% else %}—{% endif %}</span>
+                            <span class="sf-label">Market O/U vs final</span>
+                            <span class="sf-val">{% if game.result_ou_vs_market_line is defined and game.result_ou_vs_market_line %}{{ game.result_ou_vs_market_line }}{% else %}—{% endif %}</span>
                         </div>
                         <div class="sf-item">
-                            <span class="sf-label" title="XSharp projected total vs actual combined score.">XSharp total vs final</span>
-                            <span class="sf-val" style="font-size:0.82em;line-height:1.35;text-align:right;max-width:min(100%,440px);">{% if game.result_ou_vs_xsharp is defined and game.result_ou_vs_xsharp %}{{ game.result_ou_vs_xsharp }}{% else %}—{% endif %}</span>
+                            <span class="sf-label">XSharp O/U vs final</span>
+                            <span class="sf-val">{% if game.result_ou_vs_xsharp is defined and game.result_ou_vs_xsharp %}{{ game.result_ou_vs_xsharp }}{% else %}—{% endif %}</span>
                         </div>
                     </div>
                 </div>
@@ -9433,7 +9014,9 @@ def landing_page():
         + _landing_share_url
     )
 
-    # Top Value Picks Today (card list only — no share preview image; that duplicated the rows below).
+    # Build "Today's Top Picks" from stored predictions in DB (lightweight).
+    # Ranking emphasizes value/consensus quality over pure heavy-favorite confidence.
+    # We still always return 4 picks (fallback ranking fills gaps).
     todays_picks = []
     try:
         _tp_tz = ZoneInfo('America/New_York')
@@ -9442,8 +9025,7 @@ def landing_page():
         _tp_today = datetime.now().strftime('%Y-%m-%d')
     try:
         _tp_conn = get_db_connection()
-        _tp_rows = _tp_conn.execute(
-            '''
+        _tp_rows = _tp_conn.execute('''
             SELECT p.game_id, p.sport, p.home_team_id, p.away_team_id, p.win_probability,
                    p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.meta_home_prob,
                    b.home_implied_prob, b.away_implied_prob
@@ -9459,10 +9041,8 @@ def landing_page():
               AND UPPER(TRIM(COALESCE(p.home_team_id, ''))) NOT IN ('TBD', 'TBA', 'N/A')
               AND UPPER(TRIM(COALESCE(p.away_team_id, ''))) NOT IN ('TBD', 'TBA', 'N/A')
             ORDER BY p.game_date ASC
-            LIMIT 40
-            ''',
-            (_tp_today,),
-        ).fetchall()
+            LIMIT 80
+        ''', (_tp_today,)).fetchall()
         _tp_conn.close()
         _candidates = []
         for _tp in _tp_rows:
@@ -9477,6 +9057,7 @@ def landing_page():
             _pick_prob = _ens_home if _home_picked else (1.0 - _ens_home)
             _pick = _home if _home_picked else _away
 
+            # Model agreement score: lower spread between models = higher quality.
             _model_vals = []
             for _k in ('elo_home_prob', 'xgboost_home_prob', 'logistic_home_prob', 'meta_home_prob', 'win_probability'):
                 _v = _tp[_k]
@@ -9492,6 +9073,7 @@ def landing_page():
                 _spread = max(_aligned) - min(_aligned)
                 _agreement_bonus = max(0.0, 0.18 - _spread) * 120.0
 
+            # Market edge bonus where odds exist.
             _implied = _tp['home_implied_prob'] if _home_picked else _tp['away_implied_prob']
             _edge_bonus = 0.0
             if _implied is not None:
@@ -9500,6 +9082,7 @@ def landing_page():
                 except Exception:
                     _edge_bonus = 0.0
 
+            # Moderate-confidence sweet spot; penalize ultra-heavy favorites.
             _conf_bonus = (_pick_prob - 0.5) * 55.0
             _heavy_penalty = max(0.0, _pick_prob - 0.77) * 130.0
             _quality_score = _conf_bonus + _edge_bonus + _agreement_bonus - _heavy_penalty
@@ -9517,6 +9100,7 @@ def landing_page():
                 'fallback_score': abs(_ens_home - 0.5),
             })
 
+        # Deduplicate by game and pick the strongest quality candidates first.
         _seen_game_ids = set()
         _scored = sorted(_candidates, key=lambda x: x['quality_score'], reverse=True)
         for _row in _scored:
@@ -9532,6 +9116,7 @@ def landing_page():
             if len(todays_picks) >= 4:
                 break
 
+        # Always keep 4 picks: fallback to strongest confidence if quality list is short.
         if len(todays_picks) < 4:
             _picked_keys = {f"{p['sport']}::{p['away']}::{p['home']}" for p in todays_picks}
             _fallback = sorted(_candidates, key=lambda x: x['fallback_score'], reverse=True)
@@ -9549,6 +9134,31 @@ def landing_page():
                     break
     except Exception as _tp_err:
         logger.debug(f"Today's Top Picks DB query failed: {_tp_err}")
+
+    todays_share_image_src = None
+    todays_share_image_view_url = None
+    if todays_picks:
+        try:
+            _cards = []
+            for _p in todays_picks[:3]:
+                _cards.append({
+                    'away_team': _p.get('away'),
+                    'home_team': _p.get('home'),
+                    'pick_side': _p.get('pick_side') or ('home' if _p.get('pick') == _p.get('home') else 'away'),
+                    'pick_team': _p.get('pick'),
+                    'confidence': _p.get('prob'),
+                })
+            _landing_payload = {
+                'type': 'predictions',
+                'sport': 'Top Value Picks',
+                'date': _tp_today,
+                'cards': _cards,
+            }
+            _landing_token = _register_share_image(_landing_payload)
+            todays_share_image_src = url_for('share_predictions_image', token=_landing_token, fmt='jpg')
+            todays_share_image_view_url = url_for('share_predictions_view', token=_landing_token)
+        except Exception as _lp_err:
+            logger.debug(f"Landing top-picks share image build failed: {_lp_err}")
 
     return render_template_string("""
 <!DOCTYPE html>
@@ -9575,6 +9185,7 @@ def landing_page():
     <link rel="apple-touch-icon" href="/static/UnderdogsLogo.png">
     <link rel="canonical" href="https://www.underdogs.bet{{ request.path }}">
     <link rel="stylesheet" href="/static/css/site-search.css">
+    <link rel="stylesheet" href="/static/css/share-image.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
@@ -10324,12 +9935,29 @@ def landing_page():
     </div>
 </div>
 
+<!-- Today's AI Picks (live product preview) -->
 {% if todays_picks %}
-<!-- Top Value Picks Today: interactive cards only (no JPG preview — same info as rows below would duplicate) -->
 <div class="section" style="padding-top:24px;padding-bottom:8px;">
-    <h2 class="section-title" style="margin-bottom:6px;text-align:center;">Top Value Picks Today</h2>
-    <p class="section-sub" style="color:#334155;text-align:center;">Ranked by edge quality, model agreement, and confidence</p>
-    <div style="display:flex;flex-direction:column;gap:14px;max-width:600px;margin:16px auto 0;">
+    <div style="text-align:center;margin-bottom:8px;">
+        <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:#00C076;font-size:0.78em;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;padding:5px 14px;border-radius:999px;">
+            <span style="display:inline-block;width:8px;height:8px;background:#00C076;border-radius:50%;animation:pulseDot 1.6s infinite;"></span>
+            Winning Results Tracked Daily
+        </span>
+    </div>
+    <h2 class="section-title" style="margin-bottom:6px;">Top Value Picks Today</h2>
+    <p class="section-sub" style="color:#334155;">Ranked by edge quality, model agreement, and confidence</p>
+    {% if todays_share_image_src %}
+    <div class="ud-share-image-stack" style="max-width:920px;margin-left:auto;margin-right:auto;">
+        <div class="ud-share-image-actions" style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px 0 14px;">
+            <a href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;justify-content:center;background:#0f172a;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Open in browser</a>
+            <a href="{{ todays_share_image_src }}" download="top-value-picks.jpg" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Save image</a>
+        </div>
+        <a class="ud-share-frame" href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener">
+            <img src="{{ todays_share_image_src }}" alt="Top value picks preview image">
+        </a>
+    </div>
+    {% endif %}
+    <div style="display:flex;flex-direction:column;gap:14px;max-width:600px;margin:0 auto;">
         {% for tp in todays_picks %}
         {% set _disp_pct = tp.prob if tp.prob >= 50 else (100 - tp.prob)|round(1) %}
         <a href="/{{ tp.slug }}" style="display:block;background:#ffffff;border:1px solid rgba(15,23,42,0.18);border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:transform .18s, border-color .18s, box-shadow .18s;" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='rgba(251,191,36,0.5)';this.style.boxShadow='0 10px 22px rgba(15,23,42,0.12)';" onmouseout="this.style.transform='none';this.style.borderColor='rgba(15,23,42,0.18)';this.style.boxShadow='none';">
@@ -10344,6 +9972,7 @@ def landing_page():
         {% endfor %}
     </div>
 </div>
+<style>@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:0.4;}}</style>
 {% endif %}
 
 <!-- Sports grid -->
@@ -10752,6 +10381,8 @@ def landing_page():
          units_banner_items=units_banner_items,
          seo_archive_links=seo_archive_links,
          todays_picks=todays_picks,
+         todays_share_image_src=todays_share_image_src,
+         todays_share_image_view_url=todays_share_image_view_url,
          landing_share_url=_landing_share_url,
          landing_share_title=_landing_share_title,
          landing_share_body=_landing_share_body,
@@ -10785,17 +10416,6 @@ _SPORT_TO_ROUTE = {
     'NCAAF': '/ncaaf-picks',
     'WNBA': '/wnba-picks',
     'SOCCER': '/soccer-picks',
-}
-
-# ESPN.com game URLs use league path segments (not identical to internal sport codes).
-_ESPN_WEB_GAME_SEGMENT = {
-    'NBA': 'nba',
-    'WNBA': 'wnba',
-    'MLB': 'mlb',
-    'NFL': 'nfl',
-    'NHL': 'nhl',
-    'NCAAB': 'mens-college-basketball',
-    'NCAAF': 'college-football',
 }
 
 _ESPN_SCOREBOARD_ENDPOINTS = {
@@ -10979,102 +10599,6 @@ def _build_search_suggestions(raw_query: str, limit: int = 14):
     return out
 
 
-_SEARCH_MONTH_ABBR = (
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-)
-
-
-def _game_date_anchor_iso(game_date):
-    if game_date is None:
-        return None
-    s = str(game_date).strip()
-    if len(s) >= 10 and s[4:5] == '-' and s[7:8] == '-':
-        return s[:10]
-    return None
-
-
-def _format_game_date_short(game_date):
-    iso = _game_date_anchor_iso(game_date)
-    if not iso:
-        gl = str(game_date or '').strip()
-        return gl if gl else 'Date TBD'
-    y, m, d = iso.split('-')
-    mi = int(m) - 1
-    if 0 <= mi < 12:
-        return f'{_SEARCH_MONTH_ABBR[mi]} {int(d)}, {y}'
-    return iso
-
-
-def _format_search_pct(pct):
-    if pct is None:
-        return ''
-    try:
-        x = float(pct)
-    except (TypeError, ValueError):
-        return ''
-    if x != x:
-        return ''
-    return f'{round(x, 1)}%'
-
-
-def _format_search_pick_line(predicted_winner, win_probability_pct):
-    pw = predicted_winner
-    if pw is not None:
-        ps = str(pw).strip()
-        if ps and ps.lower() not in ('none', 'null', ''):
-            prob_txt = _format_search_pct(win_probability_pct)
-            if prob_txt:
-                return f'{ps} ({prob_txt} ML)'
-            return ps
-    prob_txt = _format_search_pct(win_probability_pct)
-    if prob_txt:
-        return f'ML consensus {prob_txt}'
-    return 'Prediction pending'
-
-
-def _sport_label_for_search(sport_code: str) -> str:
-    code = (sport_code or '').upper()
-    meta = SPORTS_INFO.get(code)
-    if meta and meta.get('name'):
-        return meta['name']
-    return code.replace('_', ' ').title() if code else 'Sport'
-
-
-def _sport_results_page_url(sport: str) -> str:
-    slug = _SPORT_RESULTS_SLUGS.get((sport or '').upper())
-    return f'/{slug}' if slug else '/results'
-
-
-def _prediction_row_urls(sport: str, game_date):
-    sp = (sport or '').upper()
-    slug = SPORT_SEO_SLUGS.get(sp)
-    if not slug:
-        return '/', None
-    base = f'/{slug}'
-    da = _game_date_anchor_iso(game_date)
-    if da:
-        primary = f'{base}#date-{da}'
-    else:
-        primary = base
-    props = _PROPS_SEO_PATH_BY_LEAGUE.get(sp)
-    return primary, props
-
-
-def _espn_event_date_iso(ev, comp):
-    """Best-effort YYYY-MM-DD from ESPN scoreboard event/competition."""
-    for blob in (comp, ev):
-        if not blob:
-            continue
-        d = blob.get('date') or blob.get('startDate')
-        if not d:
-            continue
-        s = str(d).strip()
-        if len(s) >= 10 and s[4:5] == '-' and s[7:8] == '-':
-            return s[:10]
-    return None
-
-
 def _parse_search_model(query_text: str):
     q = query_text.lower()
     for public_name, internal_name in _PUBLIC_TO_INTERNAL_MODEL.items():
@@ -11121,80 +10645,41 @@ def _search_model_performance(conn, internal_model: str, threshold: int | None):
                 """,
                 (sport, threshold_pct, threshold_pct)
             ).fetchone()[0]
-        rec_l = max(total_games - correct, 0)
-        disp = _sport_label_for_search(sport)
-        sub_parts = [f'{correct}-{rec_l}', f'{accuracy}% accuracy']
-        if threshold is not None and filtered_games is not None:
-            sub_parts.append(f'{filtered_games} games ≥ {threshold}%')
         results.append({
             'sport': sport,
-            'record': f'{correct}-{rec_l}',
+            'record': f'{correct}-{max(total_games - correct, 0)}',
             'accuracy': accuracy,
             'filtered_games': filtered_games,
-            'url': _sport_results_page_url(sport),
-            'title': f'{disp} results',
-            'subtitle': ' · '.join(sub_parts),
         })
     return results
 
 def _search_local_team_predictions(conn, query_text: str):
     like = f"%{query_text.lower()}%"
-    pred_cols = {row[1] for row in conn.execute('PRAGMA table_info(predictions)')}
-    sel_cols = ['sport', 'game_date']
-    if 'game_id' in pred_cols:
-        sel_cols.append('game_id')
-    sel_cols += ['away_team_id', 'home_team_id']
-    if 'predicted_winner' in pred_cols:
-        sel_cols.append('predicted_winner')
-    sel_cols.append('win_probability')
-    order_sql = (
-        'datetime(COALESCE(created_at, game_date)) DESC'
-        if 'created_at' in pred_cols
-        else 'CASE WHEN game_date IS NULL THEN 1 ELSE 0 END, game_date DESC'
-    )
-    sql = f"""
-        SELECT {', '.join(sel_cols)}
+    rows = conn.execute(
+        """
+        SELECT sport, game_date, away_team_id, home_team_id, predicted_winner, win_probability
         FROM predictions
         WHERE LOWER(COALESCE(home_team_id,'')) LIKE ?
            OR LOWER(COALESCE(away_team_id,'')) LIKE ?
-        ORDER BY {order_sql}
-        LIMIT 8
-    """
-    rows = conn.execute(sql, (like, like)).fetchall()
-    out = []
-    for r in rows:
-        sport = r['sport']
-        away = (r['away_team_id'] or '').strip()
-        home = (r['home_team_id'] or '').strip()
-        win_pct = round(float(r['win_probability'] or 0) * 100, 1)
-        pw = r['predicted_winner'] if 'predicted_winner' in pred_cols else None
-        pick_line = _format_search_pick_line(pw, win_pct)
-        primary_url, props_url = _prediction_row_urls(sport, r['game_date'])
-        disp_sp = _sport_label_for_search(sport)
-        row_d = {
-            'sport': sport,
-            'game_date': r['game_date'],
-            'away_team': away,
-            'home_team': home,
-            'predicted_winner': pw,
-            'win_probability': win_pct,
-            'pick_line': pick_line,
-            'url': primary_url,
-            'title': f'{away} @ {home}',
-            'subtitle': f'{_format_game_date_short(r["game_date"])} · {pick_line} · {disp_sp}',
-        }
-        if props_url:
-            row_d['props_url'] = props_url
-        if 'game_id' in pred_cols and r['game_id']:
-            row_d['game_id'] = str(r['game_id'])
-        out.append(row_d)
-    return out
+        ORDER BY created_at DESC
+        LIMIT 6
+        """,
+        (like, like)
+    ).fetchall()
+    return [{
+        'sport': r['sport'],
+        'game_date': r['game_date'],
+        'away_team': r['away_team_id'],
+        'home_team': r['home_team_id'],
+        'predicted_winner': r['predicted_winner'],
+        'win_probability': round(float(r['win_probability'] or 0) * 100, 1),
+    } for r in rows]
 
 def _search_espn_team_matches(query_text: str):
     q = query_text.lower()
     matches = []
     for sport, endpoint in _ESPN_SCOREBOARD_ENDPOINTS.items():
-        if len(matches) >= 8:
+        if len(matches) >= 6:
             break
         try:
             data = _cached_get(endpoint, timeout=6) or {}
@@ -11207,42 +10692,15 @@ def _search_espn_team_matches(query_text: str):
                 away = next((t for t in teams if t.get('homeAway') == 'away'), teams[-1])
                 home_name = ((home.get('team') or {}).get('displayName') or '').strip()
                 away_name = ((away.get('team') or {}).get('displayName') or '').strip()
-                if q not in home_name.lower() and q not in away_name.lower():
-                    continue
-                status = (comp.get('status') or {}).get('type', {}).get('shortDetail', 'Scheduled')
-                disp_sp = _sport_label_for_search(sport)
-                slug = SPORT_SEO_SLUGS.get(sport)
-                date_iso = _espn_event_date_iso(ev, comp)
-                pick_route = _SPORT_TO_ROUTE.get(sport, '/')
-                if slug and date_iso:
-                    same_site_url = f'/{slug}#date-{date_iso}'
-                elif slug:
-                    same_site_url = f'/{slug}'
-                else:
-                    same_site_url = pick_route
-                gid = ev.get('id')
-                seg = _ESPN_WEB_GAME_SEGMENT.get(sport)
-                espn_url = (
-                    f'https://www.espn.com/{seg}/game/_/gameId/{gid}'
-                    if gid and seg
-                    else None
-                )
-                sub = f'{disp_sp} · {status}'
-                if date_iso:
-                    sub = f'{_format_game_date_short(date_iso)} · ' + sub
-                matches.append({
-                    'sport': sport,
-                    'home_team': home_name,
-                    'away_team': away_name,
-                    'status': status,
-                    'game_date': date_iso,
-                    'url': same_site_url,
-                    'title': f'{away_name} @ {home_name}',
-                    'subtitle': sub,
-                    'espn_url': espn_url,
-                })
-                if len(matches) >= 8:
-                    break
+                if q in home_name.lower() or q in away_name.lower():
+                    matches.append({
+                        'sport': sport,
+                        'home_team': home_name,
+                        'away_team': away_name,
+                        'status': (comp.get('status') or {}).get('type', {}).get('shortDetail', 'Scheduled'),
+                    })
+                    if len(matches) >= 6:
+                        break
         except Exception:
             continue
     return matches
@@ -11257,8 +10715,7 @@ def _build_search_payload(raw_query: str):
             'model_results': [],
             'team_results': [],
             'espn_results': [],
-            'suggested_route': None,
-            'suggested_route_label': None,
+            'suggested_route': '/',
         }
     public_model, internal_model = _parse_search_model(q)
     threshold = _parse_confidence_threshold(q)
@@ -11273,7 +10730,6 @@ def _build_search_payload(raw_query: str):
         'team_results': [],
         'espn_results': [],
         'suggested_route': None,
-        'suggested_route_label': None,
     }
     try:
         conn = get_db_connection()
@@ -11283,22 +10739,14 @@ def _build_search_payload(raw_query: str):
     except Exception:
         pass
     payload['espn_results'] = _search_espn_team_matches(q)
-    top_sport = None
     if payload['team_results']:
         top_sport = (payload['team_results'][0].get('sport') or '').upper()
-        route = _SPORT_TO_ROUTE.get(top_sport)
-        if route:
-            payload['suggested_route'] = route
-            payload['suggested_route_label'] = f'Open {_sport_label_for_search(top_sport)} picks'
+        payload['suggested_route'] = _SPORT_TO_ROUTE.get(top_sport)
     elif payload['espn_results']:
         top_sport = (payload['espn_results'][0].get('sport') or '').upper()
-        route = _SPORT_TO_ROUTE.get(top_sport)
-        if route:
-            payload['suggested_route'] = route
-            payload['suggested_route_label'] = f'Open {_sport_label_for_search(top_sport)} picks'
+        payload['suggested_route'] = _SPORT_TO_ROUTE.get(top_sport)
     elif internal_model or threshold is not None:
         payload['suggested_route'] = '/results'
-        payload['suggested_route_label'] = 'Open sport results hub'
     return payload
 
 @app.route('/api/search')
@@ -14485,82 +13933,22 @@ def api_get_sports():
     })
 
 if __name__ == '__main__':
-    import os
-    import socket
-    import sys
-
-    from werkzeug.serving import make_server
-
-    # Hosted platforms need 0.0.0.0 + $PORT. Local dev: 127.0.0.1 and an OS-assigned FREE port
-    # (port 0) unless LOCAL_PORT or PORT is set — avoids fighting stale listeners on 5060.
-    _paas = bool(
-        os.environ.get('RENDER')
-        or os.environ.get('RAILWAY_ENVIRONMENT')
-        or os.environ.get('RAILWAY_PUBLIC_DOMAIN')
-        or os.environ.get('FLY_APP_NAME')
-        or os.environ.get('HEROKU_APP_NAME')
-        or os.environ.get('K_SERVICE')
-    )
-
+    import os, socket
+    # Use $PORT from Railway/Render, fall back to auto-finding a local port
     env_port = os.environ.get('PORT')
-    local_port_env = os.environ.get('LOCAL_PORT')
     if env_port:
         port = int(env_port)
-    elif _paas:
-        port = 5000
-    elif local_port_env not in (None, ''):
-        port = int(local_port_env)
     else:
-        port = 0  # kernel picks any free port
+        port = 5000
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(('0.0.0.0', port)) != 0:
+                    break
+                port += 1
 
-    bind_host = os.environ.get('HOST') or os.environ.get('BIND_HOST')
-    if bind_host is None:
-        bind_host = '0.0.0.0' if _paas else '127.0.0.1'
-
-    srv = None
-    listen_sock = None
-
-    try:
-        if bind_host == '0.0.0.0':
-            listen_sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-            listen_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-            listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listen_sock.bind(('::', port))
-            listen_sock.listen(128)
-            port = listen_sock.getsockname()[1]
-            srv = make_server('::', port, app, threaded=True, fd=listen_sock.fileno())
-            listen_sock.close()
-            listen_sock = None
-        else:
-            srv = make_server(bind_host, port, app, threaded=True)
-            if port == 0:
-                port = srv.server_address[1]
-    except OSError as exc:
-        if listen_sock is not None:
-            try:
-                listen_sock.close()
-            except OSError:
-                pass
-        print(f"[server] bind failed ({exc}). Try unsetting LOCAL_PORT for auto port, or: pkill -f NHL77FINAL.py", flush=True)
-        sys.exit(1)
-
-    print("\n" + "="*60, flush=True)
-    print("underdogs.bet — local dev server", flush=True)
-    print("="*60, flush=True)
-    print("OPEN THIS URL (copy the whole line):", flush=True)
-    print(f"   http://127.0.0.1:{port}/nba-picks", flush=True)
-    print("Homepage:", flush=True)
-    print(f"   http://127.0.0.1:{port}/", flush=True)
-    print("(http only — not https. Keep this terminal open.)", flush=True)
-    if bind_host == '0.0.0.0' and not _paas:
-        print(f"LAN (optional): http://<this-mac-ip>:{port}/nba-picks", flush=True)
-    print("="*60 + "\n", flush=True)
-
-    if os.environ.get('OPEN_BROWSER') in ('1', 'true', 'yes'):
-        try:
-            import webbrowser
-            webbrowser.open(f'http://127.0.0.1:{port}/nba-picks')
-        except Exception:
-            pass
-
-    srv.serve_forever()
+    print("\n" + "="*60)
+    print("🎯 underdogs.bet - Multi-Sport Prediction Platform")
+    print("="*60)
+    print(f"🌐 Visit http://0.0.0.0:{port}")
+    print("="*60 + "\n")
+    app.run(debug=False, host='0.0.0.0', port=port, use_reloader=False, threaded=True)

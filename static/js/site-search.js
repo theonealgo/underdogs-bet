@@ -91,116 +91,6 @@
             return r.json();
           })
           .then(function (data) {
-            function section(title, itemsHtml) {
-              if (!itemsHtml) return "";
-              return (
-                '<h3 class="ud-search-section-title">' +
-                esc(title) +
-                '</h3><ul class="ud-search-hit-list">' +
-                itemsHtml +
-                "</ul>"
-              );
-            }
-            function rowTeam(r) {
-              var href = r.url || "/";
-              var title =
-                r.title ||
-                [r.away_team, r.home_team].filter(Boolean).join(" @ ");
-              var sub =
-                r.subtitle ||
-                [
-                  r.game_date,
-                  r.pick_line || r.predicted_winner,
-                  r.sport,
-                ]
-                  .filter(function (x) {
-                    return x != null && String(x).trim() !== "";
-                  })
-                  .join(" · ");
-              var props =
-                r.props_url
-                  ? '<a class="ud-search-hit-secondary" href="' +
-                    esc(r.props_url) +
-                    '">Player props</a>'
-                  : "";
-              return (
-                '<li class="ud-search-hit">' +
-                '<a class="ud-search-hit-main" href="' +
-                esc(href) +
-                '">' +
-                '<span class="ud-search-hit-title">' +
-                esc(title) +
-                "</span>" +
-                '<span class="ud-search-hit-sub">' +
-                esc(sub) +
-                "</span></a>" +
-                props +
-                "</li>"
-              );
-            }
-            function rowEspn(r) {
-              var href = r.url || "/";
-              var title =
-                r.title ||
-                [r.away_team, r.home_team].filter(Boolean).join(" @ ");
-              var sub =
-                r.subtitle ||
-                [
-                  r.game_date,
-                  r.sport,
-                  r.status,
-                ]
-                  .filter(Boolean)
-                  .join(" · ");
-              var ext =
-                r.espn_url
-                  ? '<a class="ud-search-hit-secondary ud-search-hit-secondary--external" href="' +
-                    esc(r.espn_url) +
-                    '" target="_blank" rel="noopener noreferrer">ESPN game</a>'
-                  : "";
-              return (
-                '<li class="ud-search-hit ud-search-hit--espn">' +
-                '<a class="ud-search-hit-main" href="' +
-                esc(href) +
-                '">' +
-                '<span class="ud-search-hit-title">' +
-                esc(title) +
-                "</span>" +
-                '<span class="ud-search-hit-sub">' +
-                esc(sub) +
-                "</span></a>" +
-                ext +
-                "</li>"
-              );
-            }
-            function rowModel(r) {
-              var href = r.url || "/results";
-              var title = r.title || (r.sport ? r.sport + " results" : "Results");
-              var sub =
-                r.subtitle != null && String(r.subtitle).trim() !== ""
-                  ? esc(r.subtitle)
-                  : esc(r.sport) +
-                    ": " +
-                    esc(r.record) +
-                    " (" +
-                    esc(String(r.accuracy)) +
-                    "%)" +
-                    (r.filtered_games != null
-                      ? " — " + esc(String(r.filtered_games)) + " games at threshold"
-                      : "");
-              return (
-                '<li class="ud-search-hit">' +
-                '<a class="ud-search-hit-main" href="' +
-                esc(href) +
-                '">' +
-                '<span class="ud-search-hit-title">' +
-                esc(title) +
-                "</span>" +
-                '<span class="ud-search-hit-sub">' +
-                sub +
-                "</span></a></li>"
-              );
-            }
             var modelLine = data.matched_model
               ? "<p><strong>Model:</strong> " +
                 esc(data.matched_model.public_name) +
@@ -212,32 +102,86 @@
                 "</p>"
               : "";
             var modelItems = (data.model_results || [])
-              .map(rowModel)
+              .map(function (r) {
+                return (
+                  "<li>" +
+                  esc(r.sport) +
+                  ": " +
+                  esc(r.record) +
+                  " (" +
+                  esc(String(r.accuracy)) +
+                  "%)" +
+                  (r.filtered_games != null
+                    ? " — " + esc(String(r.filtered_games)) + " games at threshold"
+                    : "") +
+                  "</li>"
+                );
+              })
               .join("");
             var localTeamItems = (data.team_results || [])
-              .map(rowTeam)
+              .map(function (r) {
+                return (
+                  "<li>" +
+                  esc(r.sport) +
+                  ": " +
+                  esc(r.away_team) +
+                  " vs " +
+                  esc(r.home_team) +
+                  " (" +
+                  esc(String(r.game_date)) +
+                  ") — pick " +
+                  esc(String(r.predicted_winner)) +
+                  " (" +
+                  esc(String(r.win_probability)) +
+                  "%)</li>"
+                );
+              })
               .join("");
             var espnItems = (data.espn_results || [])
-              .map(rowEspn)
+              .map(function (r) {
+                return (
+                  "<li>" +
+                  esc(r.sport) +
+                  ": " +
+                  esc(r.away_team) +
+                  " @ " +
+                  esc(r.home_team) +
+                  " (" +
+                  esc(String(r.status)) +
+                  ")</li>"
+                );
+              })
               .join("");
             var routeLine = data.suggested_route
-              ? '<div class="ud-search-suggest-banner"><a class="ud-search-suggest-link" href="' +
+              ? '<p><strong>Suggested page:</strong> <a href="' +
                 esc(data.suggested_route) +
                 '">' +
-                esc(data.suggested_route_label || data.suggested_route) +
-                "</a></div>"
+                esc(data.suggested_route) +
+                "</a></p>"
               : "";
             var empty =
               !modelItems && !localTeamItems && !espnItems
                 ? "<p>No database rows matched. Try the dropdown suggestions while typing.</p>"
                 : "";
             resultsEl.innerHTML =
-              '<h3 style="margin-top:0;">Search results</h3>' +
+              "<h3>Search results</h3>" +
               modelLine +
               routeLine +
-              section("Model performance", modelItems) +
-              section("Our predictions", localTeamItems) +
-              section("Scoreboard (today)", espnItems) +
+              (modelItems
+                ? "<p><strong>Model performance</strong></p><ul>" +
+                  modelItems +
+                  "</ul>"
+                : "") +
+              (localTeamItems
+                ? '<p style="margin-top:10px;"><strong>Prediction rows</strong></p><ul>' +
+                  localTeamItems +
+                  "</ul>"
+                : "") +
+              (espnItems
+                ? '<p style="margin-top:10px;"><strong>ESPN scoreboard</strong></p><ul>' +
+                  espnItems +
+                  "</ul>"
+                : "") +
               empty;
           })
           .catch(function () {

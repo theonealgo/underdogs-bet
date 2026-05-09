@@ -90,12 +90,8 @@ def projections(
 
 
 @app.get("/results")
-def results(
-    league: str = Query(...),
-    date: str | None = Query(None, description="Game date YYYY-MM-DD (ET calendar); end anchor when rollup_days > 1"),
-    rollup_days: int = Query(1, ge=1, le=14, description="Grade and aggregate up to this many ET calendar days ending at `date`"),
-):
+def results(league: str = Query(...), date: str | None = Query(None, description="Game date YYYY-MM-DD (ET calendar)")):
     league = league.upper()
     if league not in SUPPORTED_LEAGUES:
         raise HTTPException(status_code=400, detail=f"Unsupported league: {league}")
-    return get_league_results(league, result_date_str=date, rollup_days=rollup_days)
+    return get_league_results(league, result_date_str=date)

@@ -399,30 +399,6 @@ def login_submit():
     if not email or not password:
         return redirect(url_for('auth.login_page', error='invalid'))
 
-    # Local dev shortcut: allow LOCAL_DEV_LOGIN credentials on the normal
-    # /login form so test users don't need a separate route.
-    expected_dev_pw = _local_dev_login_password_configured()
-    expected_dev_email = (os.environ.get('LOCAL_DEV_LOGIN_EMAIL') or 'localdev@underdogs.local').strip().lower()
-    if expected_dev_pw and secrets.compare_digest(email, expected_dev_email) and secrets.compare_digest(password, expected_dev_pw):
-        conn = _get_db()
-        row = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
-        if not row:
-            ph = generate_password_hash(secrets.token_hex(24))
-            conn.execute(
-                'INSERT INTO users (email, name, is_premium, password_hash) VALUES (?, ?, 1, ?)',
-                (email, 'Local Dev', ph),
-            )
-        else:
-            conn.execute('UPDATE users SET is_premium = 1 WHERE id = ?', (row['id'],))
-        conn.commit()
-        conn.close()
-        user = _load_user_by_email(email)
-        if user:
-            login_user(user, remember=True)
-            _set_session_token(user.id)
-            return redirect(request.args.get('next', '/'))
-        return redirect(url_for('auth.login_page', error='invalid'))
-
     user = _load_user_by_email(email)
     if not user:
         return redirect(url_for('auth.login_page', error='invalid'))
