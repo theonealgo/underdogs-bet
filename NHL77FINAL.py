@@ -686,7 +686,7 @@ def _render_predictions_share_image(payload: dict, fmt: str):
     draw = ImageDraw.Draw(image)
     title_font = _get_share_font(92, bold=True)
     sub_font = _get_share_font(56, bold=True)
-    rows = [r for r in (payload.get('cards') or [])[:3]]
+    rows = [r for r in (payload.get('cards') or [])[:4]]
     n = len(rows)
     title = f"{payload.get('sport', '')} Predictions"
     ht = 64
@@ -7240,18 +7240,121 @@ DAILY_REPORT_TEMPLATE = BASE_TEMPLATE.replace(
         {% endif %}
     </div>
     <div class="rpt-actions" style="flex-direction:column;align-items:center;">
-        <div class="rpt-save-help">Use <strong>Download</strong> to save the generated report image. <strong>Open fullscreen</strong> opens the standalone image viewer page.</div>
+        <div class="rpt-save-help"><strong>Download</strong> opens the sport results page in this tab; <strong>Fullscreen</strong> opens the same page in a new tab. Each page lists graded games plus share JPG links.</div>
         <div class="rpt-share-row">
             {% for st in sport_tallies %}
             <span class="rpt-btn-group">
-                <a class="rpt-btn rpt-btn-copy" href="{{ st.share_image_src }}" download="daily-results-{{ st.sport|lower }}.jpg">Download {{ st.info.name }}</a>
-                <a class="rpt-btn rpt-btn-copy" href="{{ st.share_image_view_url }}" target="_blank" rel="noopener">Fullscreen {{ st.info.name }}</a>
+                <a class="rpt-btn rpt-btn-copy" href="{{ st.results_page_url }}">Download {{ st.info.name }}</a>
+                <a class="rpt-btn rpt-btn-copy" href="{{ st.results_page_url }}" target="_blank" rel="noopener">Fullscreen {{ st.info.name }}</a>
             </span>
             {% endfor %}
         </div>
         <div class="rpt-cta-row" style="margin-top:12px;">
             <a class="rpt-btn rpt-btn-cta" href="/">View Today's Picks &rarr;</a>
         </div>
+    </div>
+""" + _SEO_RESULTS_PAGE_FOOTER + """
+""")
+
+DAILY_REPORT_SPORT_TEMPLATE = BASE_TEMPLATE.replace(
+    '{% block extra_styles %}{% endblock %}',
+    '''
+    body{background:#ffffff !important;color:#0f172a;}
+    .dsp-wrap{max-width:880px;margin:0 auto;padding:10px 0 48px;}
+    .dsp-back{display:inline-block;margin-bottom:18px;font-size:0.88em;font-weight:800;color:#00529B;text-decoration:none;}
+    .dsp-back:hover{text-decoration:underline;}
+    .dsp-h1{font-size:1.65em;font-weight:900;margin:0 0 6px;}
+    .dsp-sub{color:#334155;font-size:0.92em;margin-bottom:18px;}
+    .rpt-sport-block{background:#ffffff;border:1px solid rgba(15,23,42,0.14);border-radius:14px;padding:20px;margin-bottom:18px;}
+    .rpt-cat-label{font-size:0.72em;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;text-align:center;margin:12px 0 6px;font-weight:600;}
+    .rpt-cat-label:first-child{margin-top:0;}
+    .rpt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;}
+    .rpt-card{background:#f8fafc;border:1px solid rgba(15,23,42,0.1);border-radius:10px;padding:10px 6px;text-align:center;}
+    .rpt-card.hl{border:2px solid #fbbf24;}
+    .rpt-model{font-size:0.72em;opacity:0.85;margin-bottom:3px;}
+    .rpt-acc{font-size:1.35em;font-weight:800;}
+    .rpt-acc.g{color:#00C076;}.rpt-acc.y{color:#fbbf24;}.rpt-acc.r{color:#D93025;}.rpt-acc.x{color:#94a3b8;}
+    .rpt-rec{font-size:0.78em;opacity:0.8;}
+    .rpt-sou-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+    .dsp-games{width:100%;border-collapse:collapse;font-size:0.88em;margin-top:10px;}
+    .dsp-games th,.dsp-games td{border:1px solid rgba(15,23,42,0.12);padding:10px 8px;text-align:left;}
+    .dsp-games th{background:#f8fafc;font-weight:800;}
+    .dsp-img-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:22px;}
+    @media(max-width:500px){.rpt-grid{grid-template-columns:repeat(3,1fr);}.rpt-acc{font-size:1.1em;}}
+    '''
+).replace('{% block content %}{% endblock %}', """
+    <div class="dsp-wrap">
+        <a class="dsp-back" href="/daily-report">&larr; Full daily report</a>
+        {% if not has_data %}
+        <h1 class="dsp-h1">{{ sport_label }}</h1>
+        <p class="dsp-sub">No completed games found for {{ report_display }}.</p>
+        {% else %}
+        <h1 class="dsp-h1">{{ sport_info.icon }} {{ sport_info.name }} &mdash; Daily results</h1>
+        <p class="dsp-sub">{{ report_display }} &middot; {{ tally.games }} games graded</p>
+
+        <div class="rpt-sport-block">
+            <div class="rpt-cat-label">Moneyline</div>
+            <div class="rpt-grid">
+                {% for mk, mlabel in model_labels %}
+                {% set m = tally.get(mk, {}) %}
+                <div class="rpt-card {% if mk == 'ensemble' %}hl{% endif %}">
+                    <div class="rpt-model">{{ mlabel }}</div>
+                    {% if m.total > 0 %}
+                    <div class="rpt-acc {% if m.accuracy >= 60 %}g{% elif m.accuracy >= 50 %}y{% else %}r{% endif %}">{{ m.accuracy }}%</div>
+                    <div class="rpt-rec">{{ m.correct }}-{{ m.total - m.correct }}</div>
+                    {% else %}
+                    <div class="rpt-acc x">&mdash;</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% set sp = tally.get('spread', {}) %}
+            {% set ou = tally.get('total_ou', {}) %}
+            {% if sp.total > 0 or ou.total > 0 %}
+            <div class="rpt-sou-row" style="margin-top:10px;">
+                {% if sp.total > 0 %}
+                <div>
+                    <div class="rpt-cat-label">Spread</div>
+                    <div class="rpt-card hl">
+                        <div class="rpt-acc {% if sp.accuracy >= 55 %}g{% elif sp.accuracy >= 48 %}y{% else %}r{% endif %}">{{ sp.accuracy }}%</div>
+                        <div class="rpt-rec">{{ sp.correct }}-{{ sp.total - sp.correct }}{% if sp.pushes %}-{{ sp.pushes }}{% endif %}</div>
+                    </div>
+                </div>
+                {% endif %}
+                {% if ou.total > 0 %}
+                <div>
+                    <div class="rpt-cat-label">Over/Under</div>
+                    <div class="rpt-card hl">
+                        <div class="rpt-acc {% if ou.accuracy >= 55 %}g{% elif ou.accuracy >= 48 %}y{% else %}r{% endif %}">{{ ou.accuracy }}%</div>
+                        <div class="rpt-rec">{{ ou.correct }}-{{ ou.total - ou.correct }}{% if ou.pushes %}-{{ ou.pushes }}{% endif %}</div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <h2 style="font-size:1.05em;font-weight:900;color:#0f172a;margin:22px 0 10px;">Games graded</h2>
+        <table class="dsp-games">
+            <thead>
+                <tr><th>Matchup</th><th>Score (away &ndash; home)</th><th>Sharp consensus</th></tr>
+            </thead>
+            <tbody>
+                {% for g in games %}
+                <tr>
+                    <td>{{ g.away }} <span style="color:#64748b;">@</span> {{ g.home }}</td>
+                    <td>{{ g.away_score }} &ndash; {{ g.home_score }}</td>
+                    <td>{% if g.ens_correct is none %}&mdash;{% elif g.ens_correct %}<span style="color:#00C076;font-weight:800;">Hit</span>{% else %}<span style="color:#D93025;font-weight:800;">Miss</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="dsp-img-row">
+            <a class="rpt-btn rpt-btn-copy" href="{{ share_image_src }}" download="daily-results-{{ sport_key|lower }}.jpg" style="padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;font-size:0.88em;background:#ffffff;color:#0f172a;border:1px solid rgba(15,23,42,0.25);">Download share image (JPG)</a>
+            <a class="rpt-btn rpt-btn-copy" href="{{ share_image_view_url }}" target="_blank" rel="noopener" style="padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;font-size:0.88em;background:#ffffff;color:#0f172a;border:1px solid rgba(15,23,42,0.25);">Open share image viewer</a>
+        </div>
+        {% endif %}
     </div>
 """ + _SEO_RESULTS_PAGE_FOOTER + """
 """)
@@ -9135,31 +9238,6 @@ def landing_page():
     except Exception as _tp_err:
         logger.debug(f"Today's Top Picks DB query failed: {_tp_err}")
 
-    todays_share_image_src = None
-    todays_share_image_view_url = None
-    if todays_picks:
-        try:
-            _cards = []
-            for _p in todays_picks[:3]:
-                _cards.append({
-                    'away_team': _p.get('away'),
-                    'home_team': _p.get('home'),
-                    'pick_side': _p.get('pick_side') or ('home' if _p.get('pick') == _p.get('home') else 'away'),
-                    'pick_team': _p.get('pick'),
-                    'confidence': _p.get('prob'),
-                })
-            _landing_payload = {
-                'type': 'predictions',
-                'sport': 'Top Value Picks',
-                'date': _tp_today,
-                'cards': _cards,
-            }
-            _landing_token = _register_share_image(_landing_payload)
-            todays_share_image_src = url_for('share_predictions_image', token=_landing_token, fmt='jpg')
-            todays_share_image_view_url = url_for('share_predictions_view', token=_landing_token)
-        except Exception as _lp_err:
-            logger.debug(f"Landing top-picks share image build failed: {_lp_err}")
-
     return render_template_string("""
 <!DOCTYPE html>
 <html lang="en">
@@ -9631,6 +9709,8 @@ def landing_page():
         .sport-card:hover{border-color:#cdd6dc;transform:translateY(-4px);box-shadow:0 8px 24px rgba(26,29,35,.10);}
         .sport-card.live{border-color:rgba(16,185,129,.4);}
         .sport-card.live:hover{border-color:var(--green);box-shadow:0 8px 24px rgba(16,185,129,.2);}
+        .landing-cta-lift{transition:transform .2s;}
+        .landing-cta-lift:hover{transform:translateY(-2px);}
         .live-dot{
             position:absolute;top:12px;right:12px;
             width:8px;height:8px;border-radius:50%;background:var(--green);
@@ -9935,36 +10015,19 @@ def landing_page():
     </div>
 </div>
 
-<!-- Today's AI Picks (live product preview) -->
+<!-- Today's AI Picks: cards only (no share image or duplicate controls) -->
 {% if todays_picks %}
 <div class="section" style="padding-top:24px;padding-bottom:8px;">
-    <div style="text-align:center;margin-bottom:8px;">
-        <span style="display:inline-flex;align-items:center;gap:8px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);color:#00C076;font-size:0.78em;font-weight:800;letter-spacing:0.4px;text-transform:uppercase;padding:5px 14px;border-radius:999px;">
-            <span style="display:inline-block;width:8px;height:8px;background:#00C076;border-radius:50%;animation:pulseDot 1.6s infinite;"></span>
-            Winning Results Tracked Daily
-        </span>
-    </div>
     <h2 class="section-title" style="margin-bottom:6px;">Top Value Picks Today</h2>
     <p class="section-sub" style="color:#334155;">Ranked by edge quality, model agreement, and confidence</p>
-    {% if todays_share_image_src %}
-    <div class="ud-share-image-stack" style="max-width:920px;margin-left:auto;margin-right:auto;">
-        <div class="ud-share-image-actions" style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px 0 14px;">
-            <a href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;justify-content:center;background:#0f172a;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Open in browser</a>
-            <a href="{{ todays_share_image_src }}" download="top-value-picks.jpg" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:9px 14px;border-radius:9px;text-decoration:none;font-size:0.8em;font-weight:800;">Save image</a>
-        </div>
-        <a class="ud-share-frame" href="{{ todays_share_image_view_url }}" target="_blank" rel="noopener">
-            <img src="{{ todays_share_image_src }}" alt="Top value picks preview image">
-        </a>
-    </div>
-    {% endif %}
     <div style="display:flex;flex-direction:column;gap:14px;max-width:600px;margin:0 auto;">
         {% for tp in todays_picks %}
         {% set _disp_pct = tp.prob if tp.prob >= 50 else (100 - tp.prob)|round(1) %}
-        <a href="/{{ tp.slug }}" style="display:block;background:#ffffff;border:1px solid rgba(15,23,42,0.18);border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:transform .18s, border-color .18s, box-shadow .18s;" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='rgba(251,191,36,0.5)';this.style.boxShadow='0 10px 22px rgba(15,23,42,0.12)';" onmouseout="this.style.transform='none';this.style.borderColor='rgba(15,23,42,0.18)';this.style.boxShadow='none';">
-            <div style="font-size:0.68em;color:#fbbf24;text-transform:uppercase;letter-spacing:0.6px;font-weight:800;margin-bottom:8px;">{{ tp.sport }}</div>
+        <a href="/{{ tp.slug }}" class="top-pick-card" style="display:block;background:#ffffff;border:1px solid rgba(15,23,42,0.18);border-radius:14px;padding:16px 18px;text-decoration:none;color:inherit;transition:transform .18s, border-color .18s, box-shadow .18s;">
+            <div style="font-size:0.68em;color:#92400e;text-transform:uppercase;letter-spacing:0.6px;font-weight:800;margin-bottom:8px;">{{ tp.sport }}</div>
             <div style="font-weight:800;font-size:1.02em;color:#0f172a;line-height:1.35;margin-bottom:10px;">{{ tp.away }} <span style="color:#64748b;font-weight:600;">vs</span> {{ tp.home }}</div>
             <div style="display:flex;align-items:baseline;gap:10px;">
-                <span style="color:#00C076;font-size:0.9em;font-weight:800;">▶ {{ tp.pick }}</span>
+                <span style="color:#047857;font-size:0.9em;font-weight:800;">▶ {{ tp.pick }}</span>
                 <span style="color:#0f172a;font-weight:800;">{{ _disp_pct }}%</span>
                 <span style="color:#64748b;font-size:0.78em;font-weight:600;">Moneyline</span>
             </div>
@@ -9972,7 +10035,7 @@ def landing_page():
         {% endfor %}
     </div>
 </div>
-<style>@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:0.4;}}</style>
+<style>.top-pick-card:hover{transform:translateY(-2px);border-color:rgba(251,191,36,0.5);box-shadow:0 10px 22px rgba(15,23,42,0.12);} .daily-results-cta:hover{transform:translateY(-2px);}</style>
 {% endif %}
 
 <!-- Sports grid -->
@@ -9981,7 +10044,7 @@ def landing_page():
     <p class="section-sub" style="color:#334155;">Live model projections updated daily</p>
     <div class="sports-grid">
         {% for s in landing_sports %}
-        <a href="/{{ s.seo_slug }}" class="sport-card {% if s.is_live %}live{% endif %}" style="transition:transform .18s, border-color .18s, box-shadow .18s;" onmouseover="this.style.transform='translateY(-3px)';this.style.borderColor='rgba(251,191,36,0.5)';this.style.boxShadow='0 10px 28px rgba(0,0,0,0.35)';" onmouseout="this.style.transform='none';this.style.borderColor='';this.style.boxShadow='none';">
+        <a href="/{{ s.seo_slug }}" class="sport-card {% if s.is_live %}live{% endif %}">
             {% if s.is_live %}<div class="live-dot"></div>{% endif %}
             <div class="sport-icon">{{ s.icon }}</div>
             <div class="sport-name">{{ s.name }}</div>
@@ -9998,15 +10061,6 @@ def landing_page():
     <div style="max-width:860px;margin:0 auto;text-align:center;background:#ffffff;border:1px solid rgba(15,23,42,0.16);border-radius:14px;padding:22px 24px 26px;position:relative;z-index:2;">
         <h2 style="font-size:1.28rem;font-weight:900;color:#0f172a;margin:0 0 10px;text-align:center;">Model Performance</h2>
         <p style="color:#334155;font-size:0.92em;line-height:1.75;margin:0 auto 16px;max-width:620px;text-align:center;">See completed-game performance by model and confidence bucket, with sample sizes and color-coded hit rates.</p>
-        {% if weekly_banner_messages %}
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 auto 16px;justify-content:center;max-width:100%;">
-            {% for item in weekly_banner_messages[:3] %}
-            <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid rgba(15,23,42,0.14);background:#f8fafc;color:#0f172a;font-size:0.78em;font-weight:700;">
-                <span style="color:#00529B;">Live</span> {{ item.label }} {{ item.pct }} ({{ item.record }})
-            </span>
-            {% endfor %}
-        </div>
-        {% endif %}
         <div style="display:flex;justify-content:center;margin-top:4px;">
             <a href="{{ url_for('performance_page') }}" style="display:inline-flex;align-items:center;justify-content:center;background:#00529B;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-size:0.92em;font-weight:800;position:relative;z-index:3;box-shadow:0 4px 14px rgba(0,82,155,0.22);">Open Model Performance</a>
         </div>
@@ -10046,8 +10100,8 @@ def landing_page():
             <h2 style="font-size:1.5em;font-weight:900;color:#fbbf24;">Daily Betting Results Report</h2>
             <p style="color:#334155;font-size:0.9em;margin:10px 0 20px;max-width:480px;margin-left:auto;margin-right:auto;">Yesterday's performance across all sports and models &mdash; tracked, transparent, verified.</p>
             <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;align-items:center;">
-            <a href="/results" style="display:inline-block;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;padding:14px 32px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;box-shadow:0 4px 20px rgba(251,191,36,0.3);transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">View Full Results</a>
-            <a href="/player-props" style="display:inline-block;border:2px solid #00529B;color:#00529B;padding:12px 28px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;background:#fff;transition:transform 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">Player Props</a>
+            <a href="/results" class="landing-cta-lift" style="display:inline-block;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#000;padding:14px 32px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;box-shadow:0 4px 20px rgba(251,191,36,0.3);">View Full Results</a>
+            <a href="/player-props" class="landing-cta-lift" style="display:inline-block;border:2px solid #00529B;color:#00529B;padding:12px 28px;border-radius:10px;font-weight:800;text-decoration:none;font-size:0.95em;background:#fff;">Player Props</a>
             </div>
         </div>
     </div>
@@ -10381,8 +10435,6 @@ def landing_page():
          units_banner_items=units_banner_items,
          seo_archive_links=seo_archive_links,
          todays_picks=todays_picks,
-         todays_share_image_src=todays_share_image_src,
-         todays_share_image_view_url=todays_share_image_view_url,
          landing_share_url=_landing_share_url,
          landing_share_title=_landing_share_title,
          landing_share_body=_landing_share_body,
@@ -12398,10 +12450,129 @@ def sport_home(sport):
     return "Sport not found", 404
 
 
+def _daily_report_prepare_sport(sport_key: str, report_date: str, report_display: str, _daily_today: datetime):
+    """Load completed games for one sport/date, compute tally and per-game rows. Returns dict or None."""
+    from collections import defaultdict
+    if sport_key == 'SOCCER' and not SOCCER_ENABLED:
+        return None
+    if sport_key not in SPORTS:
+        return None
+    _status, _is_live = get_season_status(sport_key, today=_daily_today)
+    if not _is_live:
+        return None
+    try:
+        conn = get_db_connection()
+        completed_games = conn.execute('''
+            SELECT g.*, p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
+            FROM games g
+            LEFT JOIN predictions p ON g.game_id = p.game_id AND p.sport = ?
+            WHERE g.sport = ? AND g.home_score IS NOT NULL
+            AND (g.game_date LIKE ? OR g.game_date = ?)
+            ORDER BY g.game_date DESC LIMIT 50
+        ''', (sport_key, sport_key, f'{report_date}%', report_date)).fetchall()
+        conn.close()
+        if not completed_games:
+            return None
+        daily_results = defaultdict(lambda: {'games': []})
+        for game in completed_games:
+            home_score = _to_float_safe(game['home_score'])
+            away_score = _to_float_safe(game['away_score'])
+            if home_score is None or away_score is None:
+                continue
+            home_won = home_score > away_score
+            is_draw = sport_key == 'SOCCER' and abs(home_score - away_score) < 1e-9
+            if is_draw:
+                home_won = None
+            home_team = game['home_team_id']
+            away_team = game['away_team_id']
+            _raw_date = _to_date_str(game['game_date'])
+            game_date = _raw_date[:10] if _raw_date else None
+            if not game_date:
+                continue
+            elo_prob = _to_float_safe(game['elo_home_prob'], 0.5)
+            xgb_prob = _to_float_safe(game['xgboost_home_prob'])
+            if xgb_prob is None:
+                xgb_prob = elo_prob
+            ens_prob = _to_float_safe(game['win_probability'])
+            if ens_prob is None:
+                ens_prob = elo_prob
+            v2 = get_v2_prediction(sport_key, home_team, away_team, game_date) if sport_key != 'SOCCER' else None
+            glicko2_prob = v2.get('glicko2_prob') if v2 else None
+            trueskill_prob = v2.get('trueskill_prob') if v2 else None
+            if v2:
+                xgb_prob = v2.get('xgboost_prob', xgb_prob)
+                ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
+            game_info = {
+                'game_id': game['game_id'],
+                'date': game_date,
+                'home': home_team, 'away': away_team,
+                'home_score': int(home_score) if abs(home_score - round(home_score)) < 1e-6 else round(home_score, 1),
+                'away_score': int(away_score) if abs(away_score - round(away_score)) < 1e-6 else round(away_score, 1),
+                'home_win': home_won, 'is_draw': is_draw,
+                'glicko2_prob': round(glicko2_prob * 100, 1) if glicko2_prob is not None else None,
+                'trueskill_prob': round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
+                'elo_prob': round(elo_prob * 100, 1),
+                'xgb_prob': round(xgb_prob * 100, 1),
+                'ens_prob': round(ens_prob * 100, 1),
+                'glicko2_correct': (glicko2_prob >= 0.5) == home_won if glicko2_prob is not None and home_won is not None else None,
+                'trueskill_correct': (trueskill_prob >= 0.5) == home_won if trueskill_prob is not None and home_won is not None else None,
+                'elo_correct': (elo_prob >= 0.5) == home_won if home_won is not None else None,
+                'xgb_correct': (xgb_prob >= 0.5) == home_won if home_won is not None else None,
+                'ens_correct': (ens_prob >= 0.5) == home_won if home_won is not None else None,
+                'skip_grading': True if home_won is None else False,
+            }
+            daily_results[game_date]['games'].append(game_info)
+        try:
+            _compute_spread_total_for_daily(sport_key, daily_results)
+        except Exception:
+            pass
+        tally = compute_daily_model_tally(daily_results, report_date)
+        if not tally or tally.get('games', 0) == 0:
+            return None
+        _model_payload = []
+        _share_model_public = {
+            'glicko2': 'Grinder2',
+            'trueskill': 'Takedown',
+            'elo': 'Edge',
+            'xgboost': 'XSharp',
+            'ensemble': 'Sharp Consensus',
+        }
+        for mk in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
+            mt = tally.get(mk, {}) or {}
+            total_m = mt.get('total', 0) or 0
+            correct_m = mt.get('correct', 0) or 0
+            _model_payload.append({
+                'label': _share_model_public.get(mk, mk),
+                'acc': f"{mt.get('accuracy', 0)}%" if total_m > 0 else "—",
+                'record': f"{correct_m}-{max(total_m - correct_m, 0)}" if total_m > 0 else "",
+            })
+        _daily_payload = {
+            'type': 'daily-report',
+            'sport_name': SPORTS[sport_key]['name'],
+            'report_display': report_display,
+            'games': tally.get('games', 0),
+            'models': _model_payload,
+            'spread': {'label': f"{tally.get('spread', {}).get('accuracy', 0)}%" if (tally.get('spread', {}).get('total', 0) or 0) > 0 else ''},
+            'ou': {'label': f"{tally.get('total_ou', {}).get('accuracy', 0)}%" if (tally.get('total_ou', {}).get('total', 0) or 0) > 0 else ''},
+        }
+        _daily_token = _register_share_image(_daily_payload)
+        games = list(daily_results.get(report_date, {}).get('games', []))
+        return {
+            'sport': sport_key,
+            'info': SPORTS[sport_key],
+            'tally': tally,
+            'games': games,
+            'share_image_src': url_for('share_daily_report_image', token=_daily_token, fmt='jpg'),
+            'share_image_view_url': url_for('share_daily_report_view', token=_daily_token),
+        }
+    except Exception as e:
+        logger.error(f'Daily report prepare {sport_key}: {e}')
+        return None
+
+
 @app.route('/daily-report')
 def daily_report_page():
     """Daily Betting Results Report — marketing/proof-of-performance page."""
-    from collections import defaultdict
     try:
         _tz = ZoneInfo('America/New_York')
         yesterday_dt = datetime.now(_tz) - timedelta(days=1)
@@ -12492,117 +12663,18 @@ def daily_report_page():
     # Query DB for yesterday's completed games only (fast, no external API calls)
     _daily_today = datetime.now()
     for sport_key in ['NHL', 'NBA', 'MLB', 'NFL', 'NCAAB', 'NCAAW', 'NCAAF', 'WNBA', 'SOCCER']:
-        if sport_key == 'SOCCER' and not SOCCER_ENABLED:
-            continue
-        if sport_key not in SPORTS:
-            continue
-        # Daily report must only include active in-season sports.
-        _status, _is_live = get_season_status(sport_key, today=_daily_today)
-        if not _is_live:
-            continue
         try:
-            conn = get_db_connection()
-            completed_games = conn.execute('''
-                SELECT g.*, p.elo_home_prob, p.xgboost_home_prob, p.logistic_home_prob, p.win_probability
-                FROM games g
-                LEFT JOIN predictions p ON g.game_id = p.game_id AND p.sport = ?
-                WHERE g.sport = ? AND g.home_score IS NOT NULL
-                AND (g.game_date LIKE ? OR g.game_date = ?)
-                ORDER BY g.game_date DESC LIMIT 50
-            ''', (sport_key, sport_key, f'{report_date}%', report_date)).fetchall()
-            conn.close()
-            if not completed_games:
+            blk = _daily_report_prepare_sport(sport_key, report_date, report_display, _daily_today)
+            if not blk:
                 continue
-            daily_results = defaultdict(lambda: {'games': []})
-            for game in completed_games:
-                home_score = _to_float_safe(game['home_score'])
-                away_score = _to_float_safe(game['away_score'])
-                if home_score is None or away_score is None:
-                    continue
-                home_won = home_score > away_score
-                is_draw = sport_key == 'SOCCER' and abs(home_score - away_score) < 1e-9
-                if is_draw:
-                    home_won = None
-                home_team = game['home_team_id']
-                away_team = game['away_team_id']
-                _raw_date = _to_date_str(game['game_date'])
-                game_date = _raw_date[:10] if _raw_date else None
-                if not game_date:
-                    continue
-                elo_prob = _to_float_safe(game['elo_home_prob'], 0.5)
-                xgb_prob = _to_float_safe(game['xgboost_home_prob'])
-                if xgb_prob is None:
-                    xgb_prob = elo_prob
-                ens_prob = _to_float_safe(game['win_probability'])
-                if ens_prob is None:
-                    ens_prob = elo_prob
-                v2 = get_v2_prediction(sport_key, home_team, away_team, game_date) if sport_key != 'SOCCER' else None
-                glicko2_prob = v2.get('glicko2_prob') if v2 else None
-                trueskill_prob = v2.get('trueskill_prob') if v2 else None
-                if v2:
-                    xgb_prob = v2.get('xgboost_prob', xgb_prob)
-                    ens_prob = _compute_ensemble_prob(glicko2_prob, trueskill_prob, xgb_prob, elo_prob, fallback=ens_prob)
-                game_info = {
-                    'game_id': game['game_id'],
-                    'date': game_date,
-                    'home': home_team, 'away': away_team,
-                    'home_score': int(home_score) if abs(home_score - round(home_score)) < 1e-6 else round(home_score, 1),
-                    'away_score': int(away_score) if abs(away_score - round(away_score)) < 1e-6 else round(away_score, 1),
-                    'home_win': home_won, 'is_draw': is_draw,
-                    'glicko2_prob': round(glicko2_prob * 100, 1) if glicko2_prob is not None else None,
-                    'trueskill_prob': round(trueskill_prob * 100, 1) if trueskill_prob is not None else None,
-                    'elo_prob': round(elo_prob * 100, 1),
-                    'xgb_prob': round(xgb_prob * 100, 1),
-                    'ens_prob': round(ens_prob * 100, 1),
-                    'glicko2_correct': (glicko2_prob >= 0.5) == home_won if glicko2_prob is not None and home_won is not None else None,
-                    'trueskill_correct': (trueskill_prob >= 0.5) == home_won if trueskill_prob is not None and home_won is not None else None,
-                    'elo_correct': (elo_prob >= 0.5) == home_won if home_won is not None else None,
-                    'xgb_correct': (xgb_prob >= 0.5) == home_won if home_won is not None else None,
-                    'ens_correct': (ens_prob >= 0.5) == home_won if home_won is not None else None,
-                    'skip_grading': True if home_won is None else False,
-                }
-                daily_results[game_date]['games'].append(game_info)
-            # Compute spread/total grading (DB-only, no external API calls)
-            try:
-                _compute_spread_total_for_daily(sport_key, daily_results)
-            except Exception:
-                pass  # spread/total may be unavailable but moneyline still works
-            tally = compute_daily_model_tally(daily_results, report_date)
-            if not tally or tally.get('games', 0) == 0:
-                continue
-            _model_payload = []
-            _share_model_public = {
-                'glicko2': 'Grinder2',
-                'trueskill': 'Takedown',
-                'elo': 'Edge',
-                'xgboost': 'XSharp',
-                'ensemble': 'Sharp Consensus',
-            }
-            for mk in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
-                mt = tally.get(mk, {}) or {}
-                total_m = mt.get('total', 0) or 0
-                correct_m = mt.get('correct', 0) or 0
-                _model_payload.append({
-                    'label': _share_model_public.get(mk, mk),
-                    'acc': f"{mt.get('accuracy', 0)}%" if total_m > 0 else "—",
-                    'record': f"{correct_m}-{max(total_m - correct_m, 0)}" if total_m > 0 else "",
-                })
-            _daily_payload = {
-                'type': 'daily-report',
-                'sport_name': SPORTS[sport_key]['name'],
-                'report_display': report_display,
-                'games': tally.get('games', 0),
-                'models': _model_payload,
-                'spread': {'label': f"{tally.get('spread', {}).get('accuracy', 0)}%" if (tally.get('spread', {}).get('total', 0) or 0) > 0 else ''},
-                'ou': {'label': f"{tally.get('total_ou', {}).get('accuracy', 0)}%" if (tally.get('total_ou', {}).get('total', 0) or 0) > 0 else ''},
-            }
-            _daily_token = _register_share_image(_daily_payload)
+            tally = blk['tally']
             sport_tallies.append({
-                'sport': sport_key,
-                'info': SPORTS[sport_key],
+                'sport': blk['sport'],
+                'info': blk['info'],
                 'tally': tally,
-                'share_image_src': url_for('share_daily_report_image', token=_daily_token, fmt='jpg'),
-                'share_image_view_url': url_for('share_daily_report_view', token=_daily_token),
+                'share_image_src': blk['share_image_src'],
+                'share_image_view_url': blk['share_image_view_url'],
+                'results_page_url': url_for('daily_report_sport_page', sport_key=sport_key, date=report_date),
             })
             total_games += tally.get('games', 0)
             for mk in ['glicko2', 'trueskill', 'elo', 'xgboost', 'ensemble']:
@@ -12660,6 +12732,65 @@ def daily_report_page():
     )
     _DAILY_REPORT_CACHE.update({'ts': _time.time(), 'date': report_date, 'html': rendered})
     return rendered
+
+
+@app.route('/daily-report/sport/<sport_key>')
+def daily_report_sport_page(sport_key):
+    """HTML results page for one sport/date (used by Daily Report Download / Fullscreen buttons)."""
+    sk = (sport_key or '').strip().upper()
+    if sk not in SPORTS:
+        abort(404)
+    try:
+        _tz = ZoneInfo('America/New_York')
+        date_q = (request.args.get('date') or '').strip()
+        if date_q:
+            _dp = datetime.strptime(date_q[:10], '%Y-%m-%d')
+            report_date = _dp.strftime('%Y-%m-%d')
+            report_display = _dp.strftime('%B %d, %Y')
+        else:
+            _yd = datetime.now(_tz) - timedelta(days=1)
+            report_date = _yd.strftime('%Y-%m-%d')
+            report_display = _yd.strftime('%B %d, %Y')
+    except Exception:
+        abort(400)
+    _daily_today = datetime.now()
+    blk = _daily_report_prepare_sport(sk, report_date, report_display, _daily_today)
+    model_labels = [
+        ('glicko2', '⭐ Grinder2'),
+        ('trueskill', '🎯 Takedown'),
+        ('elo', '📊 Edge'),
+        ('xgboost', '🤖 XSharp'),
+        ('ensemble', '🏆 Sharp Consensus'),
+    ]
+    if not blk:
+        return render_template_string(
+            DAILY_REPORT_SPORT_TEMPLATE,
+            page='daily-report',
+            page_title=f'Daily report — {SPORTS[sk]["name"]}',
+            page_description=f'Daily betting results for {SPORTS[sk]["name"]} on {report_display}.',
+            has_data=False,
+            sport_key=sk,
+            sport_label=SPORTS[sk]['name'],
+            report_date=report_date,
+            report_display=report_display,
+            model_labels=model_labels,
+        )
+    return render_template_string(
+        DAILY_REPORT_SPORT_TEMPLATE,
+        page='daily-report',
+        page_title=f'{blk["info"]["name"]} daily results — {report_date}',
+        page_description=f'Model grades and every completed game for {blk["info"]["name"]} on {report_display}.',
+        has_data=True,
+        sport_key=sk,
+        sport_info=blk['info'],
+        tally=blk['tally'],
+        games=blk['games'],
+        share_image_src=blk['share_image_src'],
+        share_image_view_url=blk['share_image_view_url'],
+        model_labels=model_labels,
+        report_date=report_date,
+        report_display=report_display,
+    )
 
 
 @app.route('/share/predictions/<token>.<fmt>')
