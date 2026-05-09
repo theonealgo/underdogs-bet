@@ -9,9 +9,9 @@
 .auth-form input{width:100%;padding:12px 14px;margin-bottom:12px;border-radius:10px;border:1px solid #E0E4E8;background:#fff;color:#0f172a;font-size:1em;}
 .auth-form input::placeholder{color:#64748b;}
 .auth-form input:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,0.25);}
-.auth-btn{width:100%;padding:13px;border:none;border-radius:10px;font-size:1em;font-weight:800;cursor:pointer;transition:all .2s;}
-.auth-btn-primary{background:#00529B;color:#fff;}
-.auth-btn-primary:hover{background:#003d73;}
+.auth-submit-btn{width:100%;padding:13px;border:none;border-radius:10px;font-size:1em;font-weight:800;cursor:pointer;transition:all .2s;}
+.auth-submit-btn-primary{background:#00529B;color:#fff;}
+.auth-submit-btn-primary:hover{background:#003d73;}
 .auth-btn-google{display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;background:#fff;color:#1f2937;border:1px solid #E0E4E8;border-radius:10px;padding:12px 14px;font-weight:700;}
 .auth-btn-google:hover{background:#f8fafc;}
 .auth-divider{text-align:center;margin:14px 0;color:#64748b;font-size:.85em;position:relative;}
@@ -39,7 +39,7 @@
         <form class="auth-form" method="POST" action="/login">
             <input type="email" name="email" placeholder="Email address" required>
             <input type="password" name="password" placeholder="Password" required>
-            <button type="submit" class="auth-btn auth-btn-primary">Log In</button>
+            <button type="submit" class="auth-submit-btn auth-submit-btn-primary">Log In</button>
         </form>
         <div class="auth-link">Don't have an account? <a href="/signup">Sign up</a></div>
         {% if local_dev_login_enabled %}

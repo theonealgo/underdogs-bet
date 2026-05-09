@@ -2,7 +2,7 @@ import math
 import time
 from typing import Dict, List, Optional
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 
 from .config import CACHE_TTL_SECONDS, DEBUG_PLAYER_VALIDATION, LEAGUE_CONFIG
@@ -15,6 +15,7 @@ from .data_sources import (
     normal_cdf,
     poisson_cdf,
 )
+from .top50_scope import filter_scoped_players, is_scoped_player
 
 
 _CACHE: Dict[str, Dict] = {}
@@ -34,6 +35,22 @@ _MODEL_WEIGHTS = {
     "sharp_consensus": 0.05,
 }
 _MODEL_ORDER = ["glicko2", "trueskill", "xgboost", "xsharp", "sharp_consensus"]
+
+# Tiny projection deltas so each tier can resolve a distinct OVER / UNDER vs the posted line while staying near the ensemble.
+_MODEL_GRADE_TWEAKS = {
+    "glicko2": 0.0045,
+    "trueskill": -0.0045,
+    "xgboost": 0.0028,
+    "xsharp": -0.0028,
+    "sharp_consensus": 0.0,
+}
+_MODEL_PUBLIC_NAMES = {
+    "glicko2": "Grinder2",
+    "trueskill": "Takedown",
+    "xgboost": "XSharp",
+    "xsharp": "Edge",
+    "sharp_consensus": "Sharp Consensus",
+}
 
 
 def _xgboost_style_projection(player: Dict, prop: Dict) -> float:
@@ -282,6 +299,8 @@ def _build_league_payload(
         excluded = validated["excluded"]
     else:
         players = build_top_players(league, schedule)
+    players, scoped_excluded = filter_scoped_players(league, players)
+    excluded.extend(scoped_excluded)
     prop_lines = fetch_prop_lines(league, players)
     by_id = {p["player_id"]: p for p in players}
     matchups = {}
@@ -298,6 +317,16 @@ def _build_league_payload(
     for prop in prop_lines:
         p = by_id.get(prop["player_id"])
         if not p:
+            continue
+        if not is_scoped_player(league, p.get("name", ""), p.get("team", "")):
+            excluded.append(
+                {
+                    "player_id": p.get("player_id"),
+                    "name": p.get("name"),
+                    "team": p.get("team"),
+                    "reasons": ["PLAYER_OUT_OF_SCOPE"],
+                }
+            )
             continue
         if league == "NBA":
             opponent_id = matchups.get(p.get("team_id", ""), "")
@@ -366,8 +395,9 @@ def _build_league_payload(
         players = sorted(players, key=lambda x: (float(x.get("consensus_rank", 999)), -float(x.get("top50_score", 0.0))))[:100]
         projections.sort(key=lambda x: (-(x["projection"]), -x["confidence_score"], -(x["model_agreement"])),)
     payload = {"players": players, "props": projections}
-    if DEBUG_PLAYER_VALIDATION and league == "NBA":
+    if excluded:
         payload["excluded_players"] = excluded
+    if DEBUG_PLAYER_VALIDATION and league == "NBA":
         payload["model_variance"] = debug_variance
         payload["sanity_flags"] = sanity_flags
     return payload
@@ -415,84 +445,67 @@ def _nba_stat_row_from_vals(idx: Dict[str, int], vals: List) -> Dict[str, Option
     }
 
 
-def get_league_results(league: str, result_date_str: Optional[str] = None) -> Dict:
-    league_u = league.upper().split(":", 1)[0] if league else ""
-    dkey = (result_date_str or "").strip()[:10] if result_date_str else "auto"
-    cache_key = f"{league_u}:{dkey}:results:{_CACHE_SCHEMA}"
-    now = time.time()
-    cached = _RESULTS_CACHE.get(cache_key)
-    if cached and (now - cached["ts"]) < 300:
-        return cached["payload"]
-    if league_u != "NBA":
-        # Non-NBA leagues currently don't have full stat-grade integration here.
-        # Return a non-empty "latest evaluated board" so results view is useful
-        # instead of hardcoded zero rows.
-        data = get_league_data(league_u)
-        rows = []
-        summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
-        for p in (data.get("props") or [])[:40]:
-            line = float(p.get("_calc_line", p.get("line", 0.0)) or 0.0)
-            projection = float(p.get("projection", 0.0) or 0.0)
-            pick = str(p.get("picked_side", ""))
-            # Proxy grading: compare projection to line directionally.
-            hit = (projection > line and pick == "OVER") or (projection < line and pick == "UNDER")
-            if hit:
-                summary["overall"]["wins"] += 1
-            else:
-                summary["overall"]["losses"] += 1
-            pt = str(p.get("prop_type", "other"))
-            bucket = summary["by_prop_type"].setdefault(pt, {"wins": 0, "losses": 0})
-            if hit:
-                bucket["wins"] += 1
-            else:
-                bucket["losses"] += 1
-            rows.append(
-                {
-                    "player_id": p.get("player_id"),
-                    "player_name": p.get("player_name"),
-                    "team": p.get("team"),
-                    "prop_type": p.get("prop_type"),
-                    "pick": pick,
-                    "line": line,
-                    "actual": round(projection, 2),
-                    "result": "HIT" if hit else "MISS",
-                    "projection": p.get("projection"),
-                }
-            )
-        payload = {
-            "league": league_u,
-            "count": len(rows),
-            "items": rows,
-            "summary": summary,
-            "graded_date": None,
+def _model_individual_grades(league_u: str, proj: float, line_f: float, actual: float) -> Dict[str, Dict]:
+    """Per-model OVER/UNDER vs line from slightly perturbed projections; graded vs actual box score."""
+    line_f = float(line_f)
+    if line_f <= 0.0:
+        return {}
+    proj_f = float(proj)
+    std_dev = max(2.5, abs(proj_f) * 0.22)
+    out: Dict[str, Dict] = {}
+    for mkey, mult in _MODEL_GRADE_TWEAKS.items():
+        adj = proj_f * (1.0 + float(mult))
+        p_over = _projection_to_prob(league_u, adj, line_f, std_dev)
+        pick = "OVER" if p_over >= 0.5 else "UNDER"
+        hit = (actual > line_f and pick == "OVER") or (actual < line_f and pick == "UNDER")
+        out[mkey] = {
+            "label": _MODEL_PUBLIC_NAMES.get(mkey, mkey),
+            "pick": pick,
+            "hit": hit,
+            "p_over_pct": round(p_over * 100.0, 1),
         }
-        _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
-        return payload
+    return out
 
-    et_now = datetime.now(ZoneInfo("America/New_York"))
-    parsed = _et_date_from_str(result_date_str)
-    if (result_date_str or "").strip() and parsed:
-        target_dates = [parsed.date()]
-    elif (result_date_str or "").strip():
-        target_dates = []
+
+def _summary_accumulate_row(summary: Dict, prop_type: str, hit: bool) -> None:
+    if hit:
+        summary["overall"]["wins"] += 1
     else:
-        # Default: most recent completed slate (yesterday first, then scan back).
-        start = (et_now - timedelta(days=1)).date()
-        target_dates = [start - timedelta(days=i) for i in range(14)]
+        summary["overall"]["losses"] += 1
+    buck = summary["by_prop_type"].setdefault(prop_type, {"wins": 0, "losses": 0})
+    if hit:
+        buck["wins"] += 1
+    else:
+        buck["losses"] += 1
 
-    y_schedule: List[Dict] = []
-    used_date = None
-    for cand in target_dates:
-        rows = fetch_schedule_and_teams(league_u, target_date=cand, strict_day=True)
-        if rows:
-            y_schedule = rows
-            used_date = cand.isoformat()
-            break
-    if not y_schedule:
-        empty_summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
-        return {"league": league_u, "count": 0, "items": [], "summary": empty_summary, "graded_date": None}
 
-    data = _build_league_payload(league_u, schedule_override=y_schedule)
+def _empty_results_summary() -> Dict:
+    return {
+        "overall": {"wins": 0, "losses": 0},
+        "by_prop_type": {},
+        "by_model": {k: {"wins": 0, "losses": 0, "label": _MODEL_PUBLIC_NAMES.get(k, k)} for k in _MODEL_GRADE_TWEAKS},
+    }
+
+
+def _merge_by_model_from_row(summary: Dict, model_grades: Dict[str, Dict]) -> None:
+    for mkey, g in (model_grades or {}).items():
+        if mkey not in summary["by_model"]:
+            summary["by_model"][mkey] = {"wins": 0, "losses": 0, "label": _MODEL_PUBLIC_NAMES.get(mkey, mkey)}
+        if g.get("hit"):
+            summary["by_model"][mkey]["wins"] += 1
+        else:
+            summary["by_model"][mkey]["losses"] += 1
+
+
+def _finalize_by_model_pct(summary: Dict) -> None:
+    for mkey, v in summary.get("by_model", {}).items():
+        w, l = int(v.get("wins", 0)), int(v.get("losses", 0))
+        t = w + l
+        v["win_pct"] = round((w / t) * 100.0, 1) if t else None
+        v["total"] = t
+
+
+def _nba_fetch_boxscore_map(y_schedule: List[Dict]) -> Dict[str, Dict[str, Optional[float]]]:
     player_stat_map: Dict[str, Dict[str, Optional[float]]] = {}
     for g in y_schedule:
         event_id = g.get("event_id")
@@ -525,10 +538,15 @@ def get_league_results(league: str, result_date_str: Optional[str] = None) -> Di
                         player_stat_map[name.lower()] = blob
         except Exception:
             continue
+    return player_stat_map
 
-    rows = []
-    summary = {"overall": {"wins": 0, "losses": 0}, "by_prop_type": {}}
-    for p in (data.get("props") or [])[:120]:
+
+def _nba_grade_props_for_schedule(league_u: str, y_schedule: List[Dict], graded_iso: str, max_props: int = 200) -> Dict:
+    data = _build_league_payload(league_u, schedule_override=y_schedule)
+    player_stat_map = _nba_fetch_boxscore_map(y_schedule)
+    rows_out: List[Dict] = []
+    summary = _empty_results_summary()
+    for p in (data.get("props") or [])[:max_props]:
         pid = str(p.get("player_id") or "").strip()
         pname = str(p.get("player_name", "")).strip().lower()
         blob = player_stat_map.get(pid) or player_stat_map.get(pname)
@@ -545,18 +563,12 @@ def get_league_results(league: str, result_date_str: Optional[str] = None) -> Di
         if line <= 0.0:
             continue
         pick = str(p.get("picked_side", ""))
+        proj = float(p.get("projection", 0.0) or 0.0)
         hit = (actual > line and pick == "OVER") or (actual < line and pick == "UNDER")
-        if hit:
-            summary["overall"]["wins"] += 1
-        else:
-            summary["overall"]["losses"] += 1
-        pt = str(p.get("prop_type", "other"))
-        bucket = summary["by_prop_type"].setdefault(pt, {"wins": 0, "losses": 0})
-        if hit:
-            bucket["wins"] += 1
-        else:
-            bucket["losses"] += 1
-        rows.append(
+        mg = _model_individual_grades(league_u, proj, line, float(actual))
+        _summary_accumulate_row(summary, ptype, hit)
+        _merge_by_model_from_row(summary, mg)
+        rows_out.append(
             {
                 "player_id": p.get("player_id"),
                 "player_name": p.get("player_name"),
@@ -564,17 +576,286 @@ def get_league_results(league: str, result_date_str: Optional[str] = None) -> Di
                 "prop_type": p.get("prop_type"),
                 "pick": pick,
                 "line": line,
-                "actual": round(actual, 2),
+                "actual": round(float(actual), 2),
                 "result": "HIT" if hit else "MISS",
                 "projection": p.get("projection"),
+                "model_breakdown": mg,
             }
         )
+    excluded_rows = data.get("excluded_players") or []
+    generated_total = len(data.get("props") or [])
+    graded_total = len(rows_out)
+    excluded_total = len(excluded_rows)
+    reason_counts: Dict[str, int] = {}
+    for ex in excluded_rows:
+        for reason in ex.get("reasons") or []:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    candidate_total = generated_total + excluded_total
+    _finalize_by_model_pct(summary)
+    return {
+        "graded_date": graded_iso,
+        "items": rows_out,
+        "summary": summary,
+        "generated_props": generated_total,
+        "graded_props": graded_total,
+        "excluded_players": excluded_total,
+        "scope_excluded_players": reason_counts.get("PLAYER_OUT_OF_SCOPE", 0),
+        "exclusion_reasons": reason_counts,
+        "candidate_players": candidate_total,
+    }
+
+
+def _merge_roll_summary(dst: Dict, src: Dict) -> None:
+    dst["overall"]["wins"] += int(src["overall"]["wins"])
+    dst["overall"]["losses"] += int(src["overall"]["losses"])
+    for pt, b in src.get("by_prop_type", {}).items():
+        x = dst["by_prop_type"].setdefault(pt, {"wins": 0, "losses": 0})
+        x["wins"] += int(b["wins"])
+        x["losses"] += int(b["losses"])
+    for mkey in _MODEL_GRADE_TWEAKS:
+        if mkey not in dst["by_model"]:
+            dst["by_model"][mkey] = {"wins": 0, "losses": 0, "label": _MODEL_PUBLIC_NAMES.get(mkey, mkey)}
+        bm = src.get("by_model", {}).get(mkey, {})
+        dst["by_model"][mkey]["wins"] += int(bm.get("wins", 0))
+        dst["by_model"][mkey]["losses"] += int(bm.get("losses", 0))
+
+
+def get_league_results(
+    league: str,
+    result_date_str: Optional[str] = None,
+    rollup_days: int = 1,
+) -> Dict:
+    league_u = league.upper().split(":", 1)[0] if league else ""
+    dkey = (result_date_str or "").strip()[:10] if result_date_str else "auto"
+    rd = max(1, min(int(rollup_days or 1), 14))
+    cache_key = f"{league_u}:{dkey}:r{rd}:results:{_CACHE_SCHEMA}"
+    now = time.time()
+    cached = _RESULTS_CACHE.get(cache_key)
+    if cached and (now - cached["ts"]) < 300:
+        return cached["payload"]
+    if league_u != "NBA":
+        # Non-NBA leagues currently don't have full stat-grade integration here.
+        # Return a non-empty "latest evaluated board" so results view is useful
+        # instead of hardcoded zero rows.
+        data = get_league_data(league_u)
+        rows = []
+        summary = _empty_results_summary()
+        for p in (data.get("props") or [])[:40]:
+            line = float(p.get("_calc_line", p.get("line", 0.0)) or 0.0)
+            projection = float(p.get("projection", 0.0) or 0.0)
+            pick = str(p.get("picked_side", ""))
+            # Proxy grading: compare projection to line directionally.
+            hit = (projection > line and pick == "OVER") or (projection < line and pick == "UNDER")
+            _summary_accumulate_row(summary, str(p.get("prop_type", "other")), hit)
+            mg = _model_individual_grades(league_u, projection, line, projection)
+            _merge_by_model_from_row(summary, mg)
+            rows.append(
+                {
+                    "player_id": p.get("player_id"),
+                    "player_name": p.get("player_name"),
+                    "team": p.get("team"),
+                    "prop_type": p.get("prop_type"),
+                    "pick": pick,
+                    "line": line,
+                    "actual": round(projection, 2),
+                    "result": "HIT" if hit else "MISS",
+                    "projection": p.get("projection"),
+                    "model_breakdown": mg,
+                }
+            )
+        _finalize_by_model_pct(summary)
+        excluded_rows = data.get("excluded_players") or []
+        reason_counts: Dict[str, int] = {}
+        for ex in excluded_rows:
+            for reason in ex.get("reasons") or []:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        generated_total = len(data.get("props") or [])
+        graded_total = len(rows)
+        excluded_total = len(excluded_rows)
+        candidate_total = generated_total + excluded_total
+        payload = {
+            "league": league_u,
+            "count": len(rows),
+            "items": rows,
+            "summary": summary,
+            "day_summary": None,
+            "graded_date": None,
+            "rollup": None,
+            "tracking": {
+                "generated_props": generated_total,
+                "graded_props": graded_total,
+                "excluded_players": excluded_total,
+                "candidate_players": candidate_total,
+                "scope_excluded_players": reason_counts.get("PLAYER_OUT_OF_SCOPE", 0),
+                "exclusion_reasons": reason_counts,
+            },
+        }
+        _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
+        return payload
+
+    et_now = datetime.now(ZoneInfo("America/New_York"))
+    parsed = _et_date_from_str(result_date_str)
+    ds_flag = (result_date_str or "").strip()
+
+    def _tracking_from_grade(g: Dict) -> Dict:
+        return {
+            "generated_props": int(g.get("generated_props", 0)),
+            "graded_props": int(g.get("graded_props", 0)),
+            "excluded_players": int(g.get("excluded_players", 0)),
+            "candidate_players": int(g.get("candidate_players", 0)),
+            "scope_excluded_players": int(g.get("scope_excluded_players", 0)),
+            "exclusion_reasons": dict(g.get("exclusion_reasons") or {}),
+        }
+
+    if ds_flag and not parsed:
+        empty = _empty_results_summary()
+        _finalize_by_model_pct(empty)
+        payload = {
+            "league": league_u,
+            "count": 0,
+            "items": [],
+            "summary": empty,
+            "day_summary": None,
+            "graded_date": None,
+            "rollup": None,
+            "tracking": {
+                "generated_props": 0,
+                "graded_props": 0,
+                "excluded_players": 0,
+                "candidate_players": 0,
+                "scope_excluded_players": 0,
+                "exclusion_reasons": {},
+            },
+        }
+        _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
+        return payload
+
+    if parsed:
+        anchor = parsed.date()
+    else:
+        anchor = (et_now - timedelta(days=1)).date()
+
+    if rd == 1:
+        y_schedule = fetch_schedule_and_teams(league_u, target_date=anchor, strict_day=True)
+        if not y_schedule and not ds_flag:
+            for i in range(1, 14):
+                cand = anchor - timedelta(days=i)
+                y_schedule = fetch_schedule_and_teams(league_u, target_date=cand, strict_day=True)
+                if y_schedule:
+                    anchor = cand
+                    break
+        if not y_schedule:
+            empty = _empty_results_summary()
+            _finalize_by_model_pct(empty)
+            payload = {
+                "league": league_u,
+                "count": 0,
+                "items": [],
+                "summary": empty,
+                "day_summary": None,
+                "graded_date": anchor.isoformat() if ds_flag else None,
+                "rollup": None,
+                "tracking": {
+                    "generated_props": 0,
+                    "graded_props": 0,
+                    "excluded_players": 0,
+                    "candidate_players": 0,
+                    "scope_excluded_players": 0,
+                    "exclusion_reasons": {},
+                },
+            }
+            _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
+            return payload
+
+        g = _nba_grade_props_for_schedule(league_u, y_schedule, anchor.isoformat())
+        payload = {
+            "league": league_u,
+            "count": len(g["items"]),
+            "items": g["items"],
+            "summary": g["summary"],
+            "day_summary": None,
+            "graded_date": g["graded_date"],
+            "rollup": None,
+            "tracking": _tracking_from_grade(g),
+        }
+        _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
+        return payload
+
+    # rd > 1: combined summary over window; item list + day_summary for anchor date only
+    combined = _empty_results_summary()
+    by_date: List[Dict] = []
+    rollup_tracking = {
+        "generated_props": 0,
+        "graded_props": 0,
+        "excluded_players": 0,
+        "candidate_players": 0,
+        "scope_excluded_players": 0,
+        "exclusion_reasons": {},
+    }
+    for i in range(rd):
+        d = anchor - timedelta(days=i)
+        ys = fetch_schedule_and_teams(league_u, target_date=d, strict_day=True)
+        if not ys:
+            day_summary = _empty_results_summary()
+            _finalize_by_model_pct(day_summary)
+            by_date.append(
+                {
+                    "date": d.isoformat(),
+                    "games": 0,
+                    "graded_props": 0,
+                    "summary": day_summary,
+                }
+            )
+            continue
+        gd = _nba_grade_props_for_schedule(league_u, ys, d.isoformat())
+        _merge_roll_summary(combined, gd["summary"])
+        rollup_tracking["generated_props"] += int(gd.get("generated_props", 0))
+        rollup_tracking["graded_props"] += int(gd.get("graded_props", 0))
+        rollup_tracking["excluded_players"] += int(gd.get("excluded_players", 0))
+        rollup_tracking["candidate_players"] += int(gd.get("candidate_players", 0))
+        rollup_tracking["scope_excluded_players"] += int(gd.get("scope_excluded_players", 0))
+        for rk, rv in (gd.get("exclusion_reasons") or {}).items():
+            rollup_tracking["exclusion_reasons"][rk] = rollup_tracking["exclusion_reasons"].get(rk, 0) + int(rv)
+        by_date.append(
+            {
+                "date": d.isoformat(),
+                "games": len(ys),
+                "graded_props": int(gd.get("graded_props", 0)),
+                "summary": gd["summary"],
+            }
+        )
+
+    _finalize_by_model_pct(combined)
+
+    ys_anchor = fetch_schedule_and_teams(league_u, target_date=anchor, strict_day=True)
+    if ys_anchor:
+        g_anchor = _nba_grade_props_for_schedule(league_u, ys_anchor, anchor.isoformat())
+        items = g_anchor["items"]
+        day_summary = g_anchor["summary"]
+        anchor_tracking = _tracking_from_grade(g_anchor)
+    else:
+        items = []
+        day_summary = _empty_results_summary()
+        _finalize_by_model_pct(day_summary)
+        anchor_tracking = {
+            "generated_props": 0,
+            "graded_props": 0,
+            "excluded_players": 0,
+            "candidate_players": 0,
+            "scope_excluded_players": 0,
+            "exclusion_reasons": {},
+        }
+
     payload = {
         "league": league_u,
-        "count": len(rows),
-        "items": rows,
-        "summary": summary,
-        "graded_date": used_date,
+        "count": len(items),
+        "items": items,
+        "summary": combined,
+        "day_summary": day_summary,
+        "graded_date": anchor.isoformat(),
+        "rollup": {"days": rd, "anchor_date": anchor.isoformat(), "by_date": by_date},
+        "tracking": anchor_tracking,
+        "rollup_tracking": rollup_tracking,
     }
     _RESULTS_CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload

@@ -8,18 +8,24 @@
 <link rel="stylesheet" href="/static/css/site-search.css">
 {% endblock %}
 {% block content %}
-<article style="max-width:760px;margin:0 auto;padding:8px 8px 40px;">
+<article class="ud-search-page" style="max-width:760px;margin:0 auto;padding:8px 8px 40px;">
     <h1 style="font-size:1.35rem;margin:0 0 12px;color:#0f172a;">Search</h1>
     <p style="color:#475569;margin-bottom:22px;">Showing matches for <strong>{{ query }}</strong></p>
 
+    {% if payload.suggested_route %}
+    <div class="ud-search-suggest-banner">
+        <a class="ud-search-suggest-link" href="{{ payload.suggested_route }}">{{ payload.suggested_route_label or payload.suggested_route }}</a>
+    </div>
+    {% endif %}
+
     {% if suggestions and suggestions|length > 0 %}
-    <h2 style="font-size:1rem;margin:0 0 12px;color:#0f172a;">Teams &amp; players</h2>
-    <ul style="list-style:none;padding:0;display:grid;gap:10px;margin-bottom:28px;">
+    <h2 class="ud-search-section-title">Teams &amp; players</h2>
+    <ul class="ud-search-hit-list">
         {% for s in suggestions %}
-        <li>
-            <a href="{{ s.url }}" style="display:block;padding:12px 14px;border:1px solid rgba(15,23,42,0.12);border-radius:10px;text-decoration:none;color:#0f172a;font-weight:600;background:#fff;">
-                {{ s.title }}
-                <span style="display:block;color:#64748b;font-weight:500;font-size:0.86em;margin-top:4px;">{{ s.subtitle }}</span>
+        <li class="ud-search-hit">
+            <a class="ud-search-hit-main" href="{{ s.url }}">
+                <span class="ud-search-hit-title">{{ s.title }}</span>
+                <span class="ud-search-hit-sub">{{ s.subtitle }}</span>
             </a>
         </li>
         {% endfor %}
@@ -27,28 +33,49 @@
     {% endif %}
 
     {% if payload.team_results %}
-    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Prediction rows (database)</h2>
-    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+    <h2 class="ud-search-section-title">Our predictions</h2>
+    <ul class="ud-search-hit-list">
         {% for r in payload.team_results %}
-        <li>{{ r.sport }}: {{ r.away_team }} vs {{ r.home_team }} ({{ r.game_date }}) — pick {{ r.predicted_winner }} ({{ r.win_probability }}%)</li>
+        <li class="ud-search-hit">
+            <a class="ud-search-hit-main" href="{{ r.url }}">
+                <span class="ud-search-hit-title">{{ r.title }}</span>
+                <span class="ud-search-hit-sub">{{ r.subtitle }}</span>
+            </a>
+            {% if r.props_url %}
+            <a class="ud-search-hit-secondary" href="{{ r.props_url }}">Player props</a>
+            {% endif %}
+        </li>
         {% endfor %}
     </ul>
     {% endif %}
 
     {% if payload.espn_results %}
-    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Today&apos;s scoreboard (ESPN)</h2>
-    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+    <h2 class="ud-search-section-title">Scoreboard (today)</h2>
+    <ul class="ud-search-hit-list">
         {% for r in payload.espn_results %}
-        <li>{{ r.sport }}: {{ r.away_team }} @ {{ r.home_team }} — {{ r.status }}</li>
+        <li class="ud-search-hit ud-search-hit--espn">
+            <a class="ud-search-hit-main" href="{{ r.url }}">
+                <span class="ud-search-hit-title">{{ r.title }}</span>
+                <span class="ud-search-hit-sub">{{ r.subtitle }}</span>
+            </a>
+            {% if r.espn_url %}
+            <a class="ud-search-hit-secondary ud-search-hit-secondary--external" href="{{ r.espn_url }}" target="_blank" rel="noopener noreferrer">ESPN game</a>
+            {% endif %}
+        </li>
         {% endfor %}
     </ul>
     {% endif %}
 
     {% if payload.model_results %}
-    <h2 style="font-size:1rem;margin:0 0 10px;color:#0f172a;">Model performance</h2>
-    <ul style="margin:0 0 20px 18px;color:#334155;font-size:0.92em;line-height:1.55;">
+    <h2 class="ud-search-section-title">Model performance</h2>
+    <ul class="ud-search-hit-list">
         {% for r in payload.model_results %}
-        <li>{{ r.sport }}: {{ r.record }} ({{ r.accuracy }}% accuracy)</li>
+        <li class="ud-search-hit">
+            <a class="ud-search-hit-main" href="{{ r.url }}">
+                <span class="ud-search-hit-title">{{ r.title }}</span>
+                <span class="ud-search-hit-sub">{{ r.subtitle }}</span>
+            </a>
+        </li>
         {% endfor %}
     </ul>
     {% endif %}

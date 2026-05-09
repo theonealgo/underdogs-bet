@@ -73,9 +73,11 @@ export async function fetchProps({ league, propType, side, date }) {
   return readJsonResponse(r);
 }
 
-export async function fetchResults(league, date) {
+export async function fetchResults(league, date, rollupDays = 1) {
   const q = new URLSearchParams({ league });
   if (date) q.set("date", date);
+  const rd = Math.min(14, Math.max(1, parseInt(String(rollupDays || 1), 10) || 1));
+  if (rd > 1) q.set("rollup_days", String(rd));
   const r = await fetchWithTimeout(`${API_BASE}/results?${q.toString()}`);
   return readJsonResponse(r);
 }

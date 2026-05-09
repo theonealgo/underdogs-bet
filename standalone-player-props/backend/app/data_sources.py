@@ -24,10 +24,12 @@ _LEAGUE_PROP_TYPES = {
 }
 
 _PROP_LINE_RANGES = {
+    # Basketball
     "points": (8.5, 29.5),
     "rebounds": (3.5, 12.5),
     "assists": (2.5, 10.5),
     "threes": (0.5, 4.5),
+    # Hockey / soccer / baseball / football shared defaults
     "shots_on_goal": (1.5, 4.5),
     "goals": (0.5, 1.5),
     "hits": (0.5, 2.5),
@@ -42,6 +44,72 @@ _PROP_LINE_RANGES = {
     "shots": (1.5, 4.5),
     "shots_on_target": (0.5, 2.5),
 }
+
+# League-specific overrides to prevent unrealistic props from other sports bleeding through.
+_LEAGUE_PROP_LINE_RANGES = {
+    "NBA": {
+        "points": (8.5, 29.5),
+        "rebounds": (2.5, 12.5),
+        "assists": (1.5, 7.5),
+        "threes": (0.5, 4.5),
+    },
+    "WNBA": {
+        "points": (7.5, 24.5),
+        "rebounds": (2.5, 10.5),
+        "assists": (1.5, 7.0),
+        "threes": (0.5, 3.5),
+    },
+    "NCAAB": {
+        "points": (7.5, 23.5),
+        "rebounds": (2.5, 10.5),
+        "assists": (1.5, 7.0),
+        "threes": (0.5, 3.5),
+    },
+    "NCAAW": {
+        "points": (7.5, 24.5),
+        "rebounds": (2.5, 10.5),
+        "assists": (1.5, 7.0),
+        "threes": (0.5, 3.5),
+    },
+    "NHL": {
+        "assists": (0.5, 1.5),
+        "points": (0.5, 2.5),
+        "goals": (0.5, 1.5),
+        "shots_on_goal": (1.5, 4.5),
+    },
+    "NFL": {
+        "passing_yards": (165.5, 295.5),
+        "rushing_yards": (25.5, 95.5),
+        "receiving_yards": (25.5, 95.5),
+        "receptions": (1.5, 7.5),
+    },
+    "NCAAF": {
+        "passing_yards": (165.5, 305.5),
+        "rushing_yards": (25.5, 100.5),
+        "receiving_yards": (25.5, 95.5),
+        "receptions": (1.5, 7.5),
+    },
+    "MLB": {
+        "hits": (0.5, 1.5),
+        "runs": (0.5, 1.5),
+        "rbis": (0.5, 1.5),
+        "home_runs": (0.5, 1.5),
+        "strikeouts": (0.5, 2.5),
+    },
+    "SOCCER": {
+        "assists": (0.5, 1.5),
+        "goals": (0.5, 1.5),
+        "shots": (1.5, 4.5),
+        "shots_on_target": (0.5, 2.5),
+    },
+}
+
+
+def _prop_range(league: str, prop_type: str, default: tuple[float, float]) -> tuple[float, float]:
+    league_map = _LEAGUE_PROP_LINE_RANGES.get((league or "").upper(), {})
+    if prop_type in league_map:
+        return league_map[prop_type]
+    return _PROP_LINE_RANGES.get(prop_type, default)
 
 _NBA_CONSENSUS_TOP100 = [
     "Nikola Jokic","Shai Gilgeous-Alexander","Luka Doncic","Giannis Antetokounmpo","Victor Wembanyama","Anthony Edwards","Stephen Curry","LeBron James","Kevin Durant","Jayson Tatum",
@@ -392,6 +460,9 @@ def build_top_players(league: str, schedule_rows: List[Dict]) -> List[Dict]:
                 continue
             seen.add(key)
             teams.append(t)
+    if league == "NBA":
+        # Never synthesize NBA players; better to show no props than fake/irrelevant names.
+        return []
     if not teams:
         teams = [f"{league} Team {i+1}" for i in range(12)]
     synthetic = []
@@ -556,13 +627,40 @@ def build_validated_nba_player_pool(schedule_rows: List[Dict]) -> Dict:
 
                 # Keep request-time latency low: by default we avoid per-player live calls.
                 metrics = _fetch_nba_player_metrics(player_id, athlete=a)
+                rank = _NBA_CONSENSUS_RANK.get(player_key, 999)
                 if metrics.get("insufficient_data", True):
-                    reasons.append("insufficient_data")
-                avg_minutes = _clamp(metrics["avg_minutes"], 5.0, 40.0)
-                usage_rate = _clamp(metrics["usage_rate"], 0.05, 0.38)
-                last_10 = metrics["last_10_games_minutes"]
-                if avg_minutes < 10.0:
-                    reasons.append("below_10_mpg")
+                    # Controlled fallback for known top players when ESPN gamelog is incomplete.
+                    # Keeps board populated with real players while avoiding bench/random names.
+                    if rank <= 10:
+                        base_min, usage_rate = 35.0, 0.30
+                        p_pts, p_reb, p_ast, p_3pt = 27.0, 8.0, 7.0, 3.0
+                    elif rank <= 25:
+                        base_min, usage_rate = 33.0, 0.27
+                        p_pts, p_reb, p_ast, p_3pt = 23.0, 7.0, 6.0, 2.5
+                    elif rank <= 50:
+                        base_min, usage_rate = 30.0, 0.24
+                        p_pts, p_reb, p_ast, p_3pt = 19.0, 6.0, 5.0, 2.0
+                    elif rank <= 75:
+                        base_min, usage_rate = 27.0, 0.21
+                        p_pts, p_reb, p_ast, p_3pt = 16.0, 5.0, 4.0, 1.7
+                    else:
+                        base_min, usage_rate = 24.0, 0.18
+                        p_pts, p_reb, p_ast, p_3pt = 13.0, 4.0, 3.0, 1.3
+                    avg_minutes = base_min
+                    last_10 = [round(base_min, 1)] * 10
+                    metrics["avg_points"] = p_pts
+                    metrics["projected_minutes"] = base_min
+                    metrics["stats_last5"] = {"points": p_pts, "rebounds": p_reb, "assists": p_ast, "threes": p_3pt}
+                    metrics["stats_last10"] = {"points": p_pts, "rebounds": p_reb, "assists": p_ast, "threes": p_3pt}
+                    metrics["stats_weighted"] = {"points": p_pts, "rebounds": p_reb, "assists": p_ast, "threes": p_3pt}
+                    metrics["insufficient_data"] = False
+                else:
+                    avg_minutes = _clamp(metrics["avg_minutes"], 5.0, 40.0)
+                    usage_rate = _clamp(metrics["usage_rate"], 0.05, 0.38)
+                    last_10 = metrics["last_10_games_minutes"]
+                usage_rate = _clamp(usage_rate, 0.05, 0.38)
+                if avg_minutes < 18.0:
+                    reasons.append("below_18_mpg")
                 if not last_10:
                     reasons.append("missing_last_10_minutes")
                 two_way = any("two-way" in str(c).lower() for c in contracts)
@@ -598,12 +696,12 @@ def build_validated_nba_player_pool(schedule_rows: List[Dict]) -> Dict:
                         "top50_score": round((avg_minutes * 0.5) + (usage_rate * 100.0 * 0.5), 2),
                         "role": role,
                         "is_superstar": superstar,
-                        "consensus_rank": _NBA_CONSENSUS_RANK.get(player_key, 999),
+                        "consensus_rank": rank,
                         "consensus_tier": (
-                            "top_10" if _NBA_CONSENSUS_RANK.get(player_key, 999) <= 10
-                            else "superstar" if _NBA_CONSENSUS_RANK.get(player_key, 999) <= 25
-                            else "all_star" if _NBA_CONSENSUS_RANK.get(player_key, 999) <= 50
-                            else "starter" if _NBA_CONSENSUS_RANK.get(player_key, 999) <= 75
+                            "top_10" if rank <= 10
+                            else "superstar" if rank <= 25
+                            else "all_star" if rank <= 50
+                            else "starter" if rank <= 75
                             else "elite_role"
                         ),
                         "is_available": True,
@@ -637,7 +735,7 @@ def _synthetic_prop_lines(league: str, players: List[Dict]) -> List[Dict]:
     prop_types = _LEAGUE_PROP_TYPES.get(league, ["points", "rebounds", "assists"])
     for p in players:
         prop_type = random.choice(prop_types)
-        low, high = _PROP_LINE_RANGES.get(prop_type, (5.5, 25.5))
+        low, high = _prop_range(league, prop_type, (5.5, 25.5))
         _line = _to_half_step(random.uniform(low, high))
         lines.append(
             {
@@ -665,29 +763,27 @@ def _ladder_line(prop_type: str, projection: float) -> float:
 
 
 def _internal_nba_prop_lines(players: List[Dict]) -> List[Dict]:
+    """One row per (player, prop_type) where weighted stats exist — not one random prop per player."""
     out = []
     for p in players:
         weighted = p.get("stats_weighted") or {}
-        available = [pt for pt in ("points", "rebounds", "assists", "threes") if float(weighted.get(pt, 0.0) or 0.0) > 0.0]
-        if not available:
-            continue
-        prop_type = random.choice(available)
-        projection = float(weighted.get(prop_type, 0.0) or 0.0)
-        if projection <= 0.0:
-            continue
-        line = _ladder_line(prop_type, projection)
-        out.append(
-            {
-                "player_id": p["player_id"],
-                "prop_type": prop_type,
-                "line": line,
-                "line_for_calc": line,
-                "line_source": "internal_odds_api",
-                "projection": _to_half_step(projection),
-                "odds_over": random.choice([-130, -120, -110, 100, 110]),
-                "odds_under": random.choice([-130, -120, -110, 100, 110]),
-            }
-        )
+        for prop_type in ("points", "rebounds", "assists", "threes"):
+            projection = float(weighted.get(prop_type, 0.0) or 0.0)
+            if projection <= 0.0:
+                continue
+            line = _ladder_line(prop_type, projection)
+            out.append(
+                {
+                    "player_id": p["player_id"],
+                    "prop_type": prop_type,
+                    "line": line,
+                    "line_for_calc": line,
+                    "line_source": "internal_odds_api",
+                    "projection": _to_half_step(projection),
+                    "odds_over": random.choice([-130, -120, -110, 100, 110]),
+                    "odds_under": random.choice([-130, -120, -110, 100, 110]),
+                }
+            )
     return out
 
 
@@ -696,11 +792,16 @@ def _internal_generic_prop_lines(league: str, players: List[Dict]) -> List[Dict]
     prop_types = _LEAGUE_PROP_TYPES.get(league, ["points"])
     for p in players:
         prop_type = random.choice(prop_types)
-        low, high = _PROP_LINE_RANGES.get(prop_type, (1.5, 20.5))
+        low, high = _prop_range(league, prop_type, (1.5, 20.5))
         minutes = _clamp(float(p.get("projected_minutes", 24.0) or 24.0), 8.0, 42.0)
         usage = _clamp(float(p.get("usage_score", 0.25) or 0.25), 0.05, 1.0)
-        # Normalize to 0-1 so every prop type scales inside its own realistic band.
-        level = _clamp((minutes / 42.0) * 0.35 + usage * 0.65, 0.05, 0.98)
+        # Keep generated lines realistic: avoid clustering at each range ceiling.
+        # Minutes/usage matter, but stochastic spread should dominate.
+        level = _clamp(
+            0.15 + (minutes / 42.0) * 0.25 + usage * 0.35 + random.uniform(-0.22, 0.18),
+            0.05,
+            0.92,
+        )
         projection = low + (high - low) * level
         projection += random.uniform(-(high - low) * 0.08, (high - low) * 0.08)
         projection = _clamp(projection, low, high)
